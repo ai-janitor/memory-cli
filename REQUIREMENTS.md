@@ -57,7 +57,7 @@
 - Vector similarity (semantic)
 - Graph traversal via spreading activation — activation spreads along edges, decays linearly per hop
 - Tag filtering: AND (`--tags`) and OR (`--tags-any`)
-- Temporal decay — recent neurons rank higher
+- Temporal decay — recent neurons rank higher, exponential decay `e^(-λt)` with configurable half-life (default 30 days)
 - Configurable fan-out depth (`--fan-out-depth N`, default 1)
 
 ### 4.2 Heavy Search (Haiku-assisted)
@@ -104,7 +104,7 @@
 - `memory init --project` creates project-scoped config and DB at `.memory/` in cwd
 - Config resolution chain: `--config` flag → walk up from cwd for `.memory/config.json` → `~/.memory/config.json`
 - Project-scoped memory is isolated — its own DB, its own config
-- Config includes: db path, embedding model settings, defaults for search behavior, Haiku API key env var
+- Config includes: db path, embedding model settings, search defaults (including temporal half-life), Haiku API key env var, Haiku model name (default: claude-haiku-4-5-20251001)
 - `--config` and `--db` flags override for edge cases
 - `memory init` is a top-level command (exception to noun-verb grammar, like `git init`)
 
@@ -114,7 +114,7 @@
 - `memory <noun> <verb> --help` — flags and usage
 
 ### 7.4 Output Format
-- Default: JSON (for AI callers)
+- Default: JSON (for AI callers), envelope includes `"warnings": []` array for degradation signals
 - Alternative: plain text (for humans)
 - Configurable default in config.json
 - Exit codes: 0=success/found, 1=not found, 2=error

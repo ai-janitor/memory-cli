@@ -64,50 +64,60 @@
 
 ### S-1: Tag/attr removal when in use (#4 F-1/F-2)
 **Layer:** Spec gap
-**Finding:** Requirements silent on what happens when removing a tag/attr that is actively referenced by neurons. Spec recommends blocking removal with count of referencing neurons.
-**Status:** Open — resolve in v2.
+**Finding:** Requirements silent on what happens when removing a tag/attr that is actively referenced by neurons.
+**Resolution:** Block removal, show ref count. Exit code 2 with message "Tag X is referenced by N neurons."
+**Status:** Resolved v2.
 
 ### S-2: Neuron archive has no restore path (#6 F-1)
 **Layer:** Spec gap
-**Finding:** No `neuron restore` command defined. Archiving is one-way in v1.
-**Status:** Open — decide if restore is needed in v2.
+**Finding:** No `neuron restore` command defined.
+**Resolution:** Add `memory neuron restore <id>` — changes status from archived back to active.
+**Status:** Resolved v2.
 
 ### S-3: Temporal decay formula undefined (#8 F-1)
 **Layer:** Spec gap
-**Finding:** Requirements say "recent neurons rank higher" but provide no formula. Needs a concrete decay function (e.g., exponential time-based decay with half-life parameter).
-**Status:** Open — resolve at scaffold time.
+**Finding:** Requirements say "recent neurons rank higher" but no formula.
+**Resolution:** Exponential decay: `e^(-λt)` where t = age in days, λ derived from configurable half-life. Add `search.temporal_half_life_days` to config (default: 30).
+**Status:** Resolved v2.
 
 ### S-4: Tag filtering before vs after spreading activation (#8 F-2)
 **Layer:** Spec ambiguity
-**Finding:** Spec defaults to post-activation filtering (activation flows through filtered-out neurons). Requirements are silent on this.
-**Status:** Open — confirm with user in v2.
+**Finding:** Spec defaults to post-activation filtering.
+**Resolution:** Confirmed post-activation. Activation flows through all neurons; tag filter applies to output only.
+**Status:** Resolved v2.
 
 ### S-5: Edge traversal directionality (#7 F-2, #8 F-3)
 **Layer:** Cross-spec
-**Finding:** Edges are directed per spec #7. Spreading activation and goto traversal need to define whether they follow edges in both directions or only outgoing. Spec #8 defaults to bidirectional.
-**Status:** Open — resolve in v2.
+**Finding:** Edges are directed per spec #7. Spreading activation and goto need direction policy.
+**Resolution:** Bidirectional for both spreading activation and goto. Query both source_id and target_id columns.
+**Status:** Resolved v2.
 
 ### S-6: Capture context linking topology (#11 F-2)
 **Layer:** Design decision
-**Finding:** Full mesh of co-occurrence edges vs star topology (session-context neuron). Full mesh scales as O(n²) edges per session. Star is O(n) but introduces a synthetic neuron type.
-**Status:** Open — user decision needed in v2.
+**Finding:** Full mesh O(n²) vs star O(n) for co-occurrence edges.
+**Resolution:** Star topology. Create a session-context neuron per ingestion, link all extracted neurons to it at weight 0.5. Source type attribute distinguishes session neurons from fact neurons.
+**Status:** Resolved v2.
 
 ### S-7: Session deduplication on re-ingest (#11 F-5)
 **Layer:** Spec gap
-**Finding:** No dedup guard in v1. Re-ingesting a session creates duplicates.
-**Status:** Open — lightweight guard via session_id suggested for v2.
+**Finding:** No dedup guard. Re-ingesting creates duplicates.
+**Resolution:** Guard via ingested_session_id attribute. If a session neuron with matching session_id exists, skip with warning. --force to re-ingest anyway.
+**Status:** Resolved v2.
 
 ### S-8: Vector export default behavior (#12 F-1)
 **Layer:** Spec decision
-**Finding:** Spec makes vectors opt-in (--include-vectors) to keep exports small. Requirements say "full neuron data." Needs confirmation.
-**Status:** Open — confirm in v2.
+**Finding:** Vectors opt-in vs default include.
+**Resolution:** Opt-in via --include-vectors. Default export omits vectors (they can be re-embedded on import).
+**Status:** Resolved v2.
 
 ### S-9: Haiku model not configurable (#9 F-1, #11 F-1)
 **Layer:** Config gap
-**Finding:** Config spec (#2) has no `haiku.model` key. Heavy search and ingestion both call Haiku but model version is not configurable.
-**Status:** Open — add to config in v2.
+**Finding:** No haiku.model config key.
+**Resolution:** Add `haiku.model` to config schema. Default: "claude-haiku-4-5-20251001".
+**Status:** Resolved v2.
 
 ### S-10: Heavy search degradation signal for AI callers (#9 F-7)
 **Layer:** Spec gap
-**Finding:** Haiku fallback signals via stderr only. AI agent callers may miss it. A `"degraded": true` field in JSON output would be more reliable.
-**Status:** Open — consider for v2.
+**Finding:** Haiku fallback only signals via stderr.
+**Resolution:** Add `"warnings": []` array to the JSON output envelope (Spec #1). Populated with string messages when degradation occurs. Empty array when clean.
+**Status:** Resolved v2.

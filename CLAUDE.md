@@ -1,7 +1,7 @@
 # memory-cli
 
 ## Project Status
-/decompose v1 CLOSED (specs complete). v2 starts at Stage 7 (Scaffold). Read `.planning/v1/SESSION-STATE.md` for v1 context, `.planning/v2/SESSION-STATE.md` for current.
+/decompose v2 IN PROGRESS. Stage 7 (Scaffold) — tree approved, content fan-out next. Read `.planning/v2/SESSION-STATE.md` to resume.
 
 ## Quick Context
 Graph-based memory CLI for AI agents. Python + llama-cpp-python + SQLite + sqlite-vec. Noun-verb grammar (`memory <noun> <verb>`). Neurons, edges, tags, spreading activation search.

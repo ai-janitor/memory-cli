@@ -1,5 +1,5 @@
 ---
-# SOURCE: ~/.claude/CLAUDE.md (global instructions)
+# SOURCE: /Users/hung/.claude/CLAUDE.md
 ---
 
 When "minion" is mentioned, read `/Users/hung/projects/minion-factory/CLAUDE.md` first.
@@ -68,7 +68,7 @@ Poll is how you receive messages and task assignments. No poll = deaf. After fin
 Use `/loop 5m <prompt>` to inject a recurring monitoring prompt into your context stream. Without it, you're deaf between spawning background agents and their completion. Session-only, auto-expires after 3 days. Cancel with `CronDelete` when done. Also works for mechanical polling: `/loop 1m minion comms check-inbox --agent <name>`. TEST: have subagents use CronCreate for self-monitoring — unknown if cron fires in subagent or parent context.
 
 ---
-# SOURCE: CLAUDE.md (project instructions)
+# SOURCE: /Users/hung/projects/memory-cli/CLAUDE.md
 ---
 
 # memory-cli
@@ -100,7 +100,7 @@ Graph-based memory CLI for AI agents. Python + llama-cpp-python + SQLite + sqlit
 - "I'm a machine like you dude" — doesn't need breaks
 
 ---
-# SOURCE: REQUIREMENTS.md (clean requirements)
+# SOURCE: /Users/hung/projects/memory-cli/REQUIREMENTS.md
 ---
 
 # memory-cli — Clean Requirements (v1)
@@ -205,10 +205,13 @@ Graph-based memory CLI for AI agents. Python + llama-cpp-python + SQLite + sqlit
 - Nouns: neuron, tag, attr, edge, meta, batch
 
 ### 7.2 Init & Config
-- `memory init` creates default config and DB
-- Config file at `~/.memory/config.json` is the root of all settings
+- `memory init` creates global config and DB at `~/.memory/`
+- `memory init --project` creates project-scoped config and DB at `.memory/` in cwd
+- Config resolution chain: `--config` flag → walk up from cwd for `.memory/config.json` → `~/.memory/config.json`
+- Project-scoped memory is isolated — its own DB, its own config
 - Config includes: db path, embedding model settings, defaults for search behavior, Haiku API key env var
 - `--config` and `--db` flags override for edge cases
+- `memory init` is a top-level command (exception to noun-verb grammar, like `git init`)
 
 ### 7.3 Help
 - `memory help` — list all nouns
@@ -274,7 +277,7 @@ Graph-based memory CLI for AI agents. Python + llama-cpp-python + SQLite + sqlit
 - NO multi-DB / sharding (design must not preclude it)
 
 ---
-# SOURCE: .planning/v1/research/llama-cpp-python-embedding.md
+# SOURCE: llama-cpp-python-embedding.md
 ---
 
 # llama-cpp-python Embedding Feasibility
@@ -351,7 +354,7 @@ MTEB scores: 768d=62.28, 256d=61.04, 64d=56.10.
 5. Batch support confirmed — List[str] input works
 
 ---
-# SOURCE: .planning/v1/research/qmd-reference-architecture.md
+# SOURCE: qmd-reference-architecture.md
 ---
 
 # QMD Reference Architecture Analysis
@@ -410,7 +413,7 @@ CREATE VIRTUAL TABLE documents_fts USING fts5(filepath, title, body, tokenize='p
 6. Triggers to keep FTS in sync with source table
 
 ---
-# SOURCE: .planning/v1/research/skills-and-prior-art.md
+# SOURCE: skills-and-prior-art.md
 ---
 
 # Skills Library & Prior Art Survey
@@ -452,7 +455,7 @@ Only tool combining: (1) graph neurons + spreading activation, (2) embedded SQLi
 Complementary, not overlapping. Minion handles coordination (who does what, messaging). Memory-cli handles knowledge (what agents have learned, facts, relationships). An agent coordinated by minion-factory would use memory-cli for persistent knowledge.
 
 ---
-# SOURCE: .planning/v1/research/spreading-activation-algorithm.md
+# SOURCE: spreading-activation-algorithm.md
 ---
 
 # Spreading Activation Algorithm Design
@@ -545,7 +548,7 @@ Store edges in both directions OR query `WHERE source_id = ? OR target_id = ?` (
 - Edge weight modulation: `next_activation * edge_weight`
 
 ---
-# SOURCE: .planning/v1/research/sqlite-vec-and-fts5.md
+# SOURCE: sqlite-vec-and-fts5.md
 ---
 
 # sqlite-vec + FTS5 Feasibility
@@ -642,7 +645,7 @@ def reciprocal_rank_fusion(fts_results, vec_results, k=60):
 k=60 is the standard. Used by Azure AI Search, Weaviate, etc.
 
 ---
-# SOURCE: .planning/v1/research/_findings.md (research summary)
+# SOURCE: _findings.md
 ---
 
 # Research Findings Summary — v1
@@ -697,7 +700,7 @@ Closest: Cog (spreading activation, cloud-only), Zep (graph, Neo4j), Engram (SQL
 - MCP server (explicitly out of scope)
 
 ---
-# SOURCE: .planning/v1/decomposition.md
+# SOURCE: decomposition.md
 ---
 
 # Decomposition — v1
@@ -854,7 +857,7 @@ Tier 6 (depends on Tier 5):
 7 waves. Waves A, C, E, G have parallel specs within them.
 
 ---
-# SOURCE: .planning/v1/upstream-feedback.md
+# SOURCE: upstream-feedback.md
 ---
 
 # Upstream Feedback — v1
@@ -903,6 +906,17 @@ Tier 6 (depends on Tier 5):
 **Impact:** Edge schema may want a weight column. Not in current requirements.
 **Status:** Resolved — added to REQUIREMENTS.md §2.2. Edge weight in v1.
 
+### R-9: Project-scoped memory stores (Source: Stage 6 Wave A reflect gate)
+**Layer:** Requirements (§7.2 Init & Config)
+**Finding:** User wants per-project memory stores in addition to global. `memory init` = global (~/.memory/), `memory init --project` = project-scoped (.memory/ in cwd). Config resolution walks up from cwd looking for .memory/config.json, falls back to ~/.memory/config.json. Like .git/ discovery.
+**Impact:** Config loading must implement ancestor-directory walk. `memory init` is a top-level command exception to noun-verb grammar. Each store is isolated (own DB, own config).
+**Status:** Resolved — added to REQUIREMENTS.md §7.2.
+
+### R-10: `memory init` as grammar exception (Source: Stage 6 Wave A reflect gate)
+**Layer:** Requirements (§7.1 Grammar, §7.2 Init & Config)
+**Finding:** `memory init` is a top-level command, not noun-verb. This is an intentional exception like `git init`. The #1 CLI Dispatch spec proposed `memory meta init` but user prefers bare `memory init`.
+**Status:** Resolved — added to REQUIREMENTS.md §7.2.
+
 ### R-8: Development constraint — Haiku never for coding
 **Layer:** Process
 **Finding:** User-directed constraint. Haiku is only for runtime product features (conversation ingestion, search re-ranking). All coding uses Sonnet or Opus.
@@ -916,6 +930,6 @@ Tier 6 (depends on Tier 5):
 2. Change `[ ]` to `[claimed]` for your spec.
 3. Read your spec-tree preamble file (path listed in claims).
 4. Write your spec to `.planning/v1/specs/<spec-name>.md`.
-5. Derive from upstream inputs in this blob only — do not read prior iteration specs (there are none for v1).
+5. Derive from upstream inputs in this blob only.
 6. Mark your spec `[done]` in the claims registry.
-7. Report: spec written, key decisions, findings (contradictions, gaps, ambiguities).
+7. Report: spec written, key decisions, findings.
