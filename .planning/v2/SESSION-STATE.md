@@ -1,12 +1,12 @@
 # Session State — memory-cli v2
 
 **Last updated:** 2026-03-11
-**Stage:** 7 (Scaffold) — Tree approved, content fan-out next
-**Next:** Generate scaffold context blob → prompt assembly → content agents fill files with headers + pseudo-logic
+**Stage:** 7g complete (Cross-reference reconciliation) — scaffold fully verified
+**Next:** Stage 8 (Implement) — fill code between permanent comment headers, wave by wave
 
 ## Context for fresh session
 
-This is a Python CLI project for graph-based AI agent memory. 13 specs, all written. Scaffold tree (148 files) approved.
+This is a Python CLI project for graph-based AI agent memory. 13 specs, all written. Scaffold tree (181 files) with content: 95 source + 86 test files, all filled with comment headers + pseudo-logic. 30,606 total lines. Zero empty files. pyproject.toml written.
 
 ### Key files to read on resume
 1. This file
@@ -20,16 +20,42 @@ This is a Python CLI project for graph-based AI agent memory. 13 specs, all writ
 - v1 closed, tagged `v1-endpoint` (git tag)
 - Stages 0-6 complete: raw → clean → research → decompose → spec tree → specs
 - All 10 open findings from v1 resolved (S-1 through S-10)
-- Stage 7b: Scaffold tree created (148 files: 65 source + 83 tests + 3 root)
+- Stage 7b: Scaffold tree created (181 files: 95 source + 86 tests)
 - Tree approved by user
+- **Stage 7c-7d: Content fan-out COMPLETE** — all files filled across 7 waves:
+  - Wave A: CLI Dispatch (#1, 21 files) + Config (#2, 10 files) ✓
+  - Wave B: Schema & Migrations (#3, 11 files) ✓
+  - Wave C: Tag/Attr Registries (#4, 10 files) + Embedding (#5, 18 files) + Metadata/Integrity (#13, 14 files) ✓
+  - Wave D: Neuron CRUD (#6, 16 files) ✓
+  - Wave E: Edges (#7, 10 files) + Traversal (#10, 6 files) + Export/Import (#12, 12 files) ✓
+  - Wave F: Light Search (#8, 22 files) ✓
+  - Wave G: Heavy Search (#9, 12 files) + Ingestion (#11, 16 files) ✓
+- Root files: pyproject.toml, src/memory_cli/__init__.py, tests/__init__.py, tests/conftest.py ✓
+- **Stage 7e: Reflect gates COMPLETE** — 5 parallel agents spot-checked all 7 waves:
+  - Wave A: 8 findings fixed (`.exit_code`→`.status`, wrong import path, incomplete pseudo-logic)
+  - Wave B: 1 finding fixed (`run_migrations`→`run_pending_migrations` in __init__.py)
+  - Wave C: PASS (clean)
+  - Waves D+E: 3 findings fixed (neuron_id type `str`→`int`, `edge_type`→`reason`, embedding OperationType.INDEX)
+  - Waves F+G: PASS (clean)
+
+- **Stage 7f: Convergence gate COMPLETE** — 7 cross-boundary checks:
+  - CLI→Neuron: PASS
+  - Neuron→Embedding: fixed `write_vector(neuron_id: str→int)`, `write_vectors_batch` same
+  - Neuron→Registry: PASS
+  - Neuron→Edge: PASS
+  - Search→Embedding: PASS
+  - Search→DB: fixed vec0 table name `neuron_embeddings`→`neurons_vec` (matches schema)
+  - CLI→Config→DB: PASS
+
+- **Stage 7g: Cross-reference reconciliation COMPLETE** — final sweep:
+  - Fixed `neuron_id: str→int` in conflict_handler_skip_overwrite_error.py
+  - Fixed vec0 table name `neuron_embeddings`→`neurons_vec` in vector_retrieval_two_step_knn.py
+  - Fixed `write_vectors_batch` neuron_id type str→int
+  - Verified no remaining UUID/str neuron_id mismatches across all source files
 
 ### What's next
-- Stage 7c: Coordinator setup — generate scaffold context blob, claim registry, prompt assembly
-- Stage 7d: Content agents fill empty files with comment headers + pseudo-logic (per-spec, wave by wave)
-- Stage 7e: Reflect gates after each wave
-- Stage 7f: Convergence gate
-- Stage 7g: Cross-reference reconciliation
-- Then: Stage 8 (Implement), Stage 9 (Verify)
+- Stage 8: Implement — fill code between permanent comment headers, wave by wave
+- Stage 9: Verify — run tests, integration checks
 
 ### Resolved findings quick reference
 - S-1: Block tag/attr removal when in use, show ref count
@@ -56,17 +82,6 @@ This is a Python CLI project for graph-based AI agent memory. 13 specs, all writ
 - Task prefixes: search_document: / search_query:
 - RRF fusion k=60, BFS spreading activation, two-step vector queries
 - Project-scoped stores (.memory/) + global (~/.memory/)
-
-### Build waves (for content fan-out ordering)
-```
-Wave A: #1 CLI Dispatch, #2 Config
-Wave B: #3 Schema & Migrations
-Wave C: #4 Tags, #5 Embedding, #13 Metadata
-Wave D: #6 Neuron CRUD
-Wave E: #7 Edges, #10 Traversal, #12 Export/Import
-Wave F: #8 Light Search
-Wave G: #9 Heavy Search, #11 Ingestion
-```
 
 ### Scaffold tree ownership (spec → files)
 Run `find src/memory_cli -name '*.py' | sort` to see all source files.
