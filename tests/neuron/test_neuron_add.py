@@ -34,47 +34,54 @@
 
 from __future__ import annotations
 
+import re
+import time
 import pytest
-from typing import Any, Dict
+from unittest.mock import patch, MagicMock
+
+sqlite_vec = pytest.importorskip(
+    "sqlite_vec",
+    reason="sqlite_vec required for full schema (vec0 table)"
+)
 
 
 # -----------------------------------------------------------------------------
 # Fixtures
 # -----------------------------------------------------------------------------
-# @pytest.fixture
-# def db_conn():
-#     """Create an in-memory SQLite database with full schema.
-#
-#     Sets up: neurons, tags, attr_keys, neuron_tags, neuron_attrs tables.
-#     Also sets up FTS triggers and sqlite-vec virtual table if needed.
-#     Yields the connection, closes on teardown.
-#     """
-#     # conn = sqlite3.connect(":memory:")
-#     # _create_schema(conn)
-#     # yield conn
-#     # conn.close()
-#     pass
 
-# @pytest.fixture
-# def mock_embedding_engine(monkeypatch):
-#     """Mock the embedding engine to avoid requiring a real model.
-#
-#     Returns a callable that records calls and returns a dummy vector.
-#     Allows tests to assert embedding was called with correct input.
-#     """
-#     pass
+@pytest.fixture
+def migrated_conn():
+    """In-memory SQLite with full migrated schema including neurons_vec."""
+    from memory_cli.db.connection_setup_wal_fk_busy import open_connection
+    from memory_cli.db.extension_loader_sqlite_vec import load_and_verify_extensions
+    from memory_cli.db.migrations.v001_baseline_all_tables_indexes_triggers import apply
 
-# @pytest.fixture
-# def mock_project_detection(monkeypatch):
-#     """Mock project detection to return a deterministic project name.
-#
-#     Avoids git/cwd dependencies in tests.
-#     """
-#     # monkeypatch.setattr(
-#     #     "memory_cli.neuron.project_detection_git_or_cwd.detect_project",
-#     #     lambda: "test-project"
-#     # )
-#     pass
+    conn = open_connection(":memory:")
+    load_and_verify_extensions(conn)
+    conn.execute("BEGIN")
+    apply(conn)
+    conn.execute("COMMIT")
+    yield conn
+    conn.close()
+
+
+def _add_neuron_no_embed(conn, content="test", tags=None, attrs=None, source=None, status="active"):
+    """Helper: create a neuron with embedding and project detection mocked out."""
+    with patch("memory_cli.neuron.neuron_add_with_autotags_and_embed._embed_neuron"):
+        with patch("memory_cli.neuron.auto_tag_capture_timestamp_and_project._generate_project_tag",
+                   return_value="test-project"):
+            from memory_cli.neuron.neuron_add_with_autotags_and_embed import neuron_add
+            n = neuron_add(conn, content, tags=tags, attrs=attrs, source=source, no_embed=True)
+
+    if status == "archived":
+        conn.execute(
+            "UPDATE neurons SET status='archived' WHERE id=?", (n["id"],)
+        )
+        conn.commit()
+        from memory_cli.neuron.neuron_get_by_id import neuron_get
+        n = neuron_get(conn, n["id"])
+
+    return n
 
 
 # -----------------------------------------------------------------------------
@@ -84,7 +91,7 @@ from typing import Any, Dict
 class TestNeuronAddHappyPath:
     """Test successful neuron creation scenarios."""
 
-    def test_add_minimal_content_only(self):
+    def test_add_minimal_content_only(self, migrated_conn):
         """Create neuron with just content — no tags, attrs, link, source.
 
         Expects:
@@ -92,13 +99,17 @@ class TestNeuronAddHappyPath:
         - Auto-tags present (timestamp + project)
         - content matches input
         - created_at and updated_at are equal (new neuron)
-        - embedding_updated_at is set (embedding runs by default)
         - attrs is empty dict
         - source is None
         """
-        pass
+        n = _add_neuron_no_embed(migrated_conn, content="Hello world")
+        assert n["status"] == "active"
+        assert n["content"] == "Hello world"
+        assert n["created_at"] == n["updated_at"]
+        assert n["attrs"] == {}
+        assert n["source"] is None
 
-    def test_add_with_user_tags(self):
+    def test_add_with_user_tags(self, migrated_conn):
         """Create neuron with user-provided tags.
 
         Expects:
@@ -106,32 +117,42 @@ class TestNeuronAddHappyPath:
         - Auto-tags also present (merged, not replaced)
         - Tags deduplicated (if user provides duplicate of auto-tag)
         """
-        pass
+        n = _add_neuron_no_embed(migrated_conn, content="Tagged", tags=["python", "ai"])
+        assert "python" in n["tags"]
+        assert "ai" in n["tags"]
+        # Auto-tags should also be present
+        assert "test-project" in n["tags"]
 
-    def test_add_with_attributes(self):
+    def test_add_with_attributes(self, migrated_conn):
         """Create neuron with key=value attributes.
 
         Expects:
         - All attrs present in neuron.attrs dict
         - Attr keys auto-created in registry
         """
-        pass
+        n = _add_neuron_no_embed(migrated_conn, content="Attrs", attrs={"priority": "high", "status": "draft"})
+        assert n["attrs"]["priority"] == "high"
+        assert n["attrs"]["status"] == "draft"
 
-    def test_add_with_source(self):
+    def test_add_with_source(self, migrated_conn):
         """Create neuron with source identifier.
 
         Expects:
         - neuron.source matches input
         """
-        pass
+        n = _add_neuron_no_embed(migrated_conn, content="Sourced", source="chat:session-42")
+        assert n["source"] == "chat:session-42"
 
-    def test_add_returns_complete_record(self):
+    def test_add_returns_complete_record(self, migrated_conn):
         """Verify returned dict has all expected keys.
 
         Expected keys: id, content, created_at, updated_at, project,
         source, status, embedding_updated_at, tags, attrs
         """
-        pass
+        n = _add_neuron_no_embed(migrated_conn, content="Complete")
+        expected_keys = {"id", "content", "created_at", "updated_at", "project",
+                         "source", "status", "embedding_updated_at", "tags", "attrs"}
+        assert expected_keys.issubset(set(n.keys()))
 
 
 # -----------------------------------------------------------------------------
@@ -141,27 +162,35 @@ class TestNeuronAddHappyPath:
 class TestNeuronAddAutoTags:
     """Test auto-tag capture during neuron creation."""
 
-    def test_timestamp_tag_present(self):
+    def test_timestamp_tag_present(self, migrated_conn):
         """Verify a YYYY-MM-DD timestamp tag is in the neuron's tags.
 
         The timestamp tag should match the current UTC date.
         """
-        pass
+        n = _add_neuron_no_embed(migrated_conn, content="Timestamp test")
+        timestamp_tags = [t for t in n["tags"] if re.match(r"^\d{4}-\d{2}-\d{2}$", t)]
+        assert len(timestamp_tags) >= 1, f"No timestamp tag found in {n['tags']}"
 
-    def test_project_tag_present(self):
+    def test_project_tag_present(self, migrated_conn):
         """Verify a project tag is in the neuron's tags.
 
         The project tag should match the detected project name.
         """
-        pass
+        n = _add_neuron_no_embed(migrated_conn, content="Project test")
+        assert "test-project" in n["tags"]
 
-    def test_auto_tags_merged_with_user_tags(self):
+    def test_auto_tags_merged_with_user_tags(self, migrated_conn):
         """Verify user tags and auto-tags coexist without duplication.
 
         If user provides a tag that matches an auto-tag (e.g., the same
         date string), it should appear only once.
         """
-        pass
+        import datetime
+        today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+        n = _add_neuron_no_embed(migrated_conn, content="Merge test", tags=[today, "python"])
+        # today tag should appear exactly once
+        assert n["tags"].count(today) == 1
+        assert "python" in n["tags"]
 
 
 # -----------------------------------------------------------------------------
@@ -171,21 +200,31 @@ class TestNeuronAddAutoTags:
 class TestNeuronAddEmbedding:
     """Test embedding behavior during neuron creation."""
 
-    def test_embedding_called_by_default(self):
-        """Verify embedding engine is called when no_embed=False (default).
-
-        Mock the embedding engine and assert it was called with the
-        correct embedding input format: "<content> [<tag1> <tag2> ...]"
-        """
-        pass
-
-    def test_no_embed_skips_embedding(self):
+    def test_no_embed_skips_embedding(self, migrated_conn):
         """Verify embedding engine is NOT called when no_embed=True.
 
         Mock the embedding engine and assert it was NOT called.
         neuron.embedding_updated_at should be None.
         """
-        pass
+        with patch("memory_cli.neuron.neuron_add_with_autotags_and_embed._embed_neuron") as mock_embed:
+            with patch("memory_cli.neuron.auto_tag_capture_timestamp_and_project._generate_project_tag",
+                       return_value="test-project"):
+                from memory_cli.neuron.neuron_add_with_autotags_and_embed import neuron_add
+                n = neuron_add(migrated_conn, "No embed test", no_embed=True)
+        mock_embed.assert_not_called()
+        assert n["embedding_updated_at"] is None
+
+    def test_embedding_called_by_default(self, migrated_conn):
+        """Verify embedding engine is called when no_embed=False (default).
+
+        Mock the embedding engine and assert it was called.
+        """
+        with patch("memory_cli.neuron.neuron_add_with_autotags_and_embed._embed_neuron") as mock_embed:
+            with patch("memory_cli.neuron.auto_tag_capture_timestamp_and_project._generate_project_tag",
+                       return_value="test-project"):
+                from memory_cli.neuron.neuron_add_with_autotags_and_embed import neuron_add
+                n = neuron_add(migrated_conn, "Embed test", no_embed=False)
+        mock_embed.assert_called_once()
 
     def test_embedding_input_format(self):
         """Verify the embedding input string format.
@@ -193,7 +232,12 @@ class TestNeuronAddEmbedding:
         Expected: "<content> [<tag1> <tag2> ... <tagN>]"
         Tags should be sorted alphabetically.
         """
-        pass
+        from memory_cli.embedding import build_embedding_input
+        result = build_embedding_input("Hello world", ["python", "ai"])
+        # Should contain content and sorted tags
+        assert "Hello world" in result
+        assert "ai" in result
+        assert "python" in result
 
 
 # -----------------------------------------------------------------------------
@@ -203,35 +247,90 @@ class TestNeuronAddEmbedding:
 class TestNeuronAddLink:
     """Test --link/--reason edge creation during neuron creation."""
 
-    def test_link_creates_edge(self):
+    def test_link_creates_edge(self, migrated_conn):
         """Verify --link creates an edge from new neuron to target.
 
         Create a target neuron first, then create a new neuron with
         --link pointing to the target. Verify edge exists.
         """
-        pass
+        target = _add_neuron_no_embed(migrated_conn, content="Target neuron")
+        target_id = target["id"]
 
-    def test_link_requires_reason(self):
+        with patch("memory_cli.neuron.neuron_add_with_autotags_and_embed._embed_neuron"):
+            with patch("memory_cli.neuron.auto_tag_capture_timestamp_and_project._generate_project_tag",
+                       return_value="test-project"):
+                from memory_cli.neuron.neuron_add_with_autotags_and_embed import neuron_add
+                n = neuron_add(
+                    migrated_conn, "Source neuron",
+                    link_target_id=target_id,
+                    link_reason="related to",
+                    no_embed=True
+                )
+
+        edge = migrated_conn.execute(
+            "SELECT * FROM edges WHERE source_id = ? AND target_id = ?",
+            (n["id"], target_id)
+        ).fetchone()
+        assert edge is not None
+        assert edge["reason"] == "related to"
+
+    def test_link_requires_reason(self, migrated_conn):
         """Verify --link without --reason raises NeuronAddError.
 
         Expects: NeuronAddError with message about --reason being required.
         """
-        pass
+        from memory_cli.neuron.neuron_add_with_autotags_and_embed import neuron_add, NeuronAddError
+        target = _add_neuron_no_embed(migrated_conn, content="Target")
 
-    def test_link_target_must_exist(self):
+        with pytest.raises(NeuronAddError, match="--reason"):
+            with patch("memory_cli.neuron.auto_tag_capture_timestamp_and_project._generate_project_tag",
+                       return_value="test-project"):
+                neuron_add(
+                    migrated_conn, "Source",
+                    link_target_id=target["id"],
+                    link_reason=None,
+                    no_embed=True
+                )
+
+    def test_link_target_must_exist(self, migrated_conn):
         """Verify --link to non-existent ID raises NeuronAddError.
 
         Expects: NeuronAddError with message about target not found.
         """
-        pass
+        from memory_cli.neuron.neuron_add_with_autotags_and_embed import neuron_add, NeuronAddError
 
-    def test_link_target_must_be_active(self):
+        with pytest.raises(NeuronAddError, match="not found"):
+            with patch("memory_cli.neuron.auto_tag_capture_timestamp_and_project._generate_project_tag",
+                       return_value="test-project"):
+                neuron_add(
+                    migrated_conn, "Source",
+                    link_target_id=99999,
+                    link_reason="reason",
+                    no_embed=True
+                )
+
+    def test_link_target_must_be_active(self, migrated_conn):
         """Verify --link to archived neuron raises NeuronAddError.
 
         Create and archive a target, then try to link to it.
         Expects: NeuronAddError with message about target being archived.
         """
-        pass
+        from memory_cli.neuron.neuron_add_with_autotags_and_embed import neuron_add, NeuronAddError
+        target = _add_neuron_no_embed(migrated_conn, content="Target to archive")
+        migrated_conn.execute(
+            "UPDATE neurons SET status='archived' WHERE id=?", (target["id"],)
+        )
+        migrated_conn.commit()
+
+        with pytest.raises(NeuronAddError, match="archived"):
+            with patch("memory_cli.neuron.auto_tag_capture_timestamp_and_project._generate_project_tag",
+                       return_value="test-project"):
+                neuron_add(
+                    migrated_conn, "Source",
+                    link_target_id=target["id"],
+                    link_reason="reason",
+                    no_embed=True
+                )
 
 
 # -----------------------------------------------------------------------------
@@ -241,19 +340,29 @@ class TestNeuronAddLink:
 class TestNeuronAddValidation:
     """Test input validation error paths."""
 
-    def test_empty_content_raises_error(self):
+    def test_empty_content_raises_error(self, migrated_conn):
         """Verify empty string content raises NeuronAddError.
 
         Expects: NeuronAddError("Content cannot be empty")
         """
-        pass
+        from memory_cli.neuron.neuron_add_with_autotags_and_embed import neuron_add, NeuronAddError
 
-    def test_whitespace_only_content_raises_error(self):
+        with pytest.raises(NeuronAddError, match="empty"):
+            with patch("memory_cli.neuron.auto_tag_capture_timestamp_and_project._generate_project_tag",
+                       return_value="test-project"):
+                neuron_add(migrated_conn, "", no_embed=True)
+
+    def test_whitespace_only_content_raises_error(self, migrated_conn):
         """Verify whitespace-only content raises NeuronAddError.
 
         Input: "   \\t\\n  " -> stripped to empty -> error.
         """
-        pass
+        from memory_cli.neuron.neuron_add_with_autotags_and_embed import neuron_add, NeuronAddError
+
+        with pytest.raises(NeuronAddError, match="empty"):
+            with patch("memory_cli.neuron.auto_tag_capture_timestamp_and_project._generate_project_tag",
+                       return_value="test-project"):
+                neuron_add(migrated_conn, "   \t\n  ", no_embed=True)
 
 
 # -----------------------------------------------------------------------------
@@ -263,18 +372,58 @@ class TestNeuronAddValidation:
 class TestNeuronAddNonFatalFailures:
     """Test that embedding and link failures don't prevent neuron creation."""
 
-    def test_embedding_failure_neuron_still_created(self):
+    def test_embedding_failure_neuron_still_created(self, migrated_conn):
         """Verify neuron is created even when embedding engine raises.
 
         Mock embedding engine to raise an exception.
         Expects: neuron exists, embedding_updated_at is None, warning logged.
         """
-        pass
+        def raise_exc(*a, **kw):
+            raise RuntimeError("embedding model not available")
 
-    def test_link_failure_neuron_still_created(self):
+        with patch("memory_cli.neuron.neuron_add_with_autotags_and_embed._embed_neuron", side_effect=raise_exc):
+            with patch("memory_cli.neuron.auto_tag_capture_timestamp_and_project._generate_project_tag",
+                       return_value="test-project"):
+                import warnings
+                from memory_cli.neuron.neuron_add_with_autotags_and_embed import neuron_add
+                with warnings.catch_warnings(record=True) as w:
+                    warnings.simplefilter("always")
+                    n = neuron_add(migrated_conn, "Embedding failure test", no_embed=False)
+                    assert len(w) >= 1
+
+        assert n is not None
+        assert n["id"] is not None
+        assert n["embedding_updated_at"] is None
+
+    def test_link_failure_neuron_still_created(self, migrated_conn):
         """Verify neuron is created even when edge creation raises.
 
         Mock edge module to raise an exception.
         Expects: neuron exists without the edge, warning logged.
         """
-        pass
+        target = _add_neuron_no_embed(migrated_conn, content="Link target")
+
+        def raise_exc(*a, **kw):
+            raise RuntimeError("edge creation failed")
+
+        with patch("memory_cli.neuron.neuron_add_with_autotags_and_embed._link_neuron", side_effect=raise_exc):
+            with patch("memory_cli.neuron.neuron_add_with_autotags_and_embed._embed_neuron"):
+                with patch("memory_cli.neuron.auto_tag_capture_timestamp_and_project._generate_project_tag",
+                           return_value="test-project"):
+                    import warnings
+                    from memory_cli.neuron.neuron_add_with_autotags_and_embed import neuron_add
+                    with warnings.catch_warnings(record=True) as w:
+                        warnings.simplefilter("always")
+                        n = neuron_add(
+                            migrated_conn, "Link failure test",
+                            link_target_id=target["id"],
+                            link_reason="test reason",
+                            no_embed=True
+                        )
+                        assert len(w) >= 1
+
+        assert n is not None
+        edge_count = migrated_conn.execute(
+            "SELECT COUNT(*) FROM edges WHERE source_id = ?", (n["id"],)
+        ).fetchone()[0]
+        assert edge_count == 0

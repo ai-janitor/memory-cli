@@ -20,8 +20,7 @@ from __future__ import annotations
 
 from typing import List, Any
 
-# from memory_cli.cli.entrypoint_and_argv_dispatch import register_noun
-# from memory_cli.cli.output_envelope_json_and_text import Result
+from memory_cli.cli.entrypoint_and_argv_dispatch import register_noun
 
 
 # =============================================================================
@@ -49,7 +48,7 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
     7. Return Result(status="ok", data={"source": s, "target": t, "type": type, "weight": w})
     8. If either neuron not found: Result(status="not_found", error="Neuron {id} not found")
     """
-    pass
+    raise NotImplementedError
 
 
 # =============================================================================
@@ -80,7 +79,7 @@ def handle_list(args: List[str], global_flags: Any) -> Any:
     4. Return Result(status="ok", data=edge_list, meta=pagination)
     5. Empty list is success (exit 0)
     """
-    pass
+    raise NotImplementedError
 
 
 # =============================================================================
@@ -103,7 +102,7 @@ def handle_remove(args: List[str], global_flags: Any) -> Any:
     4. If edge not found: Result(status="not_found", error="Edge not found")
     5. Return Result(status="ok", data={"source": s, "target": t, "removed": True})
     """
-    pass
+    raise NotImplementedError
 
 
 # =============================================================================
@@ -150,7 +149,12 @@ def register() -> None:
          "flag_defs": _FLAG_DEFS,
        })
     """
-    pass
+    register_noun("edge", {
+        "verb_map": _VERB_MAP,
+        "description": "Edges — directed connections between neurons",
+        "verb_descriptions": _VERB_DESCRIPTIONS,
+        "flag_defs": _FLAG_DEFS,
+    })
 
 # --- Self-register on import ---
-# register()
+register()

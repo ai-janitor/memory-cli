@@ -26,6 +26,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -110,11 +111,23 @@ def parse_jsonl_session(jsonl_path: Path) -> ParseResult:
     #                 messages.append(msg)
     #         except ValueError as e:
     #             warnings.append(f"Line {line_number}: {e}")
+    messages: List[ParsedMessage] = []
+    warnings_list: List[str] = []
+    with open(jsonl_path, "r", encoding="utf-8") as f:
+        for line_number, raw_line in enumerate(f, start=1):
+            stripped = raw_line.strip()
+            if not stripped:
+                continue
+            try:
+                msg = _parse_line(stripped, line_number)
+                if msg is not None:
+                    messages.append(msg)
+            except ValueError as e:
+                warnings_list.append(f"Line {line_number}: {e}")
 
     # --- Return collected messages and warnings ---
     # return ParseResult(messages=messages, warnings=warnings)
-
-    pass
+    return ParseResult(messages=messages, warnings=warnings_list)
 
 
 def _parse_line(raw_json: str, line_number: int) -> Optional[ParsedMessage]:
@@ -150,27 +163,46 @@ def _parse_line(raw_json: str, line_number: int) -> Optional[ParsedMessage]:
     # --- Parse JSON ---
     # try: data = json.loads(raw_json)
     # except json.JSONDecodeError as e: raise ValueError(f"Invalid JSON: {e}")
+    try:
+        data = json.loads(raw_json)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON: {e}")
 
     # --- Check message type ---
     # msg_type = data.get("type")
     # if msg_type not in ("user", "assistant"): return None
+    msg_type = data.get("type")
+    if msg_type not in ("user", "assistant"):
+        return None
 
     # --- Extract content ---
     # content = _extract_content(data)
     # if not content: return None
+    content = _extract_content(data)
+    if not content:
+        return None
 
     # --- Extract metadata ---
     # timestamp = data.get("timestamp") or data.get("created_at")
     # cwd = data.get("cwd")
     # session_id = data.get("sessionId") or data.get("session_id")
+    timestamp = data.get("timestamp") or data.get("created_at")
+    cwd = data.get("cwd")
+    session_id = data.get("sessionId") or data.get("session_id")
 
     # --- Build and return ParsedMessage ---
     # return ParsedMessage(
     #     role=msg_type, content=content, timestamp=timestamp,
     #     cwd=cwd, session_id=session_id, line_number=line_number
     # )
-
-    pass
+    return ParsedMessage(
+        role=msg_type,
+        content=content,
+        timestamp=timestamp,
+        cwd=cwd,
+        session_id=session_id,
+        line_number=line_number,
+    )
 
 
 def _extract_content(data: Dict[str, Any]) -> str:
@@ -201,10 +233,15 @@ def _extract_content(data: Dict[str, Any]) -> str:
     # raw_content = data.get("message", {}).get("content")
     # if raw_content is None:
     #     raw_content = data.get("content")
+    raw_content = data.get("message", {}).get("content") if isinstance(data.get("message"), dict) else None
+    if raw_content is None:
+        raw_content = data.get("content")
 
     # --- Handle string content ---
     # if isinstance(raw_content, str):
     #     return raw_content.strip()
+    if isinstance(raw_content, str):
+        return raw_content.strip()
 
     # --- Handle array of content blocks ---
     # if isinstance(raw_content, list):
@@ -214,8 +251,14 @@ def _extract_content(data: Dict[str, Any]) -> str:
     #         if isinstance(block, dict) and block.get("type") == "text"
     #     ]
     #     return "\n".join(text_parts).strip()
+    if isinstance(raw_content, list):
+        text_parts = [
+            block.get("text", "")
+            for block in raw_content
+            if isinstance(block, dict) and block.get("type") == "text"
+        ]
+        return "\n".join(text_parts).strip()
 
     # --- Fallback: no content ---
     # return ""
-
-    pass
+    return ""

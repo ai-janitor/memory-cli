@@ -58,7 +58,7 @@ def status_to_exit_code(status: str) -> int:
        — unknown status is itself an error condition
     3. Return the code
     """
-    pass
+    return _STATUS_TO_CODE.get(status, EXIT_ERROR)
 
 
 def exit_with(status: str) -> None:
@@ -73,4 +73,5 @@ def exit_with(status: str) -> None:
 
     Note: This function never returns (sys.exit raises SystemExit).
     """
-    pass
+    code = status_to_exit_code(status)
+    sys.exit(code)

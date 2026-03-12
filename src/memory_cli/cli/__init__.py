@@ -10,10 +10,10 @@
 # ORGANIZATION: Flat re-exports grouped by purpose (entry, formatting, codes).
 # =============================================================================
 
-# --- Public API exports (uncomment as implementations land) ---
-# from memory_cli.cli.entrypoint_and_argv_dispatch import main
-# from memory_cli.cli.exit_codes_0_1_2 import EXIT_SUCCESS, EXIT_NOT_FOUND, EXIT_ERROR
-# from memory_cli.cli.output_envelope_json_and_text import format_output
+# --- Public API exports ---
+from memory_cli.cli.entrypoint_and_argv_dispatch import main
+from memory_cli.cli.exit_codes_0_1_2 import EXIT_SUCCESS, EXIT_NOT_FOUND, EXIT_ERROR
+from memory_cli.cli.output_envelope_json_and_text import format_output
 
 # __all__ will gate `from memory_cli.cli import *`
-# __all__ = ["main", "EXIT_SUCCESS", "EXIT_NOT_FOUND", "EXIT_ERROR", "format_output"]
+__all__ = ["main", "EXIT_SUCCESS", "EXIT_NOT_FOUND", "EXIT_ERROR", "format_output"]

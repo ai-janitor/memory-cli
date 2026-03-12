@@ -95,6 +95,7 @@ def spread(
     """
     # --- Validate depth ---
     # fan_out_depth = max(0, min(fan_out_depth, MAX_FAN_OUT_DEPTH))
+    fan_out_depth = max(0, min(fan_out_depth, MAX_FAN_OUT_DEPTH))
 
     # --- Initialize seeds ---
     # seeds = {}
@@ -107,12 +108,26 @@ def spread(
     #         "hop_distance": 0,
     #         "edge_reason": None,
     #     }
+    seeds = {}
+    for candidate in rrf_candidates:
+        nid = candidate["neuron_id"]
+        seeds[nid] = {
+            **candidate,
+            "activation_score": 1.0,
+            "match_type": "direct_match",
+            "hop_distance": 0,
+            "edge_reason": None,
+        }
 
     # --- BFS fan-out ---
     # if fan_out_depth == 0:
     #     return list(seeds.values())
     #
     # fan_out = _bfs_activate(conn, seeds, fan_out_depth, decay_rate)
+    if fan_out_depth == 0:
+        return list(seeds.values())
+
+    fan_out = _bfs_activate(conn, seeds, fan_out_depth, decay_rate)
 
     # --- Merge seeds + fan-out ---
     # For fan-out neurons that are also seeds, seed activation wins.
@@ -122,8 +137,12 @@ def spread(
     #         result[nid] = entry
 
     # return list(result.values())
+    result = dict(seeds)  # seeds take priority
+    for nid, entry in fan_out.items():
+        if nid not in result:
+            result[nid] = entry
 
-    pass
+    return list(result.values())
 
 
 def _bfs_activate(
@@ -170,6 +189,13 @@ def _bfs_activate(
     # for nid in seeds:
     #     queue.append((nid, 0, 1.0))
     #     visited[nid] = 1.0
+    queue = deque()
+    visited: Dict[int, float] = {}
+    discovered: Dict[int, Dict[str, Any]] = {}
+
+    for nid in seeds:
+        queue.append((nid, 0, 1.0))
+        visited[nid] = 1.0
 
     # --- BFS loop ---
     # while queue:
@@ -203,8 +229,37 @@ def _bfs_activate(
     #             }
 
     # return discovered
+    while queue:
+        current_id, depth, activation = queue.popleft()
 
-    pass
+        if depth >= max_depth:
+            continue
+
+        neighbors = _get_neighbors(conn, current_id)
+        for neighbor_id, edge_weight, edge_reason in neighbors:
+            new_activation = _compute_activation(
+                activation, depth, decay_rate, edge_weight
+            )
+            if new_activation <= 0:
+                continue
+            if neighbor_id in visited and visited[neighbor_id] >= new_activation:
+                continue
+
+            visited[neighbor_id] = new_activation
+            queue.append((neighbor_id, depth + 1, new_activation))
+
+            # Only record non-seed discoveries
+            if neighbor_id not in seeds:
+                discovered[neighbor_id] = {
+                    "neuron_id": neighbor_id,
+                    "activation_score": new_activation,
+                    "match_type": "fan_out",
+                    "hop_distance": depth + 1,
+                    "edge_reason": edge_reason,
+                    "rrf_score": 0.0,  # fan-out neurons have no direct RRF score
+                }
+
+    return discovered
 
 
 def _get_neighbors(
@@ -239,6 +294,11 @@ def _get_neighbors(
     #     f"WHERE source_id = ?",
     #     (neuron_id,),
     # ).fetchall()
+    outgoing = conn.execute(
+        f"SELECT target_id, weight, reason FROM {EDGES_TABLE} "
+        f"WHERE source_id = ?",
+        (neuron_id,),
+    ).fetchall()
 
     # --- Incoming edges ---
     # incoming = conn.execute(
@@ -246,11 +306,15 @@ def _get_neighbors(
     #     f"WHERE target_id = ?",
     #     (neuron_id,),
     # ).fetchall()
+    incoming = conn.execute(
+        f"SELECT source_id, weight, reason FROM {EDGES_TABLE} "
+        f"WHERE target_id = ?",
+        (neuron_id,),
+    ).fetchall()
 
     # --- Combine ---
     # return [(row[0], row[1], row[2]) for row in outgoing + incoming]
-
-    pass
+    return [(row[0], row[1], row[2]) for row in outgoing + incoming]
 
 
 def _compute_activation(
@@ -290,5 +354,6 @@ def _compute_activation(
     # child_depth = parent_depth + 1
     # base_activation = max(0.0, 1.0 - (child_depth + 1) * decay_rate)
     # return base_activation * edge_weight
-
-    pass
+    child_depth = parent_depth + 1
+    base_activation = max(0.0, 1.0 - (child_depth + 1) * decay_rate)
+    return base_activation * edge_weight

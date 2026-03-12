@@ -15,9 +15,9 @@
 
 # --- Import noun handlers to trigger self-registration ---
 # Each module calls register_noun() at module level when imported.
-# from memory_cli.cli.noun_handlers.attr_noun_handler import register as _register_attr
-# from memory_cli.cli.noun_handlers.batch_noun_handler import register as _register_batch
-# from memory_cli.cli.noun_handlers.edge_noun_handler import register as _register_edge
-# from memory_cli.cli.noun_handlers.meta_noun_handler import register as _register_meta
-# from memory_cli.cli.noun_handlers.neuron_noun_handler import register as _register_neuron
-# from memory_cli.cli.noun_handlers.tag_noun_handler import register as _register_tag
+from memory_cli.cli.noun_handlers import attr_noun_handler as _attr
+from memory_cli.cli.noun_handlers import batch_noun_handler as _batch
+from memory_cli.cli.noun_handlers import edge_noun_handler as _edge
+from memory_cli.cli.noun_handlers import meta_noun_handler as _meta
+from memory_cli.cli.noun_handlers import neuron_noun_handler as _neuron
+from memory_cli.cli.noun_handlers import tag_noun_handler as _tag

@@ -22,21 +22,42 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, call
+
 import pytest
+
+from memory_cli.embedding.embed_single_and_batch import embed_batch, embed_single
 
 
 # --- Fixtures ---
-# @pytest.fixture
-# def mock_model(monkeypatch):
-#     """Mock get_model() to return a fake Llama with controllable embed()."""
-#     Create a mock that returns 768-dim zero vectors (or known test vectors)
-#     Monkeypatch get_model in embed_single_and_batch module
-#     Return the mock for assertion
+@pytest.fixture
+def mock_model_single():
+    """Mock model whose embed() returns a 768-dim vector for single input."""
+    model = MagicMock()
+    model.embed.return_value = [0.0] * 768
+    return model
 
-# @pytest.fixture
-# def mock_model_missing(monkeypatch):
-#     """Mock get_model() to raise FileNotFoundError."""
-#     Monkeypatch get_model to raise FileNotFoundError("Model not found")
+
+@pytest.fixture
+def mock_model_batch():
+    """Mock model whose embed() returns a list of 768-dim vectors for batch input."""
+
+    def _embed_side_effect(texts, normalize=True):
+        if isinstance(texts, list):
+            return [[0.0] * 768 for _ in texts]
+        return [0.0] * 768
+
+    model = MagicMock()
+    model.embed.side_effect = _embed_side_effect
+    return model
+
+
+@pytest.fixture
+def mock_model_wrong_dim():
+    """Mock model whose embed() returns a 512-dim vector (wrong)."""
+    model = MagicMock()
+    model.embed.return_value = [0.0] * 512
+    return model
 
 
 class TestEmbedSingle:
@@ -47,21 +68,33 @@ class TestEmbedSingle:
     # result = embed_single("test text", "index")
     # assert result is not None
     # assert len(result) == 768
+    def test_returns_768_dim_vector(self, mock_model_single):
+        result = embed_single(mock_model_single, "test text", "index")
+        assert result is not None
+        assert len(result) == 768
 
     # --- Test: prepends index prefix before calling model ---
     # Use mock_model, capture the text passed to model.embed()
     # embed_single("hello", "index")
     # Assert model.embed was called with "search_document: hello"
+    def test_prepends_index_prefix(self, mock_model_single):
+        embed_single(mock_model_single, "hello", "index")
+        mock_model_single.embed.assert_called_once_with("search_document: hello", normalize=True)
 
     # --- Test: prepends query prefix for query operation ---
     # embed_single("hello", "query")
     # Assert model.embed was called with "search_query: hello"
+    def test_prepends_query_prefix(self, mock_model_single):
+        embed_single(mock_model_single, "hello", "query")
+        mock_model_single.embed.assert_called_once_with("search_query: hello", normalize=True)
 
-    # --- Test: model missing returns None ---
-    # Use mock_model_missing
-    # result = embed_single("hello", "index")
-    # assert result is None
-    pass
+    def test_handles_nested_list_result(self):
+        """Model returning [[...]] (nested) should be unwrapped."""
+        model = MagicMock()
+        model.embed.return_value = [[0.5] * 768]
+        result = embed_single(model, "test", "index")
+        assert len(result) == 768
+        assert result[0] == 0.5
 
 
 class TestEmbedBatch:
@@ -72,20 +105,34 @@ class TestEmbedBatch:
     # result = embed_batch(["text1", "text2"], "index")
     # assert len(result) == 2
     # assert all(len(v) == 768 for v in result)
+    def test_returns_list_of_768_dim_vectors(self, mock_model_batch):
+        result = embed_batch(mock_model_batch, ["text1", "text2"], "index")
+        assert len(result) == 2
+        assert all(len(v) == 768 for v in result)
 
     # --- Test: empty input returns empty list (not None) ---
     # result = embed_batch([], "index")
     # assert result == []
+    def test_empty_input_returns_empty_list(self, mock_model_batch):
+        result = embed_batch(mock_model_batch, [], "index")
+        assert result == []
+        # Model should not be called for empty input
+        mock_model_batch.embed.assert_not_called()
 
     # --- Test: all texts get same prefix ---
     # Use mock_model, embed_batch(["a", "b"], "index")
     # Assert model.embed called with ["search_document: a", "search_document: b"]
+    def test_all_texts_get_same_prefix(self, mock_model_batch):
+        embed_batch(mock_model_batch, ["a", "b"], "index")
+        mock_model_batch.embed.assert_called_once_with(
+            ["search_document: a", "search_document: b"], normalize=True
+        )
 
-    # --- Test: model missing returns None ---
-    # Use mock_model_missing
-    # result = embed_batch(["hello"], "query")
-    # assert result is None
-    pass
+    def test_query_prefix_applied_to_batch(self, mock_model_batch):
+        embed_batch(mock_model_batch, ["x", "y"], "query")
+        mock_model_batch.embed.assert_called_once_with(
+            ["search_query: x", "search_query: y"], normalize=True
+        )
 
 
 class TestDimensionValidation:
@@ -95,12 +142,19 @@ class TestDimensionValidation:
     # Mock model.embed to return [0.0] * 512
     # with pytest.raises(ValueError):
     #   embed_single("text", "index")
+    def test_single_wrong_dim_raises(self, mock_model_wrong_dim):
+        with pytest.raises(ValueError):
+            embed_single(mock_model_wrong_dim, "text", "index")
 
     # --- Test: batch with one wrong-dim vector raises ValueError ---
     # Mock model.embed to return [[0.0]*768, [0.0]*512]
     # with pytest.raises(ValueError):
     #   embed_batch(["a", "b"], "index")
-    pass
+    def test_batch_wrong_dim_raises(self):
+        model = MagicMock()
+        model.embed.return_value = [[0.0] * 768, [0.0] * 512]
+        with pytest.raises(ValueError):
+            embed_batch(model, ["a", "b"], "index")
 
 
 class TestModelMissingWarnings:
@@ -117,4 +171,9 @@ class TestModelMissingWarnings:
     # with warnings.catch_warnings(record=True) as w:
     #   embed_single("text", "query")
     #   Assert warning about "BM25-only"
+
+    # NOTE: embed_single and embed_batch now take model as a parameter directly
+    # rather than calling get_model() internally. The model-missing fallback
+    # is handled by the caller (e.g., batch_reembed) not by these functions.
+    # These tests are kept as placeholders per the scaffold structure.
     pass

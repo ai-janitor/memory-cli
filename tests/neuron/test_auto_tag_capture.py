@@ -27,33 +27,15 @@
 from __future__ import annotations
 
 import datetime
+import re
 import pytest
-from typing import List
 
-
-# -----------------------------------------------------------------------------
-# Fixtures
-# -----------------------------------------------------------------------------
-# @pytest.fixture
-# def mock_project_detection(monkeypatch):
-#     """Mock project detection to return deterministic value.
-#
-#     Prevents git/cwd side effects in tests.
-#     """
-#     # monkeypatch.setattr(
-#     #     "memory_cli.neuron.auto_tag_capture_timestamp_and_project._generate_project_tag",
-#     #     lambda: "test-project"
-#     # )
-#     pass
-
-# @pytest.fixture
-# def frozen_time(monkeypatch):
-#     """Freeze datetime.datetime.now to a known value for timestamp tests.
-#
-#     Freezes to 2026-03-11T14:30:00 UTC.
-#     """
-#     # Use monkeypatch or freezegun to freeze time
-#     pass
+from memory_cli.neuron.auto_tag_capture_timestamp_and_project import (
+    capture_auto_tags,
+    _generate_timestamp_tag,
+    _generate_project_tag,
+    merge_and_deduplicate_tags,
+)
 
 
 # -----------------------------------------------------------------------------
@@ -68,18 +50,32 @@ class TestTimestampTag:
 
         Pattern: 4 digits, dash, 2 digits, dash, 2 digits.
         """
-        pass
+        tag = _generate_timestamp_tag()
+        assert re.match(r"^\d{4}-\d{2}-\d{2}$", tag), f"Tag '{tag}' does not match YYYY-MM-DD"
 
-    def test_timestamp_tag_matches_utc_date(self):
+    def test_timestamp_tag_matches_utc_date(self, monkeypatch):
         """Verify timestamp tag matches current UTC date.
 
         Freeze time and verify the tag matches the frozen date.
         """
-        pass
+        frozen_dt = datetime.datetime(2026, 3, 11, 14, 30, 0, tzinfo=datetime.timezone.utc)
+
+        class FakeDatetime(datetime.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return frozen_dt
+
+        monkeypatch.setattr(
+            "memory_cli.neuron.auto_tag_capture_timestamp_and_project.datetime.datetime",
+            FakeDatetime
+        )
+        tag = _generate_timestamp_tag()
+        assert tag == "2026-03-11"
 
     def test_timestamp_tag_is_string(self):
         """Verify timestamp tag is a plain string, not a date object."""
-        pass
+        tag = _generate_timestamp_tag()
+        assert isinstance(tag, str)
 
 
 # -----------------------------------------------------------------------------
@@ -89,20 +85,36 @@ class TestTimestampTag:
 class TestProjectTag:
     """Test project auto-tag generation."""
 
-    def test_project_tag_from_detection(self):
+    def test_project_tag_from_detection(self, monkeypatch):
         """Verify project tag delegates to project_detection module.
 
         Mock detect_project() and verify the returned tag matches.
         """
-        pass
+        monkeypatch.setattr(
+            "memory_cli.neuron.auto_tag_capture_timestamp_and_project._generate_project_tag",
+            lambda: "mocked-project"
+        )
+        # _generate_project_tag is patched at module level, so capture_auto_tags
+        # calls the mock. We also test directly:
+        monkeypatch.setattr(
+            "memory_cli.neuron.project_detection_git_or_cwd.detect_project",
+            lambda: "direct-project"
+        )
+        tag = _generate_project_tag()
+        assert tag == "direct-project"
 
-    def test_project_tag_is_normalized(self):
+    def test_project_tag_is_normalized(self, monkeypatch):
         """Verify project tag is lowercase, [a-z0-9_-] only.
 
         The project_detection module handles normalization, but
         verify the output format here.
         """
-        pass
+        monkeypatch.setattr(
+            "memory_cli.neuron.project_detection_git_or_cwd.detect_project",
+            lambda: "test-project"
+        )
+        tag = _generate_project_tag()
+        assert re.match(r"^[a-z0-9_-]+$", tag), f"Tag '{tag}' not normalized"
 
 
 # -----------------------------------------------------------------------------
@@ -112,17 +124,32 @@ class TestProjectTag:
 class TestCaptureAutoTags:
     """Test the capture_auto_tags() entry point."""
 
-    def test_returns_exactly_two_tags(self):
+    def test_returns_exactly_two_tags(self, monkeypatch):
         """Verify capture_auto_tags always returns a list of exactly 2."""
-        pass
+        monkeypatch.setattr(
+            "memory_cli.neuron.auto_tag_capture_timestamp_and_project._generate_project_tag",
+            lambda: "test-project"
+        )
+        tags = capture_auto_tags()
+        assert len(tags) == 2
 
-    def test_first_tag_is_timestamp(self):
+    def test_first_tag_is_timestamp(self, monkeypatch):
         """Verify first element is the timestamp tag."""
-        pass
+        monkeypatch.setattr(
+            "memory_cli.neuron.auto_tag_capture_timestamp_and_project._generate_project_tag",
+            lambda: "test-project"
+        )
+        tags = capture_auto_tags()
+        assert re.match(r"^\d{4}-\d{2}-\d{2}$", tags[0])
 
-    def test_second_tag_is_project(self):
+    def test_second_tag_is_project(self, monkeypatch):
         """Verify second element is the project tag."""
-        pass
+        monkeypatch.setattr(
+            "memory_cli.neuron.auto_tag_capture_timestamp_and_project._generate_project_tag",
+            lambda: "test-project"
+        )
+        tags = capture_auto_tags()
+        assert tags[1] == "test-project"
 
 
 # -----------------------------------------------------------------------------
@@ -134,11 +161,22 @@ class TestMergeAndDeduplicateTags:
 
     def test_auto_tags_always_included(self):
         """Verify auto-tags are present in output regardless of user tags."""
-        pass
+        auto_tags = ["2026-03-11", "my-project"]
+        result = merge_and_deduplicate_tags(None, auto_tags)
+        assert "2026-03-11" in result
+        assert "my-project" in result
 
     def test_user_tags_appended_after_auto_tags(self):
         """Verify user tags come after auto-tags in the output list."""
-        pass
+        auto_tags = ["2026-03-11", "my-project"]
+        user_tags = ["python", "ai"]
+        result = merge_and_deduplicate_tags(user_tags, auto_tags)
+        # Auto-tags must come first
+        assert result[0] == "2026-03-11"
+        assert result[1] == "my-project"
+        # User tags must be present
+        assert "python" in result
+        assert "ai" in result
 
     def test_duplicate_user_tag_deduplicated(self):
         """Verify duplicate user tag (matching auto-tag) is removed.
@@ -146,7 +184,10 @@ class TestMergeAndDeduplicateTags:
         If user provides "2026-03-11" and auto-tag is "2026-03-11",
         output should contain it only once.
         """
-        pass
+        auto_tags = ["2026-03-11", "my-project"]
+        user_tags = ["2026-03-11", "python"]
+        result = merge_and_deduplicate_tags(user_tags, auto_tags)
+        assert result.count("2026-03-11") == 1
 
     def test_case_insensitive_deduplication(self):
         """Verify deduplication is case-insensitive.
@@ -154,19 +195,39 @@ class TestMergeAndDeduplicateTags:
         If auto-tag is "test-project" and user provides "Test-Project",
         only one should appear.
         """
-        pass
+        auto_tags = ["2026-03-11", "test-project"]
+        user_tags = ["Test-Project", "python"]
+        result = merge_and_deduplicate_tags(user_tags, auto_tags)
+        # "test-project" should appear exactly once (normalized form)
+        lower_result = [t.lower() for t in result]
+        assert lower_result.count("test-project") == 1
 
     def test_none_user_tags_handled(self):
         """Verify None user_tags returns just auto-tags."""
-        pass
+        auto_tags = ["2026-03-11", "my-project"]
+        result = merge_and_deduplicate_tags(None, auto_tags)
+        assert result == ["2026-03-11", "my-project"]
 
     def test_empty_user_tags_handled(self):
         """Verify empty list user_tags returns just auto-tags."""
-        pass
+        auto_tags = ["2026-03-11", "my-project"]
+        result = merge_and_deduplicate_tags([], auto_tags)
+        assert result == ["2026-03-11", "my-project"]
 
     def test_user_tags_whitespace_stripped(self):
         """Verify user tags are stripped of whitespace during merge.
 
         "  my-tag  " should become "my-tag".
         """
-        pass
+        auto_tags = ["2026-03-11", "my-project"]
+        user_tags = ["  my-tag  ", " python "]
+        result = merge_and_deduplicate_tags(user_tags, auto_tags)
+        assert "my-tag" in result
+        assert "python" in result
+        # Verify whitespace-padded versions are NOT in the result
+        assert "  my-tag  " not in result
+
+    def test_result_is_list(self):
+        """Verify result is a list type."""
+        result = merge_and_deduplicate_tags(["a"], ["b", "c"])
+        assert isinstance(result, list)

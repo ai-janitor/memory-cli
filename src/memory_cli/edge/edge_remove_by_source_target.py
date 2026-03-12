@@ -76,14 +76,17 @@ def edge_remove(
     # If None -> raise EdgeRemoveError(
     #     f"No edge from {source_id} to {target_id}", exit_code=1
     # )
+    edge_data = _lookup_edge(conn, source_id, target_id)
+    if edge_data is None:
+        raise EdgeRemoveError(f"No edge from {source_id} to {target_id}", exit_code=1)
 
     # --- Step 2: Delete the edge ---
     # _delete_edge(conn, source_id, target_id)
+    _delete_edge(conn, source_id, target_id)
 
     # --- Step 3: Return deleted edge info ---
     # return edge_data
-
-    pass
+    return edge_data
 
 
 def _lookup_edge(
@@ -108,7 +111,13 @@ def _lookup_edge(
     Returns:
         Dict with edge data if found, None otherwise.
     """
-    pass
+    row = conn.execute(
+        "SELECT source_id, target_id, reason, weight, created_at FROM edges WHERE source_id = ? AND target_id = ?",
+        (source_id, target_id),
+    ).fetchone()
+    if row is None:
+        return None
+    return dict(row)
 
 
 def _delete_edge(
@@ -131,4 +140,7 @@ def _delete_edge(
         source_id: Source neuron ID.
         target_id: Target neuron ID.
     """
-    pass
+    conn.execute(
+        "DELETE FROM edges WHERE source_id = ? AND target_id = ?",
+        (source_id, target_id),
+    )

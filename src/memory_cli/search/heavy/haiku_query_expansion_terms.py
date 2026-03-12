@@ -24,7 +24,15 @@
 
 from __future__ import annotations
 
+import json
 from typing import List
+
+from .haiku_rerank_by_neuron_ids import (
+    HaikuAuthError,
+    HaikuMalformedResponse,
+    HaikuNetworkError,
+    _call_haiku_api,
+)
 
 
 # -----------------------------------------------------------------------------
@@ -72,7 +80,11 @@ def haiku_expand_query(
         HaikuNetworkError: On timeout, connection error, 429.
         HaikuMalformedResponse: If response cannot be parsed into term list.
     """
-    pass
+    system_prompt = _build_expansion_system_prompt()
+    user_message = _build_expansion_user_message(query)
+    response_text = _call_haiku_api(api_key, model, system_prompt, user_message)
+    terms = _parse_expansion_response(response_text)
+    return terms[:MAX_EXPANSION_TERMS]
 
 
 def _build_expansion_system_prompt() -> str:
@@ -90,7 +102,13 @@ def _build_expansion_system_prompt() -> str:
     Returns:
         System prompt string.
     """
-    pass
+    return (
+        "You are a search query expansion engine. Given a search query, generate 3 to 8 "
+        "related search terms that are semantically related but not identical to the query.\n\n"
+        "Terms should be short (1-4 words each). Return ONLY a JSON array of strings. "
+        "No explanation, no commentary, no wrapping.\n\n"
+        "Example output: [\"machine learning\", \"neural networks\", \"deep learning\"]"
+    )
 
 
 def _build_expansion_user_message(query: str) -> str:
@@ -110,7 +128,7 @@ def _build_expansion_user_message(query: str) -> str:
     Returns:
         Formatted user message string.
     """
-    pass
+    return f"Query: {query}"
 
 
 def _parse_expansion_response(response_text: str) -> List[str]:
@@ -140,4 +158,29 @@ def _parse_expansion_response(response_text: str) -> List[str]:
     Raises:
         HaikuMalformedResponse: If parsing fails or too few terms.
     """
-    pass
+    text = response_text.strip()
+    # Strip markdown code fences if present
+    if text.startswith("```"):
+        lines = text.split("\n")
+        inner = lines[1:-1] if lines[-1].strip() == "```" else lines[1:]
+        text = "\n".join(inner).strip()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise HaikuMalformedResponse(f"Failed to parse JSON: {e}") from e
+    if not isinstance(parsed, list):
+        raise HaikuMalformedResponse(f"Expected a JSON array of strings, got {type(parsed).__name__}")
+    terms = []
+    for item in parsed:
+        if not isinstance(item, str):
+            raise HaikuMalformedResponse(f"Expected string elements, got {type(item).__name__}: {item!r}")
+        stripped = item.strip()
+        if stripped:
+            terms.append(stripped)
+    # Truncate to max
+    terms = terms[:MAX_EXPANSION_TERMS]
+    if len(terms) < MIN_EXPANSION_TERMS:
+        raise HaikuMalformedResponse(
+            f"Too few expansion terms: {len(terms)} (minimum {MIN_EXPANSION_TERMS})"
+        )
+    return terms

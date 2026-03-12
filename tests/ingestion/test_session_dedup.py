@@ -35,87 +35,108 @@ from memory_cli.ingestion.session_dedup_guard_by_session_id import (
 
 
 class TestCheckSessionAlreadyIngested:
-    """Test check_session_already_ingested() main entry point.
+    """Test check_session_already_ingested() main entry point."""
 
-    Tests:
-    - test_returns_true_when_neurons_exist
-      Mock _query to return count=5
-      Verify: result.already_ingested is True, result.existing_neuron_count == 5
-    - test_returns_false_when_no_neurons
-      Mock _query to return count=0
-      Verify: result.already_ingested is False, result.existing_neuron_count == 0
-    - test_session_id_passed_through
-      Verify: result.session_id matches the input session_id
-    - test_returns_dedup_check_result_type
-      Verify: return type is DedupCheckResult
-    """
+    def _make_conn(self, count: int) -> MagicMock:
+        """Create a mock connection that returns count from execute."""
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (count,)
+        conn.execute.return_value = cursor
+        return conn
 
-    # --- test_returns_true_when_neurons_exist ---
-    # Mock _query_existing_session_neurons to return 5
-    # result = check_session_already_ingested(conn, "sess-abc")
-    # assert result.already_ingested is True
-    # assert result.existing_neuron_count == 5
+    def test_returns_true_when_neurons_exist(self):
+        """Mock _query to return count=5 -> already_ingested=True."""
+        conn = self._make_conn(5)
+        result = check_session_already_ingested(conn, "sess-abc")
+        assert result.already_ingested is True
+        assert result.existing_neuron_count == 5
 
-    # --- test_returns_false_when_no_neurons ---
-    # --- test_session_id_passed_through ---
-    # --- test_returns_dedup_check_result_type ---
+    def test_returns_false_when_no_neurons(self):
+        """Mock _query to return count=0 -> already_ingested=False."""
+        conn = self._make_conn(0)
+        result = check_session_already_ingested(conn, "sess-abc")
+        assert result.already_ingested is False
+        assert result.existing_neuron_count == 0
 
-    pass
+    def test_session_id_passed_through(self):
+        """result.session_id matches the input session_id."""
+        conn = self._make_conn(0)
+        result = check_session_already_ingested(conn, "sess-xyz-123")
+        assert result.session_id == "sess-xyz-123"
+
+    def test_returns_dedup_check_result_type(self):
+        """Return type is DedupCheckResult."""
+        conn = self._make_conn(0)
+        result = check_session_already_ingested(conn, "sess-abc")
+        assert isinstance(result, DedupCheckResult)
 
 
 class TestQueryExistingSessionNeurons:
-    """Test _query_existing_session_neurons() DB query.
+    """Test _query_existing_session_neurons() DB query."""
 
-    Tests:
-    - test_executes_correct_sql
-      Mock conn.execute, verify SQL contains JOIN on neuron_attrs and attr_keys
-      Verify: WHERE clause filters on 'ingested_session_id' and active status
-    - test_returns_count_from_query
-      Mock cursor.fetchone() to return (3,)
-      Verify: returns 3
-    - test_returns_zero_for_no_matches
-      Mock cursor.fetchone() to return (0,)
-      Verify: returns 0
-    - test_passes_session_id_as_parameter
-      Verify: conn.execute called with session_id as bind parameter
-      (prevents SQL injection)
-    """
+    def test_executes_correct_sql(self):
+        """Mock conn.execute, verify SQL contains JOIN on neuron_attrs and attr_keys."""
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (3,)
+        conn.execute.return_value = cursor
 
-    # --- test_executes_correct_sql ---
-    # conn = MagicMock()
-    # cursor = MagicMock()
-    # cursor.fetchone.return_value = (3,)
-    # conn.execute.return_value = cursor
-    # result = _query_existing_session_neurons(conn, "sess-abc")
-    # assert result == 3
-    # sql = conn.execute.call_args[0][0]
-    # assert "ingested_session_id" in sql
-    # assert "active" in sql
+        result = _query_existing_session_neurons(conn, "sess-abc")
+        assert result == 3
 
-    # --- test_returns_count_from_query ---
-    # --- test_returns_zero_for_no_matches ---
-    # --- test_passes_session_id_as_parameter ---
+        # Verify SQL
+        sql = conn.execute.call_args[0][0]
+        assert "ingested_session_id" in sql
+        assert "active" in sql
 
-    pass
+    def test_returns_count_from_query(self):
+        """Mock cursor.fetchone() to return (3,) -> returns 3."""
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (3,)
+        conn.execute.return_value = cursor
+        assert _query_existing_session_neurons(conn, "sess-abc") == 3
+
+    def test_returns_zero_for_no_matches(self):
+        """Mock cursor.fetchone() to return (0,) -> returns 0."""
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (0,)
+        conn.execute.return_value = cursor
+        assert _query_existing_session_neurons(conn, "new-session") == 0
+
+    def test_passes_session_id_as_parameter(self):
+        """Verify conn.execute called with session_id as bind parameter."""
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (0,)
+        conn.execute.return_value = cursor
+
+        _query_existing_session_neurons(conn, "specific-session-id")
+
+        # Verify session_id was passed as bind param
+        call_args = conn.execute.call_args
+        params = call_args[0][1]  # second positional arg is params tuple
+        assert "specific-session-id" in params
 
 
 class TestDedupCheckResult:
-    """Test DedupCheckResult dataclass.
+    """Test DedupCheckResult dataclass."""
 
-    Tests:
-    - test_fields_accessible
-      Create DedupCheckResult(True, 5, "sess-abc")
-      Verify: all fields accessible with correct values
-    - test_equality
-      Two instances with same values are equal
-    """
+    def test_fields_accessible(self):
+        """Create DedupCheckResult(True, 5, "sess-abc") -> all fields accessible."""
+        result = DedupCheckResult(
+            already_ingested=True,
+            existing_neuron_count=5,
+            session_id="sess-abc",
+        )
+        assert result.already_ingested is True
+        assert result.existing_neuron_count == 5
+        assert result.session_id == "sess-abc"
 
-    # --- test_fields_accessible ---
-    # result = DedupCheckResult(already_ingested=True, existing_neuron_count=5, session_id="sess-abc")
-    # assert result.already_ingested is True
-    # assert result.existing_neuron_count == 5
-    # assert result.session_id == "sess-abc"
-
-    # --- test_equality ---
-
-    pass
+    def test_equality(self):
+        """Two instances with same values are equal."""
+        r1 = DedupCheckResult(already_ingested=True, existing_neuron_count=5, session_id="sess-abc")
+        r2 = DedupCheckResult(already_ingested=True, existing_neuron_count=5, session_id="sess-abc")
+        assert r1 == r2

@@ -28,6 +28,9 @@ from __future__ import annotations
 import sqlite3
 from typing import List, Optional, Tuple
 
+from ..neuron.neuron_add_with_autotags_and_embed import neuron_add
+from ..edge.edge_add_with_reason_and_weight import edge_add
+
 
 # -----------------------------------------------------------------------------
 # Constants — star topology configuration.
@@ -72,16 +75,19 @@ def capture_context_star(
     # --- Guard: nothing to link ---
     # if not neuron_ids:
     #     return (0, 0)
+    if not neuron_ids:
+        return (0, 0)
 
     # --- Create context hub neuron ---
     # ctx_id = _create_context_neuron(conn, session_id, project)
+    ctx_id = _create_context_neuron(conn, session_id, project)
 
     # --- Create star edges ---
     # edge_count = _create_star_edges(conn, ctx_id, neuron_ids, session_id)
+    edge_count = _create_star_edges(conn, ctx_id, neuron_ids, session_id)
 
     # return (ctx_id, edge_count)
-
-    pass
+    return (ctx_id, edge_count)
 
 
 def _create_context_neuron(
@@ -118,13 +124,17 @@ def _create_context_neuron(
     # if project:
     #     tags.append(f"project:{project}")
     # attrs = {"ingested_session_id": session_id, "context_type": "session_hub"}
+    content = CONTEXT_NEURON_CONTENT_TEMPLATE.format(session_id=session_id)
+    tags = ["ingested", "session-context"]
+    if project:
+        tags.append(f"project:{project}")
+    attrs = {"ingested_session_id": session_id, "context_type": "session_hub"}
 
     # --- Create neuron ---
-    # from ..neuron.neuron_add_with_autotags_and_embed import neuron_add
     # result = neuron_add(conn, content, tags=tags, attrs=attrs, no_embed=True)
     # return result["id"]
-
-    pass
+    result = neuron_add(conn, content, tags=tags, attrs=attrs, no_embed=True)
+    return result["id"]
 
 
 def _create_star_edges(
@@ -167,7 +177,15 @@ def _create_star_edges(
     #     except Exception as e:
     #         import logging
     #         logging.warning(f"Star edge to neuron {nid} failed: {e}")
+    reason = CONTEXT_EDGE_REASON_TEMPLATE.format(session_id=session_id)
+    count = 0
+    for nid in neuron_ids:
+        try:
+            edge_add(conn, context_neuron_id, nid, reason=reason, weight=CONTEXT_EDGE_WEIGHT)
+            count += 1
+        except Exception as e:
+            import logging
+            logging.warning(f"Star edge to neuron {nid} failed: {e}")
 
     # return count
-
-    pass
+    return count

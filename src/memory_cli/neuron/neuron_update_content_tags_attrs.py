@@ -52,7 +52,9 @@ class NeuronUpdateError(Exception):
         exit_code: Suggested CLI exit code (1 for not found, 2 for archived).
     """
 
-    pass
+    def __init__(self, message: str, exit_code: int = 1):
+        super().__init__(message)
+        self.exit_code = exit_code
 
 
 def neuron_update(
@@ -161,7 +163,64 @@ def neuron_update(
     # from .neuron_get_by_id import neuron_get
     # return neuron_get(conn, neuron_id)
 
-    pass
+    from .neuron_get_by_id import neuron_get
+
+    row = conn.execute(
+        "SELECT id, status FROM neurons WHERE id = ?",
+        (neuron_id,)
+    ).fetchone()
+
+    if row is None:
+        raise NeuronUpdateError(f"Neuron {neuron_id} not found", 1)
+
+    if row["status"] == STATUS_ARCHIVED:
+        raise NeuronUpdateError(
+            f"Neuron {neuron_id} is archived — restore first", 2
+        )
+
+    changed = False
+
+    if content is not None:
+        if not content.strip():
+            raise NeuronUpdateError("Content cannot be empty")
+        _update_content(conn, neuron_id, content, no_embed)
+        changed = True
+
+    if tags_add:
+        _add_tags(conn, neuron_id, tags_add)
+        changed = True
+
+    if tags_remove:
+        _remove_tags(conn, neuron_id, tags_remove)
+        changed = True
+
+    if attr_set:
+        _set_attrs(conn, neuron_id, attr_set)
+        changed = True
+
+    if attr_unset:
+        _unset_attrs(conn, neuron_id, attr_unset)
+        changed = True
+
+    if source is not None:
+        now_ms = int(time.time() * 1000)
+        conn.execute(
+            "UPDATE neurons SET source = ?, updated_at = ? WHERE id = ?",
+            (source, now_ms, neuron_id)
+        )
+        conn.commit()
+        changed = True
+
+    if changed and content is None and source is None:
+        # Tags/attrs changed but didn't touch updated_at yet — update it now
+        now_ms = int(time.time() * 1000)
+        conn.execute(
+            "UPDATE neurons SET updated_at = ? WHERE id = ?",
+            (now_ms, neuron_id)
+        )
+        conn.commit()
+
+    return neuron_get(conn, neuron_id)
 
 
 def _update_content(
@@ -188,7 +247,23 @@ def _update_content(
         content: New content text (validated non-empty by caller).
         no_embed: Skip re-embedding if True.
     """
-    pass
+    import warnings
+    from .neuron_get_by_id import _hydrate_tags
+    from .neuron_add_with_autotags_and_embed import _embed_neuron
+
+    now_ms = int(time.time() * 1000)
+    conn.execute(
+        "UPDATE neurons SET content = ?, updated_at = ? WHERE id = ?",
+        (content, now_ms, neuron_id)
+    )
+    conn.commit()
+
+    if not no_embed:
+        try:
+            current_tags = _hydrate_tags(conn, neuron_id)
+            _embed_neuron(conn, neuron_id, content, current_tags)
+        except Exception as e:
+            warnings.warn(f"Re-embedding failed for neuron {neuron_id}: {e}")
 
 
 def _add_tags(
@@ -209,7 +284,15 @@ def _add_tags(
         neuron_id: ID of the neuron.
         tag_names: List of tag names to add.
     """
-    pass
+    from memory_cli.registries import tag_autocreate
+
+    for tag_name in tag_names:
+        tag_id = tag_autocreate(conn, tag_name)
+        conn.execute(
+            "INSERT OR IGNORE INTO neuron_tags (neuron_id, tag_id) VALUES (?, ?)",
+            (neuron_id, tag_id)
+        )
+    conn.commit()
 
 
 def _remove_tags(
@@ -233,7 +316,21 @@ def _remove_tags(
         neuron_id: ID of the neuron.
         tag_names: List of tag names to remove.
     """
-    pass
+    for tag_name in tag_names:
+        normalized = tag_name.strip().lower()
+        if _is_auto_tag(normalized):
+            continue
+        row = conn.execute(
+            "SELECT id FROM tags WHERE name = ?",
+            (normalized,)
+        ).fetchone()
+        if row is None:
+            continue
+        conn.execute(
+            "DELETE FROM neuron_tags WHERE neuron_id = ? AND tag_id = ?",
+            (neuron_id, row[0])
+        )
+    conn.commit()
 
 
 def _set_attrs(
@@ -254,7 +351,15 @@ def _set_attrs(
         neuron_id: ID of the neuron.
         attrs: Dict mapping attribute key names to values.
     """
-    pass
+    from memory_cli.registries import attr_autocreate
+
+    for key, value in attrs.items():
+        attr_key_id = attr_autocreate(conn, key)
+        conn.execute(
+            "INSERT OR REPLACE INTO neuron_attrs (neuron_id, attr_key_id, value) VALUES (?, ?, ?)",
+            (neuron_id, attr_key_id, value)
+        )
+    conn.commit()
 
 
 def _unset_attrs(
@@ -277,7 +382,19 @@ def _unset_attrs(
         neuron_id: ID of the neuron.
         attr_keys: List of attribute key names to unset.
     """
-    pass
+    for key_name in attr_keys:
+        normalized = key_name.strip().lower()
+        row = conn.execute(
+            "SELECT id FROM attr_keys WHERE name = ?",
+            (normalized,)
+        ).fetchone()
+        if row is None:
+            continue
+        conn.execute(
+            "DELETE FROM neuron_attrs WHERE neuron_id = ? AND attr_key_id = ?",
+            (neuron_id, row[0])
+        )
+    conn.commit()
 
 
 def _is_auto_tag(tag_name: str) -> bool:
@@ -303,4 +420,4 @@ def _is_auto_tag(tag_name: str) -> bool:
     # --- Check timestamp pattern ---
     # return bool(TIMESTAMP_TAG_PATTERN.match(tag_name))
 
-    pass
+    return bool(TIMESTAMP_TAG_PATTERN.match(tag_name))

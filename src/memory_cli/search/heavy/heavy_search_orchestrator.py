@@ -33,11 +33,11 @@ import sqlite3
 import sys
 from typing import Any, Dict, List, Optional
 
-# from ..light_search_pipeline_orchestrator import light_search
-# from .haiku_api_key_resolution import resolve_haiku_api_key
-# from .haiku_rerank_by_neuron_ids import haiku_rerank
-# from .haiku_query_expansion_terms import haiku_expand_query
-# from .heavy_search_merge_and_paginate import merge_and_paginate
+from ..light_search_pipeline_orchestrator import light_search, SearchOptions, SearchResultEnvelope
+from .haiku_api_key_resolution import resolve_haiku_api_key, HaikuApiKeyError
+from .haiku_rerank_by_neuron_ids import haiku_rerank, HaikuAuthError, HaikuNetworkError, HaikuMalformedResponse
+from .haiku_query_expansion_terms import haiku_expand_query
+from .heavy_search_merge_and_paginate import merge_and_paginate
 
 
 # -----------------------------------------------------------------------------
@@ -118,26 +118,62 @@ def heavy_search(
     # --- Step 1: Resolve API key ---
     # api_key = resolve_haiku_api_key(config)
     # If resolve returns None or raises, sys.exit(2) with error message to stderr
+    try:
+        api_key = resolve_haiku_api_key(config)
+    except HaikuApiKeyError as e:
+        import sys
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(2)
 
     # --- Step 2: Inflate limit ---
     # inflated = _inflate_limit(limit)
+    inflated = _inflate_limit(limit)
 
     # --- Step 3: Run light search with inflated limit ---
     # initial_results = _run_light_search_phase(conn, query, config, inflated, tag_filter)
     # If initial_results["results"] is empty, return empty envelope immediately
+    initial_results = _run_light_search_phase(conn, query, config, inflated, tag_filter)
+    candidates = initial_results.results
+    if not candidates:
+        return {
+            "query": query,
+            "results": [],
+            "total": 0,
+            "limit": limit,
+            "offset": offset,
+        }
 
     # --- Step 4: Phase 2a — Haiku re-ranking ---
     # reranked = _run_haiku_rerank_phase(api_key, config, query, initial_results["results"])
     # On exception: reranked = initial_results["results"], print warning to stderr
+    try:
+        reranked = _run_haiku_rerank_phase(api_key, config, query, candidates)
+    except HaikuAuthError as e:
+        import sys
+        print(f"Haiku auth error: {e}", file=sys.stderr)
+        sys.exit(2)
+    except (HaikuNetworkError, HaikuMalformedResponse) as e:
+        import sys
+        print(f"Warning: Haiku reranking failed, using original order: {e}", file=sys.stderr)
+        reranked = candidates
 
     # --- Step 5: Phase 2b — Haiku expansion ---
     # expansion_results = _run_haiku_expansion_phase(api_key, config, conn, query, tag_filter)
     # On exception: expansion_results = [], print warning to stderr
+    try:
+        expansion_results = _run_haiku_expansion_phase(api_key, config, conn, query, tag_filter)
+    except HaikuAuthError as e:
+        import sys
+        print(f"Haiku auth error: {e}", file=sys.stderr)
+        sys.exit(2)
+    except (HaikuNetworkError, HaikuMalformedResponse) as e:
+        import sys
+        print(f"Warning: Haiku expansion failed, skipping expansion: {e}", file=sys.stderr)
+        expansion_results = []
 
     # --- Step 6: Merge and paginate ---
     # return _assemble_final_results(query, reranked, expansion_results, limit, offset)
-
-    pass
+    return _assemble_final_results(query, reranked, expansion_results, limit, offset)
 
 
 def _inflate_limit(user_limit: int) -> int:
@@ -156,7 +192,7 @@ def _inflate_limit(user_limit: int) -> int:
     Returns:
         Inflated limit as int.
     """
-    pass
+    return max(user_limit * INFLATED_LIMIT_MULTIPLIER, INFLATED_LIMIT_FLOOR)
 
 
 def _run_light_search_phase(
@@ -183,7 +219,13 @@ def _run_light_search_phase(
     Returns:
         Light search result envelope dict.
     """
-    pass
+    options = SearchOptions(
+        query=query,
+        limit=inflated_limit,
+        offset=0,
+        tags=tag_filter or [],
+    )
+    return light_search(conn, options)
 
 
 def _run_haiku_rerank_phase(
@@ -219,7 +261,21 @@ def _run_haiku_rerank_phase(
         HaikuNetworkError: On timeout/network — caller falls back.
         HaikuMalformedResponse: On bad response — caller falls back.
     """
-    pass
+    # Get model name from config
+    try:
+        model = config.haiku.model
+    except AttributeError:
+        model = DEFAULT_HAIKU_MODEL
+
+    # Call haiku_rerank to get ordered IDs
+    ordered_ids = haiku_rerank(api_key, model, query, candidates)
+
+    # Build an ID -> candidate map for fast lookup
+    id_to_candidate = {c["id"]: c for c in candidates}
+
+    # Reorder candidates to match Haiku's ranking
+    reordered = [id_to_candidate[oid] for oid in ordered_ids if oid in id_to_candidate]
+    return reordered
 
 
 def _run_haiku_expansion_phase(
@@ -258,7 +314,28 @@ def _run_haiku_expansion_phase(
         HaikuNetworkError: On timeout/network — caller falls back.
         HaikuMalformedResponse: On bad response — caller falls back.
     """
-    pass
+    # Get model name from config
+    try:
+        model = config.haiku.model
+    except AttributeError:
+        model = DEFAULT_HAIKU_MODEL
+
+    # Get expanded terms from Haiku
+    expanded_terms = haiku_expand_query(api_key, model, query)
+
+    # Run light search for each term, collect results
+    all_expansion_results: List[Dict[str, Any]] = []
+    for term in expanded_terms:
+        options = SearchOptions(
+            query=term,
+            limit=10,
+            offset=0,
+            tags=tag_filter or [],
+        )
+        term_results = light_search(conn, options)
+        all_expansion_results.extend(term_results.results)
+
+    return all_expansion_results
 
 
 def _assemble_final_results(
@@ -282,4 +359,4 @@ def _assemble_final_results(
     Returns:
         Final result envelope dict.
     """
-    pass
+    return merge_and_paginate(query, reranked, expansion_results, limit, offset)

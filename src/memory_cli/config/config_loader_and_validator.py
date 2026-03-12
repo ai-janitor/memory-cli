@@ -53,7 +53,10 @@ class ConfigLoadError(Exception):
     # stage: str
     # details: str
 
-    pass
+    def __init__(self, stage: str, details: str):
+        self.stage = stage
+        self.details = details
+        super().__init__(f"Config load failed at stage '{stage}': {details}")
 
 
 def load_config(
@@ -105,7 +108,28 @@ def load_config(
     Raises:
         ConfigLoadError: On any failure in the pipeline, with stage and details.
     """
-    pass
+    # 1. Resolve config path
+    try:
+        resolved_path = resolve_config_path(config_override, db_override, cwd)
+    except FileNotFoundError as e:
+        raise ConfigLoadError(stage="resolve", details=str(e))
+
+    # 2. Read config file
+    raw_dict = _read_config_file(resolved_path)
+
+    # 3. Merge defaults
+    merged = build_config_with_defaults(raw_dict)
+
+    # 4. Apply CLI overrides
+    _apply_overrides(merged, db_override)
+
+    # 5. Validate
+    errors = validate_config(merged)
+    if errors:
+        raise ConfigLoadError(stage="validate", details="; ".join(errors))
+
+    # 6. Convert to typed object and return
+    return dict_to_config_schema(merged)
 
 
 def _read_config_file(config_path: Path) -> Dict[str, Any]:
@@ -132,7 +156,27 @@ def _read_config_file(config_path: Path) -> Dict[str, Any]:
     Raises:
         ConfigLoadError: With appropriate stage on any failure.
     """
-    pass
+    # 1. Open file for reading (UTF-8)
+    try:
+        content = config_path.read_text(encoding="utf-8")
+    except (FileNotFoundError, PermissionError, IsADirectoryError, OSError) as e:
+        raise ConfigLoadError(stage="read", details=str(e))
+
+    # 2. Parse JSON
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError as e:
+        raise ConfigLoadError(stage="parse", details=f"Invalid JSON in {config_path}: {e}")
+
+    # 3. Verify top-level is a dict
+    if not isinstance(parsed, dict):
+        raise ConfigLoadError(
+            stage="parse",
+            details=f"Config must be a JSON object, got {type(parsed).__name__}",
+        )
+
+    # 4. Return parsed dict
+    return parsed
 
 
 def _apply_overrides(
@@ -158,4 +202,9 @@ def _apply_overrides(
     Returns:
         Config dict with overrides applied.
     """
-    pass
+    # 1. If db_override is not None, set config["db_path"] = db_override
+    if db_override is not None:
+        config["db_path"] = db_override
+
+    # 2. Return modified config (mutated in place)
+    return config

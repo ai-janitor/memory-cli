@@ -19,8 +19,7 @@ from __future__ import annotations
 
 from typing import List, Any
 
-# from memory_cli.cli.entrypoint_and_argv_dispatch import register_noun
-# from memory_cli.cli.output_envelope_json_and_text import Result
+from memory_cli.cli.entrypoint_and_argv_dispatch import register_noun
 
 
 # =============================================================================
@@ -45,7 +44,7 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
     6. Return Result(status="ok", data={"neuron_id": id, "tags_added": [...]})
     7. If neuron not found: Result(status="not_found")
     """
-    pass
+    raise NotImplementedError
 
 
 # =============================================================================
@@ -73,7 +72,7 @@ def handle_list(args: List[str], global_flags: Any) -> Any:
     4. Return Result(status="ok", data=tag_list)
     5. Empty list is success (exit 0)
     """
-    pass
+    raise NotImplementedError
 
 
 # =============================================================================
@@ -97,7 +96,7 @@ def handle_remove(args: List[str], global_flags: Any) -> Any:
     5. Return Result(status="ok", data={"neuron_id": id, "tags_removed": [...]})
     6. If neuron not found: Result(status="not_found")
     """
-    pass
+    raise NotImplementedError
 
 
 # =============================================================================
@@ -137,7 +136,12 @@ def register() -> None:
          "flag_defs": _FLAG_DEFS,
        })
     """
-    pass
+    register_noun("tag", {
+        "verb_map": _VERB_MAP,
+        "description": "Tags — categorical labels for neurons",
+        "verb_descriptions": _VERB_DESCRIPTIONS,
+        "flag_defs": _FLAG_DEFS,
+    })
 
 # --- Self-register on import ---
-# register()
+register()

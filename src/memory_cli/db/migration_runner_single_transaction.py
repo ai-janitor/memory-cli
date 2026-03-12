@@ -25,8 +25,12 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
+import time
 from typing import Callable
+
+logger = logging.getLogger(__name__)
 
 
 # --- Type alias for migration functions ---
@@ -58,10 +62,14 @@ def run_pending_migrations(
     # --- Step 1: Determine which migrations to run ---
     # steps = _get_migration_steps(current_version, target_version)
     # If no steps needed: return True immediately
+    if current_version == target_version:
+        return True
+    steps = _get_migration_steps(current_version, target_version)
 
     # --- Step 2: Begin explicit transaction ---
     # Use conn.execute("BEGIN IMMEDIATE") to acquire a write lock early
     # This prevents SQLITE_BUSY during the migration itself
+    conn.execute("BEGIN IMMEDIATE")
 
     # --- Step 3: Execute each migration step in order ---
     # try:
@@ -69,12 +77,30 @@ def run_pending_migrations(
     #     apply_fn(conn)
     #     # Each apply_fn executes DDL statements (CREATE TABLE, etc.)
     #     # They must NOT commit or begin their own transactions
+    try:
+        for version, apply_fn in steps:
+            logger.info("Applying migration v%03d ...", version)
+            apply_fn(conn)
 
-    # --- Step 4: Update schema version in meta table ---
-    #   UPDATE meta SET value = str(target_version) WHERE key = 'schema_version'
-    #   UPDATE meta SET value = current_timestamp_ms WHERE key = 'last_migrated_at'
-    #   conn.execute("COMMIT")
-    #   return True
+        # --- Step 4: Update schema version in meta table ---
+        #   UPDATE meta SET value = str(target_version) WHERE key = 'schema_version'
+        #   UPDATE meta SET value = current_timestamp_ms WHERE key = 'last_migrated_at'
+        #   conn.execute("COMMIT")
+        #   return True
+        now_ms = int(time.time() * 1000)
+        conn.execute(
+            "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+            (str(target_version),),
+        )
+        conn.execute(
+            "UPDATE meta SET value = ? WHERE key = 'last_migrated_at'",
+            (str(now_ms),),
+        )
+        conn.execute("COMMIT")
+        logger.info(
+            "Migrations complete: schema_version=%d -> %d", current_version, target_version
+        )
+        return True
 
     # --- Step 5: Handle failure — rollback everything ---
     # except Exception as e:
@@ -82,7 +108,19 @@ def run_pending_migrations(
     #   Log the error with details about which migration step failed
     #   return False
     #   (Caller will sys.exit(2))
-    pass
+    except Exception as exc:
+        try:
+            conn.execute("ROLLBACK")
+        except sqlite3.Error:
+            pass
+        logger.error(
+            "Migration failed (rolled back). current=%d target=%d error=%s",
+            current_version,
+            target_version,
+            exc,
+            exc_info=True,
+        )
+        return False
 
 
 def _get_migration_steps(
@@ -103,12 +141,22 @@ def _get_migration_steps(
     """
     # --- Step 1: Import the migration registry ---
     # from .migrations import MIGRATION_REGISTRY
+    from .migrations import MIGRATION_REGISTRY  # noqa: PLC0415
 
     # --- Step 2: Collect steps in order ---
     # For each version in range(from_version + 1, to_version + 1):
     #   Look up the migration function in MIGRATION_REGISTRY
     #   If not found: raise ValueError (gap in migration chain)
     #   Append (version, fn) to the result list
+    steps: list[tuple[int, MigrationFn]] = []
+    for version in range(from_version + 1, to_version + 1):
+        if version not in MIGRATION_REGISTRY:
+            raise ValueError(
+                f"Migration v{version:03d} is missing from MIGRATION_REGISTRY. "
+                f"Cannot migrate from version {from_version} to {to_version}. "
+                "Add the missing migration module and register it."
+            )
+        steps.append((version, MIGRATION_REGISTRY[version]))
 
     # --- Step 3: Return ordered list ---
-    pass
+    return steps

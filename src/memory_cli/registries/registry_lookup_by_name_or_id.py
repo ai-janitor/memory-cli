@@ -77,7 +77,30 @@ def lookup_by_name(
         RegistryLookupError: If not found and autocreate is False.
         TagRegistryError/AttrRegistryError: If normalization fails (via normalize_fn).
     """
-    pass
+    # 1. Normalize via the provided normalize_fn (raises if invalid)
+    name = normalize_fn(raw_name)
+    # 2. SELECT row from the specified table
+    row = conn.execute(
+        f"SELECT id, name, created_at FROM {table} WHERE name = ?", (name,)
+    ).fetchone()
+    if row is not None:
+        # 3. Found — return as dict
+        return {"id": row[0], "name": row[1], "created_at": row[2]}
+    # 4. Not found — auto-create or raise
+    if autocreate:
+        now = __import__("time").time()
+        created_at = int(now * 1000)
+        conn.execute(
+            f"INSERT INTO {table} (name, created_at) VALUES (?, ?)",
+            (name, created_at),
+        )
+        row = conn.execute(
+            f"SELECT id, name, created_at FROM {table} WHERE name = ?", (name,)
+        ).fetchone()
+        return {"id": row[0], "name": row[1], "created_at": row[2]}
+    raise RegistryLookupError(
+        f"Entry {name!r} not found in table {table!r} and autocreate is disabled."
+    )
 
 
 def lookup_by_id(
@@ -106,7 +129,17 @@ def lookup_by_id(
     Raises:
         RegistryLookupError: If no entry with this ID exists.
     """
-    pass
+    # 1. SELECT row from table by integer ID
+    row = conn.execute(
+        f"SELECT id, name, created_at FROM {table} WHERE id = ?", (entry_id,)
+    ).fetchone()
+    if row is not None:
+        # 2. Found — return as dict
+        return {"id": row[0], "name": row[1], "created_at": row[2]}
+    # 3. Not found — raise (never auto-creates)
+    raise RegistryLookupError(
+        f"Entry with id={entry_id} not found in table {table!r}."
+    )
 
 
 def resolve_name_or_id(
@@ -148,4 +181,12 @@ def resolve_name_or_id(
     Raises:
         RegistryLookupError: If the entry is not found.
     """
-    pass
+    # 1. Try to parse name_or_id as integer
+    try:
+        int_val = int(name_or_id)
+        # Parsed as int — dispatch to strict ID lookup (never auto-creates)
+        return lookup_by_id(conn, table, int_val)
+    except (ValueError, TypeError):
+        pass
+    # 2. Not an int — dispatch to name lookup with optional auto-create
+    return lookup_by_name(conn, table, name_or_id, normalize_fn, autocreate=autocreate)

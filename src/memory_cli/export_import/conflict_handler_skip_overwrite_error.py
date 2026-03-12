@@ -74,7 +74,17 @@ class ConflictHandler:
         Error paths:
         - Invalid mode string -> raise ValueError with descriptive message
         """
-        pass
+        # 1. Validate mode is in VALID_MODES set
+        if mode not in VALID_MODES:
+            raise ValueError(
+                f"Invalid conflict mode '{mode}'. Valid options: {sorted(VALID_MODES)}"
+            )
+        # 2. Store db_conn reference for later existence checks
+        self._db_conn = db_conn
+        # 3. Store mode string
+        self.mode = mode
+        # 4. Initialize empty set for skipped_neuron_ids
+        self._skipped_neuron_ids: Set[int] = set()
 
     def resolve(self, neuron: Dict[str, Any]) -> ConflictAction:
         """Determine the action for a single neuron.
@@ -104,7 +114,27 @@ class ConflictHandler:
         Error paths:
         - mode == "error" and conflict detected -> raise ConflictError
         """
-        pass
+        # 1. Extract neuron_id from neuron["id"]
+        neuron_id = neuron["id"]
+
+        # 2. Check if neuron exists in target DB
+        exists = _check_neuron_exists(self._db_conn, neuron_id)
+
+        # 3. If neuron does NOT exist -> WRITE
+        if not exists:
+            return ConflictAction.WRITE
+
+        # 4. If neuron DOES exist and mode == "error" -> raise ConflictError
+        if self.mode == "error":
+            raise ConflictError(neuron_id)
+
+        # 5. If neuron DOES exist and mode == "skip" -> track and SKIP
+        if self.mode == "skip":
+            self._skipped_neuron_ids.add(neuron_id)
+            return ConflictAction.SKIP
+
+        # 6. If neuron DOES exist and mode == "overwrite" -> OVERWRITE
+        return ConflictAction.OVERWRITE
 
     def get_skipped_ids(self) -> Set[int]:
         """Return a copy of the set of neuron IDs that were skipped.
@@ -114,7 +144,7 @@ class ConflictHandler:
 
         Used by the edge writer to skip edges referencing skipped neurons.
         """
-        pass
+        return set(self._skipped_neuron_ids)
 
 
 class ConflictError(Exception):
@@ -133,7 +163,12 @@ class ConflictError(Exception):
            "Neuron ID '{neuron_id}' already exists in target database"
         3. Call super().__init__(message)
         """
-        pass
+        # 1. Store neuron_id as instance attribute
+        self.neuron_id = neuron_id
+        # 2. Build human-readable message
+        message = f"Neuron ID '{neuron_id}' already exists in target database"
+        # 3. Call super().__init__(message)
+        super().__init__(message)
 
 
 def _check_neuron_exists(
@@ -154,4 +189,8 @@ def _check_neuron_exists(
     2. Fetch one row
     3. Return True if row found, False if fetchone() returns None
     """
-    pass
+    row = db_conn.execute(
+        "SELECT 1 FROM neurons WHERE id = ? LIMIT 1",
+        (neuron_id,),
+    ).fetchone()
+    return row is not None

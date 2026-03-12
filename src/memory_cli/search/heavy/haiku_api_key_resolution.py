@@ -69,16 +69,27 @@ def resolve_haiku_api_key(config: Any) -> str:
     # --- Step 1: Extract env var name from config ---
     # env_var_name = config.haiku.api_key_env_var
     # If not a non-empty string: raise HaikuApiKeyError("No API key env var configured")
+    try:
+        env_var_name = config.haiku.api_key_env_var
+    except AttributeError:
+        raise HaikuApiKeyError("No API key env var configured")
+    if not env_var_name or not isinstance(env_var_name, str):
+        raise HaikuApiKeyError("No API key env var configured")
 
     # --- Step 2: Look up env var ---
     # raw_value = os.environ.get(env_var_name)
     # If raw_value is None: raise HaikuApiKeyError(f"Environment variable '{env_var_name}' is not set")
+    raw_value = os.environ.get(env_var_name)
+    if raw_value is None:
+        raise HaikuApiKeyError(f"Environment variable '{env_var_name}' is not set")
 
     # --- Step 3: Validate non-empty ---
     # key = raw_value.strip()
     # If key == "": raise HaikuApiKeyError(f"Environment variable '{env_var_name}' is empty")
+    key = raw_value.strip()
+    if key == "":
+        raise HaikuApiKeyError(f"Environment variable '{env_var_name}' is empty")
 
     # --- Step 4: Return key ---
     # return key
-
-    pass
+    return key

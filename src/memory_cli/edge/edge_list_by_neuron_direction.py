@@ -109,9 +109,15 @@ def edge_list(
     #         f"Invalid direction '{direction}', must be one of: {VALID_DIRECTIONS}",
     #         exit_code=2,
     #     )
+    if direction not in VALID_DIRECTIONS:
+        raise EdgeListError(
+            f"Invalid direction '{direction}', must be one of: {sorted(VALID_DIRECTIONS)}",
+            exit_code=2,
+        )
 
     # --- Step 2: Validate anchor neuron exists ---
     # _validate_neuron_exists(conn, neuron_id)
+    _validate_neuron_exists(conn, neuron_id)
 
     # --- Step 3: Dispatch to direction-specific query ---
     # if direction == "outgoing":
@@ -120,11 +126,16 @@ def edge_list(
     #     rows = _query_incoming(conn, neuron_id, limit, offset)
     # else:  # "both"
     #     rows = _query_both(conn, neuron_id, limit, offset)
+    if direction == "outgoing":
+        rows = _query_outgoing(conn, neuron_id, limit, offset)
+    elif direction == "incoming":
+        rows = _query_incoming(conn, neuron_id, limit, offset)
+    else:  # "both"
+        rows = _query_both(conn, neuron_id, limit, offset)
 
     # --- Step 4: Build edge dicts ---
     # return [_build_edge_row(row) for row in rows]
-
-    pass
+    return [_build_edge_row(row) for row in rows]
 
 
 def _validate_neuron_exists(conn: sqlite3.Connection, neuron_id: int) -> None:
@@ -143,7 +154,9 @@ def _validate_neuron_exists(conn: sqlite3.Connection, neuron_id: int) -> None:
     Raises:
         EdgeListError: If neuron does not exist (exit_code=1).
     """
-    pass
+    row = conn.execute("SELECT id FROM neurons WHERE id = ?", (neuron_id,)).fetchone()
+    if row is None:
+        raise EdgeListError(f"Neuron {neuron_id} not found", exit_code=1)
 
 
 def _query_outgoing(
@@ -174,7 +187,16 @@ def _query_outgoing(
     Returns:
         List of Row objects from the query.
     """
-    pass
+    return conn.execute(
+        """SELECT e.source_id, e.target_id, e.reason, e.weight, e.created_at,
+                  n.id AS connected_neuron_id, n.content AS connected_content
+           FROM edges e
+           JOIN neurons n ON n.id = e.target_id
+           WHERE e.source_id = ?
+           ORDER BY e.created_at DESC
+           LIMIT ? OFFSET ?""",
+        (neuron_id, limit, offset),
+    ).fetchall()
 
 
 def _query_incoming(
@@ -205,7 +227,16 @@ def _query_incoming(
     Returns:
         List of Row objects from the query.
     """
-    pass
+    return conn.execute(
+        """SELECT e.source_id, e.target_id, e.reason, e.weight, e.created_at,
+                  n.id AS connected_neuron_id, n.content AS connected_content
+           FROM edges e
+           JOIN neurons n ON n.id = e.source_id
+           WHERE e.target_id = ?
+           ORDER BY e.created_at DESC
+           LIMIT ? OFFSET ?""",
+        (neuron_id, limit, offset),
+    ).fetchall()
 
 
 def _query_both(
@@ -252,7 +283,26 @@ def _query_both(
     Returns:
         List of Row objects from the UNION query.
     """
-    pass
+    return conn.execute(
+        """SELECT source_id, target_id, reason, weight, created_at,
+                  connected_neuron_id, connected_content
+           FROM (
+               SELECT e.source_id, e.target_id, e.reason, e.weight, e.created_at,
+                      n.id AS connected_neuron_id, n.content AS connected_content
+               FROM edges e
+               JOIN neurons n ON n.id = e.target_id
+               WHERE e.source_id = ?
+               UNION ALL
+               SELECT e.source_id, e.target_id, e.reason, e.weight, e.created_at,
+                      n.id AS connected_neuron_id, n.content AS connected_content
+               FROM edges e
+               JOIN neurons n ON n.id = e.source_id
+               WHERE e.target_id = ?
+           )
+           ORDER BY created_at DESC
+           LIMIT ? OFFSET ?""",
+        (neuron_id, neuron_id, limit, offset),
+    ).fetchall()
 
 
 def _build_edge_row(row: sqlite3.Row) -> Dict[str, Any]:
@@ -270,7 +320,15 @@ def _build_edge_row(row: sqlite3.Row) -> Dict[str, Any]:
     Returns:
         Dict with edge fields and connected neuron snippet.
     """
-    pass
+    return {
+        "source_id": row["source_id"],
+        "target_id": row["target_id"],
+        "reason": row["reason"],
+        "weight": row["weight"],
+        "created_at": row["created_at"],
+        "connected_neuron_id": row["connected_neuron_id"],
+        "connected_neuron_snippet": _truncate_content(row["connected_content"]),
+    }
 
 
 def _truncate_content(content: str, max_length: int = SNIPPET_MAX_LENGTH) -> str:
@@ -291,4 +349,6 @@ def _truncate_content(content: str, max_length: int = SNIPPET_MAX_LENGTH) -> str
     Returns:
         Content string, truncated with "..." if longer than max_length.
     """
-    pass
+    if len(content) <= max_length:
+        return content
+    return content[:max_length] + "..."

@@ -24,7 +24,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     pass  # Llama type hint will come from llama_cpp
@@ -32,9 +32,11 @@ if TYPE_CHECKING:
 # --- Module-level singleton state ---
 # _model_instance: Optional[Llama] = None
 # _model_loaded: bool = False  # distinguishes "not loaded" from "load returned None"
+_model_instance: Any = None
+_model_loaded: bool = False
 
 
-def get_model():  # -> Llama
+def get_model(config: Any):  # -> Llama
     """Return the singleton Llama embedding model, loading it on first call.
 
     Reads configuration for:
@@ -49,18 +51,28 @@ def get_model():  # -> Llama
         FileNotFoundError: If the model file does not exist at model_path.
         RuntimeError: If llama-cpp-python fails to load the model.
     """
+    global _model_instance, _model_loaded
+
     # --- Step 1: Check if singleton already loaded ---
     # If _model_instance is not None (or _model_loaded is True), return it immediately
+    if _model_loaded:
+        return _model_instance
 
     # --- Step 2: Read config values ---
     # model_path = config.get_model_path()  # absolute path to .gguf
     # n_ctx = config.get_embedding_n_ctx()  # default 2048
     # n_batch = config.get_embedding_n_batch()  # default 512
+    model_path = config.embedding.model_path
+    n_ctx = config.embedding.n_ctx
+    n_batch = config.embedding.n_batch
 
     # --- Step 3: Validate model file exists ---
     # path = Path(model_path)
     # If not path.exists() or not path.is_file():
     #   raise FileNotFoundError(f"Embedding model not found: {model_path}")
+    path = Path(model_path)
+    if not path.exists() or not path.is_file():
+        raise FileNotFoundError(f"Embedding model not found: {model_path}")
 
     # --- Step 4: Load the model ---
     # from llama_cpp import Llama
@@ -71,11 +83,20 @@ def get_model():  # -> Llama
     #     n_batch=n_batch,
     #     verbose=False,
     # )
+    from llama_cpp import Llama  # noqa: PLC0415 — deferred import to avoid hard dependency
+    _model_instance = Llama(
+        model_path=str(path),
+        embedding=True,
+        n_ctx=n_ctx,
+        n_batch=n_batch,
+        verbose=False,
+    )
 
     # --- Step 5: Store and return ---
     # _model_loaded = True
     # return _model_instance
-    pass
+    _model_loaded = True
+    return _model_instance
 
 
 def reset_model() -> None:
@@ -84,8 +105,11 @@ def reset_model() -> None:
     After calling this, the next get_model() call will reload the model
     from disk. This allows tests to swap config values between loads.
     """
+    global _model_instance, _model_loaded
+
     # --- Reset singleton state ---
     # global _model_instance, _model_loaded
     # _model_instance = None
     # _model_loaded = False
-    pass
+    _model_instance = None
+    _model_loaded = False

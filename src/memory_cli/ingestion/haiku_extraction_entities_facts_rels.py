@@ -29,8 +29,15 @@
 
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+
+try:
+    from ..config.config_loader_and_validator import load_config
+except ImportError:
+    load_config = None  # type: ignore
 
 
 @dataclass
@@ -132,6 +139,17 @@ Rules:
 - Do not include trivial conversational artifacts (greetings, acknowledgments)"""
 
 
+# Local error class to avoid circular import with ingest_orchestrator
+# IngestError is the canonical class defined in ingest_orchestrator.py.
+# We use a late import when raising to use the actual IngestError.
+class _LocalIngestError(Exception):
+    """Local placeholder until ingest_orchestrator.IngestError can be imported."""
+    def __init__(self, step: str, details: str):
+        self.step = step
+        self.details = details
+        super().__init__(f"[{step}] {details}")
+
+
 def haiku_extract(transcript_chunk: str) -> ExtractionResult:
     """Extract entities, facts, and relationships from a transcript chunk.
 
@@ -161,20 +179,23 @@ def haiku_extract(transcript_chunk: str) -> ExtractionResult:
     """
     # --- Step 1: Resolve API key ---
     # api_key = _resolve_api_key()
+    api_key = _resolve_api_key()
 
     # --- Step 2: Build prompt ---
     # messages = _build_extraction_prompt(transcript_chunk)
+    messages = _build_extraction_prompt(transcript_chunk)
 
     # --- Step 3: Call Haiku API ---
     # raw_response = _call_haiku_api(api_key, messages)
+    raw_response = _call_haiku_api(api_key, messages)
 
     # --- Step 4: Parse response ---
     # result = _parse_extraction_response(raw_response)
+    result = _parse_extraction_response(raw_response)
 
     # --- Step 5: Return ---
     # return result
-
-    pass
+    return result
 
 
 def _build_extraction_prompt(transcript_chunk: str) -> List[Dict[str, str]]:
@@ -195,8 +216,12 @@ def _build_extraction_prompt(transcript_chunk: str) -> List[Dict[str, str]]:
     #     {"role": "user", "content": f"Extract entities, facts, and relationships from this conversation:\n\n{transcript_chunk}"}
     # ]
     # Note: system prompt is passed separately in the API call, not as a message
-
-    pass
+    return [
+        {
+            "role": "user",
+            "content": f"Extract entities, facts, and relationships from this conversation:\n\n{transcript_chunk}",
+        }
+    ]
 
 
 def _call_haiku_api(
@@ -241,12 +266,56 @@ def _call_haiku_api(
     #     model=HAIKU_MODEL, max_tokens=MAX_TOKENS,
     #     system=EXTRACTION_SYSTEM_PROMPT, messages=messages
     # )
+    import anthropic as _anthropic
+
+    def _do_call() -> Dict[str, Any]:
+        client = _anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model=HAIKU_MODEL,
+            max_tokens=MAX_TOKENS,
+            system=EXTRACTION_SYSTEM_PROMPT,
+            messages=messages,
+        )
+        response_text = response.content[0].text
+        return json.loads(response_text)
+
+    try:
+        return _do_call()
+    except (_anthropic.APIStatusError,) as e:
+        # If it's a 4xx, fail immediately
+        if hasattr(e, "status_code") and 400 <= e.status_code < 500:
+            try:
+                from .ingest_orchestrator import IngestError
+            except ImportError:
+                IngestError = _LocalIngestError  # type: ignore
+            raise IngestError("extract", f"Haiku API error: {e}") from e
+        # On 5xx or timeout: retry once
+        import time
+        time.sleep(2)
+        try:
+            return _do_call()
+        except Exception as e2:
+            try:
+                from .ingest_orchestrator import IngestError
+            except ImportError:
+                IngestError = _LocalIngestError  # type: ignore
+            raise IngestError("extract", f"Haiku API persistent failure: {e2}") from e2
+    except Exception as e:
+        # On any other error: retry once
+        import time
+        time.sleep(2)
+        try:
+            return _do_call()
+        except Exception as e2:
+            try:
+                from .ingest_orchestrator import IngestError
+            except ImportError:
+                IngestError = _LocalIngestError  # type: ignore
+            raise IngestError("extract", f"Haiku API persistent failure: {e2}") from e2
 
     # --- Extract and parse response text ---
     # response_text = response.content[0].text
     # return json.loads(response_text)
-
-    pass
 
 
 def _parse_extraction_response(raw: Dict[str, Any]) -> ExtractionResult:
@@ -278,12 +347,20 @@ def _parse_extraction_response(raw: Dict[str, Any]) -> ExtractionResult:
     # for item in raw.get("entities", []):
     #     if "id" in item and "content" in item:
     #         entities.append(ExtractedEntity(local_id=item["id"], content=item["content"]))
+    entities: List[ExtractedEntity] = []
+    for item in raw.get("entities", []):
+        if isinstance(item, dict) and "id" in item and "content" in item:
+            entities.append(ExtractedEntity(local_id=item["id"], content=item["content"]))
 
     # --- Parse facts ---
     # facts = []
     # for item in raw.get("facts", []):
     #     if "id" in item and "content" in item:
     #         facts.append(ExtractedFact(local_id=item["id"], content=item["content"]))
+    facts: List[ExtractedFact] = []
+    for item in raw.get("facts", []):
+        if isinstance(item, dict) and "id" in item and "content" in item:
+            facts.append(ExtractedFact(local_id=item["id"], content=item["content"]))
 
     # --- Parse relationships ---
     # relationships = []
@@ -292,14 +369,24 @@ def _parse_extraction_response(raw: Dict[str, Any]) -> ExtractionResult:
     #         relationships.append(ExtractedRelationship(
     #             from_id=item["from_id"], to_id=item["to_id"], reason=item["reason"]
     #         ))
+    relationships: List[ExtractedRelationship] = []
+    for item in raw.get("relationships", []):
+        if isinstance(item, dict) and "from_id" in item and "to_id" in item and "reason" in item:
+            relationships.append(ExtractedRelationship(
+                from_id=item["from_id"], to_id=item["to_id"], reason=item["reason"]
+            ))
 
     # --- Return result ---
     # return ExtractionResult(
     #     entities=entities, facts=facts,
     #     relationships=relationships, raw_response=raw
     # )
-
-    pass
+    return ExtractionResult(
+        entities=entities,
+        facts=facts,
+        relationships=relationships,
+        raw_response=raw,
+    )
 
 
 def _resolve_api_key() -> str:
@@ -319,16 +406,30 @@ def _resolve_api_key() -> str:
         IngestError: If API key is not configured or env var is not set.
     """
     # --- Load config for env var name ---
-    # from ..config import get_config
-    # config = get_config()
-    # env_var_name = config.get("haiku", {}).get("api_key_env_var", "ANTHROPIC_API_KEY")
+    # env_var_name = config.haiku.api_key_env_var (or default "ANTHROPIC_API_KEY")
+    env_var_name = "ANTHROPIC_API_KEY"
+    try:
+        if load_config is not None:
+            cfg = load_config()
+            try:
+                env_var_name = cfg.haiku.api_key_env_var
+            except AttributeError:
+                env_var_name = cfg.get("haiku", {}).get("api_key_env_var", "ANTHROPIC_API_KEY")
+    except Exception:
+        pass  # Use default
 
     # --- Look up env var ---
     # import os
     # api_key = os.environ.get(env_var_name, "").strip()
     # if not api_key:
     #     raise IngestError("extract", f"API key not found in ${env_var_name}")
+    api_key = os.environ.get(env_var_name, "").strip()
+    if not api_key:
+        try:
+            from .ingest_orchestrator import IngestError
+        except ImportError:
+            IngestError = _LocalIngestError  # type: ignore
+        raise IngestError("extract", f"API key not found in ${env_var_name}")
 
     # return api_key
-
-    pass
+    return api_key

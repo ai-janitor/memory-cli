@@ -29,5 +29,5 @@
 # --- Public API exports ---
 # These will be the primary entry points consumed by CLI commands.
 
-# from .ingest_orchestrator import ingest_session
-# from .session_dedup_guard_by_session_id import check_session_already_ingested
+from .ingest_orchestrator import ingest_session
+from .session_dedup_guard_by_session_id import check_session_already_ingested

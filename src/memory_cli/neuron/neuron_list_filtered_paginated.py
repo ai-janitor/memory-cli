@@ -123,7 +123,32 @@ def neuron_list(
     # --- Step 6: Return ---
     # return results
 
-    pass
+    from .neuron_get_by_id import neuron_get
+
+    if status not in VALID_STATUSES:
+        raise ValueError(f"Invalid status '{status}'. Must be one of: {VALID_STATUSES}")
+
+    and_tag_ids = None
+    if tags_and:
+        resolved = _resolve_tag_ids(conn, tags_and)
+        if resolved is None or None in resolved:
+            return []
+        and_tag_ids = [tid for tid in resolved if tid is not None]
+
+    any_tag_ids = None
+    if tags_any:
+        resolved = _resolve_tag_ids(conn, tags_any)
+        if resolved is not None:
+            any_tag_ids = [tid for tid in resolved if tid is not None]
+            if not any_tag_ids:
+                return []
+
+    query, params = _build_list_query(and_tag_ids, any_tag_ids, status, project, limit, offset)
+    rows = conn.execute(query, params).fetchall()
+    neuron_ids = [row[0] for row in rows]
+
+    results = [neuron_get(conn, nid) for nid in neuron_ids]
+    return [n for n in results if n is not None]
 
 
 def _build_list_query(
@@ -200,7 +225,31 @@ def _build_list_query(
     # params.extend([limit, offset])
     # return (query, params)
 
-    pass
+    clauses: List[str] = []
+    params: List[Any] = []
+
+    if and_tag_ids:
+        for tag_id in and_tag_ids:
+            clauses.append("EXISTS (SELECT 1 FROM neuron_tags WHERE neuron_id = n.id AND tag_id = ?)")
+            params.append(tag_id)
+
+    if any_tag_ids:
+        placeholders = ",".join("?" * len(any_tag_ids))
+        clauses.append(f"n.id IN (SELECT neuron_id FROM neuron_tags WHERE tag_id IN ({placeholders}))")
+        params.extend(any_tag_ids)
+
+    if status != "all":
+        clauses.append("n.status = ?")
+        params.append(status)
+
+    if project:
+        clauses.append("n.project = ?")
+        params.append(project)
+
+    where_str = " AND ".join(clauses) if clauses else "1=1"
+    query = f"SELECT DISTINCT n.id FROM neurons n WHERE {where_str} ORDER BY n.created_at DESC LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
+    return (query, params)
 
 
 def _resolve_tag_ids(
@@ -231,4 +280,15 @@ def _resolve_tag_ids(
         List of integer tag IDs (with None for unresolvable names),
         or None if input list is empty.
     """
-    pass
+    if not tag_names:
+        return None
+
+    result: List[Optional[int]] = []
+    for tag_name in tag_names:
+        normalized = tag_name.strip().lower()
+        row = conn.execute(
+            "SELECT id FROM tags WHERE name = ?",
+            (normalized,)
+        ).fetchone()
+        result.append(row[0] if row else None)
+    return result

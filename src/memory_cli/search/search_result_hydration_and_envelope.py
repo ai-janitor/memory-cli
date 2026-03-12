@@ -64,6 +64,9 @@ def hydrate_results(
     # neuron_ids = [c["neuron_id"] for c in paginated_candidates]
     # if not neuron_ids:
     #     return []
+    neuron_ids = [c["neuron_id"] for c in paginated_candidates]
+    if not neuron_ids:
+        return []
 
     # --- Batch-fetch neurons ---
     # placeholders = ",".join("?" * len(neuron_ids))
@@ -73,6 +76,13 @@ def hydrate_results(
     #     neuron_ids,
     # ).fetchall()
     # neuron_map = {row[0]: row for row in rows}
+    placeholders = ",".join("?" * len(neuron_ids))
+    rows = conn.execute(
+        f"SELECT id, content, created_at, updated_at, project, source, status "
+        f"FROM neurons WHERE id IN ({placeholders})",
+        neuron_ids,
+    ).fetchall()
+    neuron_map = {row[0]: row for row in rows}
 
     # --- Batch-fetch tags ---
     # tag_rows = conn.execute(
@@ -84,6 +94,15 @@ def hydrate_results(
     # tags_map: Dict[int, List[str]] = {}
     # for neuron_id, tag_name in tag_rows:
     #     tags_map.setdefault(neuron_id, []).append(tag_name)
+    tag_rows = conn.execute(
+        f"SELECT nt.neuron_id, t.name FROM neuron_tags nt "
+        f"JOIN tags t ON nt.tag_id = t.id "
+        f"WHERE nt.neuron_id IN ({placeholders})",
+        neuron_ids,
+    ).fetchall()
+    tags_map: Dict[int, List[str]] = {}
+    for neuron_id, tag_name in tag_rows:
+        tags_map.setdefault(neuron_id, []).append(tag_name)
 
     # --- Build results in ranking order ---
     # results = []
@@ -97,8 +116,17 @@ def hydrate_results(
     #     results.append(result)
 
     # return results
+    results = []
+    for candidate in paginated_candidates:
+        nid = candidate["neuron_id"]
+        neuron_row = neuron_map.get(nid)
+        if neuron_row is None:
+            continue  # Neuron deleted between search and hydration
+        neuron_tags = sorted(tags_map.get(nid, []))
+        result = _build_result_record(candidate, neuron_row, neuron_tags)
+        results.append(result)
 
-    pass
+    return results
 
 
 def _hydrate_single_neuron(
@@ -123,7 +151,28 @@ def _hydrate_single_neuron(
     Returns:
         Neuron dict with tags, or empty dict if not found.
     """
-    pass
+    row = conn.execute(
+        "SELECT id, content, created_at, updated_at, project, source, status "
+        "FROM neurons WHERE id = ?",
+        (neuron_id,),
+    ).fetchone()
+    if row is None:
+        return {}
+    tag_rows = conn.execute(
+        "SELECT t.name FROM neuron_tags nt JOIN tags t ON nt.tag_id = t.id "
+        "WHERE nt.neuron_id = ?",
+        (neuron_id,),
+    ).fetchall()
+    return {
+        "id": row[0],
+        "content": row[1],
+        "created_at": row[2],
+        "updated_at": row[3],
+        "project": row[4],
+        "source": row[5],
+        "status": row[6],
+        "tags": sorted([r[0] for r in tag_rows]),
+    }
 
 
 def _build_result_record(
@@ -182,8 +231,26 @@ def _build_result_record(
     #     result["score_breakdown"] = candidate["score_breakdown"]
 
     # return result
+    result = {
+        "id": neuron_row[0],
+        "content": neuron_row[1],
+        "created_at": neuron_row[2],
+        "updated_at": neuron_row[3],
+        "project": neuron_row[4],
+        "source": neuron_row[5],
+        "status": neuron_row[6],
+        "tags": neuron_tags,
+        "match_type": candidate.get("match_type", "direct_match"),
+        "hop_distance": candidate.get("hop_distance", 0),
+        "edge_reason": candidate.get("edge_reason"),
+        "score": candidate.get("final_score", 0.0),
+    }
 
-    pass
+    # Only include breakdown if --explain was used (it's pre-attached)
+    if "score_breakdown" in candidate:
+        result["score_breakdown"] = candidate["score_breakdown"]
+
+    return result
 
 
 def build_envelope(
@@ -238,5 +305,16 @@ def build_envelope(
     #         "result_count": len(results),
     #     },
     # }
-
-    pass
+    return {
+        "results": results,
+        "pagination": {
+            "total": total_before_pagination,
+            "limit": limit,
+            "offset": offset,
+            "has_more": total_before_pagination > offset + limit,
+        },
+        "metadata": {
+            "vector_unavailable": vector_unavailable,
+            "result_count": len(results),
+        },
+    }

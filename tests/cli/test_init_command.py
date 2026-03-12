@@ -22,9 +22,12 @@
 
 from __future__ import annotations
 
-# import pytest
-# from unittest.mock import patch, MagicMock
-# from memory_cli.cli.init_command_top_level_exception import handle_init, _parse_init_flags
+import pytest
+from pathlib import Path
+from unittest.mock import patch, MagicMock
+
+from memory_cli.cli.init_command_top_level_exception import handle_init, _parse_init_flags
+from memory_cli.cli.global_flags_format_config_db import GlobalFlags
 
 
 # =============================================================================
@@ -33,7 +36,7 @@ from __future__ import annotations
 class TestInitHappyPath:
     """Test successful init scenarios."""
 
-    def test_init_creates_database_and_config(self) -> None:
+    def test_init_creates_database_and_config(self, tmp_path: Path) -> None:
         """Init with no existing DB -> creates DB and config, returns success.
 
         Pseudo-logic:
@@ -43,9 +46,16 @@ class TestInitHappyPath:
         4. Assert result.data contains "database" and "config" paths
         5. Assert storage.create_database was called
         """
-        pass
+        db_path = tmp_path / "memory.db"
+        config_path = tmp_path / "config.toml"
+        flags = GlobalFlags(db=str(db_path), config=str(config_path))
+        with patch("memory_cli.cli.init_command_top_level_exception.Path.touch"):
+            result = handle_init([], flags)
+        assert result.status == "ok"
+        assert "database" in result.data
+        assert "config" in result.data
 
-    def test_init_returns_created_paths(self) -> None:
+    def test_init_returns_created_paths(self, tmp_path: Path) -> None:
         """Result data includes the paths of created files.
 
         Pseudo-logic:
@@ -54,7 +64,13 @@ class TestInitHappyPath:
         3. Assert result.data["database"] == expected_db_path
         4. Assert result.data["config"] == expected_config_path
         """
-        pass
+        db_path = tmp_path / "memory.db"
+        config_path = tmp_path / "config.toml"
+        flags = GlobalFlags(db=str(db_path), config=str(config_path))
+        result = handle_init([], flags)
+        assert result.status == "ok"
+        assert result.data["database"] == str(db_path)
+        assert result.data["config"] == str(config_path)
 
 
 # =============================================================================
@@ -63,7 +79,7 @@ class TestInitHappyPath:
 class TestInitAlreadyExists:
     """Test init when database already exists."""
 
-    def test_init_without_force_errors_on_existing_db(self) -> None:
+    def test_init_without_force_errors_on_existing_db(self, tmp_path: Path) -> None:
         """DB exists + no --force -> error result.
 
         Pseudo-logic:
@@ -72,9 +88,15 @@ class TestInitAlreadyExists:
         3. Assert result.status == "error"
         4. Assert "already exists" in result.error
         """
-        pass
+        db_path = tmp_path / "memory.db"
+        config_path = tmp_path / "config.toml"
+        db_path.touch()
+        flags = GlobalFlags(db=str(db_path), config=str(config_path))
+        result = handle_init([], flags)
+        assert result.status == "error"
+        assert "already exists" in result.error
 
-    def test_init_with_force_overwrites_existing_db(self) -> None:
+    def test_init_with_force_overwrites_existing_db(self, tmp_path: Path) -> None:
         """DB exists + --force -> deletes and recreates, returns success.
 
         Pseudo-logic:
@@ -84,7 +106,12 @@ class TestInitAlreadyExists:
         4. Assert storage.delete_database was called
         5. Assert storage.create_database was called
         """
-        pass
+        db_path = tmp_path / "memory.db"
+        config_path = tmp_path / "config.toml"
+        db_path.touch()
+        flags = GlobalFlags(db=str(db_path), config=str(config_path))
+        result = handle_init(["--force"], flags)
+        assert result.status == "ok"
 
 
 # =============================================================================
@@ -100,7 +127,8 @@ class TestInitFlagParsing:
         1. result = _parse_init_flags([])
         2. Assert result == {"force": False}
         """
-        pass
+        result = _parse_init_flags([])
+        assert result == {"force": False}
 
     def test_force_flag_parsed(self) -> None:
         """--force -> force=True.
@@ -109,7 +137,8 @@ class TestInitFlagParsing:
         1. result = _parse_init_flags(["--force"])
         2. Assert result == {"force": True}
         """
-        pass
+        result = _parse_init_flags(["--force"])
+        assert result == {"force": True}
 
     def test_unknown_flag_raises_error(self) -> None:
         """Unknown flag -> error.
@@ -118,7 +147,8 @@ class TestInitFlagParsing:
         1. pytest.raises(ValueError)
         2. Call _parse_init_flags(["--unknown"])
         """
-        pass
+        with pytest.raises(ValueError):
+            _parse_init_flags(["--unknown"])
 
     def test_positional_args_raise_error(self) -> None:
         """Positional args -> error (init takes none).
@@ -127,7 +157,8 @@ class TestInitFlagParsing:
         1. pytest.raises(ValueError)
         2. Call _parse_init_flags(["something"])
         """
-        pass
+        with pytest.raises(ValueError):
+            _parse_init_flags(["something"])
 
 
 # =============================================================================
@@ -136,7 +167,7 @@ class TestInitFlagParsing:
 class TestInitWithGlobalFlags:
     """Test that --db and --config from global flags are respected by init."""
 
-    def test_global_db_flag_overrides_default_path(self) -> None:
+    def test_global_db_flag_overrides_default_path(self, tmp_path: Path) -> None:
         """--db from global flags sets the database path for init.
 
         Pseudo-logic:
@@ -144,9 +175,14 @@ class TestInitWithGlobalFlags:
         2. result = handle_init([], mock_flags)
         3. Assert storage.create_database called with path="/custom/path.db"
         """
-        pass
+        db_path = tmp_path / "custom.db"
+        config_path = tmp_path / "config.toml"
+        flags = GlobalFlags(db=str(db_path), config=str(config_path))
+        result = handle_init([], flags)
+        assert result.status == "ok"
+        assert result.data["database"] == str(db_path)
 
-    def test_global_config_flag_overrides_default_path(self) -> None:
+    def test_global_config_flag_overrides_default_path(self, tmp_path: Path) -> None:
         """--config from global flags sets the config path for init.
 
         Pseudo-logic:
@@ -154,4 +190,9 @@ class TestInitWithGlobalFlags:
         2. result = handle_init([], mock_flags)
         3. Assert config file created at "/custom/config.toml"
         """
-        pass
+        db_path = tmp_path / "memory.db"
+        config_path = tmp_path / "custom.toml"
+        flags = GlobalFlags(db=str(db_path), config=str(config_path))
+        result = handle_init([], flags)
+        assert result.status == "ok"
+        assert result.data["config"] == str(config_path)

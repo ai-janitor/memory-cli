@@ -46,7 +46,10 @@ def capture_auto_tags() -> List[str]:
     # auto_tags.append(_generate_project_tag())
     # return auto_tags
 
-    pass
+    auto_tags = []
+    auto_tags.append(_generate_timestamp_tag())
+    auto_tags.append(_generate_project_tag())
+    return auto_tags
 
 
 def _generate_timestamp_tag() -> str:
@@ -62,7 +65,7 @@ def _generate_timestamp_tag() -> str:
     Returns:
         Date string in YYYY-MM-DD format.
     """
-    pass
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
 
 
 def _generate_project_tag() -> str:
@@ -79,7 +82,8 @@ def _generate_project_tag() -> str:
     # from .project_detection_git_or_cwd import detect_project
     # return detect_project()
 
-    pass
+    from .project_detection_git_or_cwd import detect_project
+    return detect_project()
 
 
 def merge_and_deduplicate_tags(
@@ -127,4 +131,17 @@ def merge_and_deduplicate_tags(
     #             result.append(normalized)
     # return result
 
-    pass
+    seen = set()
+    result = []
+    for tag in auto_tags:
+        normalized = tag.strip().lower()
+        if normalized not in seen:
+            seen.add(normalized)
+            result.append(normalized)
+    if user_tags:
+        for tag in user_tags:
+            normalized = tag.strip().lower()
+            if normalized not in seen:
+                seen.add(normalized)
+                result.append(normalized)
+    return result

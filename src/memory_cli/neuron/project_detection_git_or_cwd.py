@@ -69,7 +69,19 @@ def detect_project() -> str:
     # --- Level 4: Fallback ---
     # return FALLBACK_PROJECT
 
-    pass
+    result = _from_git_remote()
+    if result:
+        return result
+
+    result = _from_git_dir()
+    if result:
+        return result
+
+    result = _from_cwd()
+    if result:
+        return result
+
+    return FALLBACK_PROJECT
 
 
 def _from_git_remote() -> Optional[str]:
@@ -110,7 +122,22 @@ def _from_git_remote() -> Optional[str]:
     # --- Normalize ---
     # return _normalize_project_name(repo_name)
 
-    pass
+    try:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode != 0:
+            return None
+        url = result.stdout.strip()
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        return None
+
+    repo_name = _extract_repo_name_from_url(url)
+    if not repo_name:
+        return None
+
+    return _normalize_project_name(repo_name)
 
 
 def _from_git_dir() -> Optional[str]:
@@ -145,7 +172,21 @@ def _from_git_dir() -> Optional[str]:
     # if not basename: return None
     # return _normalize_project_name(basename)
 
-    pass
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode != 0:
+            return None
+        git_root = result.stdout.strip()
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        return None
+
+    basename = os.path.basename(git_root)
+    if not basename:
+        return None
+    return _normalize_project_name(basename)
 
 
 def _from_cwd() -> Optional[str]:
@@ -176,7 +217,15 @@ def _from_cwd() -> Optional[str]:
     # if not basename: return None
     # return _normalize_project_name(basename)
 
-    pass
+    try:
+        cwd = os.getcwd()
+    except OSError:
+        return None
+
+    basename = os.path.basename(cwd)
+    if not basename:
+        return None
+    return _normalize_project_name(basename)
 
 
 def _normalize_project_name(raw_name: str) -> Optional[str]:
@@ -206,7 +255,10 @@ def _normalize_project_name(raw_name: str) -> Optional[str]:
     # stripped = cleaned.strip("-_")
     # return stripped if stripped else None
 
-    pass
+    lowered = raw_name.lower()
+    cleaned = PROJECT_NAME_PATTERN.sub("", lowered)
+    stripped = cleaned.strip("-_")
+    return stripped if stripped else None
 
 
 def _extract_repo_name_from_url(url: str) -> Optional[str]:
@@ -250,4 +302,19 @@ def _extract_repo_name_from_url(url: str) -> Optional[str]:
 
     # return name if name else None
 
-    pass
+    url = url.strip().rstrip("/")
+    if not url:
+        return None
+
+    if url.endswith(".git"):
+        url = url[:-4]
+
+    if ":" in url and "://" not in url:
+        # SSH format: git@host:user/repo
+        after_colon = url.split(":")[-1]
+        name = after_colon.split("/")[-1]
+    else:
+        # HTTPS, file://, or local path
+        name = url.split("/")[-1]
+
+    return name if name else None

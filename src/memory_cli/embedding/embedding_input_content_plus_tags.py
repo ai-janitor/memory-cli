@@ -38,6 +38,7 @@ def build_embedding_input(content: str, tags: list[str] | None = None) -> str:
     # --- Step 1: Normalize content ---
     # Strip leading/trailing whitespace from content
     # Content may be empty string — that's valid (will still embed tags if present)
+    stripped_content = content.strip()
 
     # --- Step 2: Process tags ---
     # If tags is None or empty list:
@@ -46,6 +47,12 @@ def build_embedding_input(content: str, tags: list[str] | None = None) -> str:
     #   Lowercase each tag, strip whitespace from each
     #   Filter out empty strings after stripping
     #   Join with single space: tags_string = " ".join(processed_tags)
+    if not tags:
+        tags_string = ""
+    else:
+        processed_tags = [t.lower().strip() for t in tags]
+        processed_tags = [t for t in processed_tags if t]
+        tags_string = " ".join(processed_tags)
 
     # --- Step 3: Combine content and tags ---
     # If tags_string is empty:
@@ -53,4 +60,7 @@ def build_embedding_input(content: str, tags: list[str] | None = None) -> str:
     # Else:
     #   return f"{stripped_content} {tags_string}"
     # Note: single space separator between content and tags block
-    pass
+    if not tags_string:
+        return stripped_content
+    else:
+        return f"{stripped_content} {tags_string}"

@@ -25,10 +25,14 @@
 from __future__ import annotations
 
 import sqlite3
+import struct
+import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     pass
+
+from .dimension_enforcement_768 import validate_dimensions
 
 # Type alias
 Vector = list[float]
@@ -47,13 +51,14 @@ def serialize_vector(vector: Vector) -> bytes:
     """
     # --- Step 1: Validate dimensions ---
     # validate_dimensions(vector)  # delegate to dimension_enforcement_768
+    validate_dimensions(vector)
 
     # --- Step 2: Pack to binary ---
     # import struct
     # Use struct.pack with '<768f' format (little-endian, 768 floats)
     # Result is 768 * 4 = 3072 bytes
     # return struct.pack(f'<{len(vector)}f', *vector)
-    pass
+    return struct.pack(f"<{len(vector)}f", *vector)
 
 
 def write_vector(conn: sqlite3.Connection, neuron_id: int, vector: Vector) -> None:
@@ -73,9 +78,11 @@ def write_vector(conn: sqlite3.Connection, neuron_id: int, vector: Vector) -> No
     """
     # --- Step 1: Serialize the vector ---
     # blob = serialize_vector(vector)
+    blob = serialize_vector(vector)
 
     # --- Step 2: Begin atomic write (transaction) ---
     # Use conn as context manager or explicit BEGIN/COMMIT
+    now_ms = int(time.time() * 1000)
 
     # --- Step 3: Upsert into neurons_vec ---
     # INSERT OR REPLACE INTO neurons_vec (rowid, embedding) VALUES (?, ?)
@@ -88,7 +95,18 @@ def write_vector(conn: sqlite3.Connection, neuron_id: int, vector: Vector) -> No
 
     # --- Step 5: Commit transaction ---
     # Transaction commits when context manager exits normally
-    pass
+    # Note: vec0 does not support INSERT OR REPLACE when a row already exists.
+    # Use DELETE + INSERT pattern for upsert behavior.
+    with conn:
+        conn.execute("DELETE FROM neurons_vec WHERE neuron_id = ?", (neuron_id,))
+        conn.execute(
+            "INSERT INTO neurons_vec (neuron_id, embedding) VALUES (?, ?)",
+            (neuron_id, blob),
+        )
+        conn.execute(
+            "UPDATE neurons SET embedding_updated_at = ? WHERE id = ?",
+            (now_ms, neuron_id),
+        )
 
 
 def write_vectors_batch(
@@ -111,9 +129,12 @@ def write_vectors_batch(
     # --- Step 1: Validate all vectors before starting transaction ---
     # for neuron_id, vector in neuron_id_vector_pairs:
     #   validate_dimensions(vector)  # fail fast before any writes
+    for _neuron_id, vector in neuron_id_vector_pairs:
+        validate_dimensions(vector)
 
     # --- Step 2: Serialize all vectors ---
     # serialized = [(nid, serialize_vector(vec)) for nid, vec in neuron_id_vector_pairs]
+    serialized = [(nid, serialize_vector(vec)) for nid, vec in neuron_id_vector_pairs]
 
     # --- Step 3: Single transaction for all writes ---
     # with conn:  # transaction context manager
@@ -122,4 +143,27 @@ def write_vectors_batch(
     #     UPDATE neurons SET embedding_updated_at = datetime('now') WHERE id = ?
 
     # --- Step 4: Transaction auto-commits on success, auto-rolls-back on error ---
-    pass
+    # Note: vec0 does not support INSERT OR REPLACE when a row already exists.
+    # Use DELETE + INSERT pattern for upsert behavior.
+    now_ms = int(time.time() * 1000)
+    with conn:
+        for neuron_id, blob in serialized:
+            conn.execute("DELETE FROM neurons_vec WHERE neuron_id = ?", (neuron_id,))
+            conn.execute(
+                "INSERT INTO neurons_vec (neuron_id, embedding) VALUES (?, ?)",
+                (neuron_id, blob),
+            )
+            conn.execute(
+                "UPDATE neurons SET embedding_updated_at = ? WHERE id = ?",
+                (now_ms, neuron_id),
+            )
+
+
+def delete_vector(conn: sqlite3.Connection, neuron_id: int) -> None:
+    """Delete the embedding vector for a neuron from vec0.
+
+    Args:
+        conn: An open sqlite3.Connection.
+        neuron_id: The integer ID of the neuron whose vector to delete.
+    """
+    conn.execute("DELETE FROM neurons_vec WHERE neuron_id = ?", (neuron_id,))

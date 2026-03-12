@@ -1,0 +1,46 @@
+# Secrets and credentials — NEVER commit these
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.cert
+**/credentials*
+**/secrets*
+**/*token*
+**/*password*
+**/*apikey*
+.netrc
+.gitlab_token
+
+# Runtime artifacts
+.venv/
+venv/
+node_modules/
+__pycache__/
+*.pyc
+.cache/
+dist/
+build/
+*.egg-info/
+target/
+
+# Project-local memory store (created by `memory init --db`)
+.memory/
+
+# Work/scratch directory
+.work/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# uv lock (generated, not source of truth)
+uv.lock

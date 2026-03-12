@@ -50,8 +50,10 @@ def build_explain_breakdowns(
     #     breakdown = _build_single_breakdown(candidate, vector_unavailable)
     #     candidate["score_breakdown"] = breakdown
     # return candidates
-
-    pass
+    for candidate in candidates:
+        breakdown = _build_single_breakdown(candidate, vector_unavailable)
+        candidate["score_breakdown"] = breakdown
+    return candidates
 
 
 def _build_single_breakdown(
@@ -102,5 +104,18 @@ def _build_single_breakdown(
     #     "match_type": candidate.get("match_type", "direct_match"),
     #     "match_source": candidate.get("match_source"),
     # }
-
-    pass
+    return {
+        "bm25_raw": candidate.get("bm25_raw"),
+        "bm25_normalized": candidate.get("bm25_normalized"),
+        "bm25_rank": candidate.get("bm25_rank"),
+        "vector_distance": candidate.get("vector_distance"),
+        "vector_rank": candidate.get("vector_rank"),
+        "rrf_score": candidate.get("rrf_score", 0.0),
+        "activation_score": candidate.get("activation_score", 1.0),
+        "hop_distance": candidate.get("hop_distance", 0),
+        "temporal_weight": candidate.get("temporal_weight", 1.0),
+        "final_score": candidate.get("final_score", 0.0),
+        "vector_unavailable": vector_unavailable,
+        "match_type": candidate.get("match_type", "direct_match"),
+        "match_source": candidate.get("match_source"),
+    }

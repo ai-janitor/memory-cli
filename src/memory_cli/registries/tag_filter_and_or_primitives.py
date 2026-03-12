@@ -76,7 +76,39 @@ def resolve_tag_specifiers(
     Raises:
         TagFilterError: If any specifier cannot be resolved.
     """
-    pass
+    # Import normalization function here to avoid circular imports at module level
+    from .tag_registry_crud_normalize_autocreate import normalize_tag_name
+
+    resolved: List[int] = []
+    for spec in specifiers:
+        # 1. Try to parse as int ID first
+        try:
+            tag_id_int = int(spec)
+            row = conn.execute(
+                "SELECT id FROM tags WHERE id = ?", (tag_id_int,)
+            ).fetchone()
+            if row is None:
+                raise TagFilterError(
+                    f"Tag ID {tag_id_int} not found. Filter specifiers must reference existing tags."
+                )
+            resolved.append(row[0])
+        except ValueError:
+            # 2. Not an int — normalize and look up by name
+            try:
+                name = normalize_tag_name(spec)
+            except Exception as exc:
+                raise TagFilterError(
+                    f"Invalid tag specifier {spec!r}: {exc}"
+                ) from exc
+            row = conn.execute(
+                "SELECT id FROM tags WHERE name = ?", (name,)
+            ).fetchone()
+            if row is None:
+                raise TagFilterError(
+                    f"Tag {name!r} not found. Filter specifiers must reference existing tags."
+                )
+            resolved.append(row[0])
+    return resolved
 
 
 def build_and_filter(
@@ -109,7 +141,20 @@ def build_and_filter(
         Tuple of (sql_fragment: str, params: list[int]).
         Empty string and empty list if no filtering needed.
     """
-    pass
+    # 1. Empty list — no filter, pass-through
+    if not tag_ids:
+        return ("", [])
+    # 2. Build subquery with one placeholder per tag ID
+    placeholders = ", ".join(["?"] * len(tag_ids))
+    sql = (
+        f"SELECT neuron_id FROM neuron_tags "
+        f"WHERE tag_id IN ({placeholders}) "
+        f"GROUP BY neuron_id "
+        f"HAVING COUNT(DISTINCT tag_id) = ?"
+    )
+    # 3. Params: all tag IDs + the count for HAVING
+    params = list(tag_ids) + [len(tag_ids)]
+    return (sql, params)
 
 
 def build_or_filter(
@@ -138,7 +183,16 @@ def build_or_filter(
         Tuple of (sql_fragment: str, params: list[int]).
         Empty string and empty list if no filtering needed.
     """
-    pass
+    # 1. Empty list — no filter, pass-through
+    if not tag_ids:
+        return ("", [])
+    # 2. Build subquery — DISTINCT neuron_id, any matching tag qualifies
+    placeholders = ", ".join(["?"] * len(tag_ids))
+    sql = (
+        f"SELECT DISTINCT neuron_id FROM neuron_tags "
+        f"WHERE tag_id IN ({placeholders})"
+    )
+    return (sql, list(tag_ids))
 
 
 def apply_tag_filter(
@@ -172,4 +226,15 @@ def apply_tag_filter(
         TagFilterError: If any specifier cannot be resolved.
         ValueError: If mode is not "and" or "or".
     """
-    pass
+    # 1. Empty / None specifiers — pass-through, no filter
+    if not specifiers:
+        return ("", [])
+    # 2. Resolve specifiers to tag IDs (raises TagFilterError if any not found)
+    tag_ids = resolve_tag_specifiers(conn, specifiers)
+    # 3. Build filter based on mode
+    if mode == "and":
+        return build_and_filter(tag_ids)
+    elif mode == "or":
+        return build_or_filter(tag_ids)
+    else:
+        raise ValueError(f"Invalid filter mode {mode!r}. Must be 'and' or 'or'.")

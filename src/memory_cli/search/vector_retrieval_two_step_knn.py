@@ -81,28 +81,37 @@ def retrieve_vectors(
     # --- Guard: no embedding available ---
     # if query_embedding is None:
     #     return []
+    if query_embedding is None:
+        return []
 
     # --- Guard: dimension check ---
     # if len(query_embedding) != EMBEDDING_DIM:
     #     log warning: f"Expected {EMBEDDING_DIM} dims, got {len(query_embedding)}"
     #     return []
+    if len(query_embedding) != EMBEDDING_DIM:
+        return []
 
     # --- Step 1: Query vec0 standalone ---
     # vec0_results = _query_vec0_standalone(conn, query_embedding)
     # if not vec0_results:
     #     return []
+    vec0_results = _query_vec0_standalone(conn, query_embedding)
+    if not vec0_results:
+        return []
 
     # --- Step 2: Hydrate neuron metadata ---
     # candidates = _hydrate_vector_candidates(conn, vec0_results)
+    candidates = _hydrate_vector_candidates(conn, vec0_results)
 
     # --- Assign ranks ---
     # for rank, candidate in enumerate(candidates):
     #     candidate["vector_rank"] = rank
+    for rank, candidate in enumerate(candidates):
+        candidate["vector_rank"] = rank
 
     # --- Cap ---
     # return candidates[:VECTOR_CANDIDATE_CAP]
-
-    pass
+    return candidates[:VECTOR_CANDIDATE_CAP]
 
 
 def _query_vec0_standalone(
@@ -142,11 +151,13 @@ def _query_vec0_standalone(
     # --- Serialize embedding to float32 blob ---
     # import struct
     # blob = struct.pack(f"<{len(query_embedding)}f", *query_embedding)
+    import struct
+    blob = struct.pack(f"<{len(query_embedding)}f", *query_embedding)
 
     # --- Execute standalone vec0 query ---
     # try:
     #     cursor = conn.execute(
-    #         f"SELECT rowid, distance FROM {VEC0_TABLE} "
+    #         f"SELECT neuron_id, distance FROM {VEC0_TABLE} "
     #         f"WHERE embedding MATCH ? AND k = ? ORDER BY distance",
     #         (blob, VECTOR_CANDIDATE_CAP),
     #     )
@@ -157,8 +168,19 @@ def _query_vec0_standalone(
     # except sqlite3.OperationalError:
     #     # vec0 table missing or sqlite-vec not loaded
     #     return []
-
-    pass
+    try:
+        cursor = conn.execute(
+            f"SELECT neuron_id, distance FROM {VEC0_TABLE} "
+            f"WHERE embedding MATCH ? AND k = ? ORDER BY distance",
+            (blob, VECTOR_CANDIDATE_CAP),
+        )
+        return [
+            {"neuron_id": row[0], "vector_distance": row[1]}
+            for row in cursor.fetchall()
+        ]
+    except sqlite3.OperationalError:
+        # vec0 table missing or sqlite-vec not loaded
+        return []
 
 
 def _hydrate_vector_candidates(
@@ -191,6 +213,9 @@ def _hydrate_vector_candidates(
     # neuron_ids = [r["neuron_id"] for r in vec0_results]
     # if not neuron_ids:
     #     return []
+    neuron_ids = [r["neuron_id"] for r in vec0_results]
+    if not neuron_ids:
+        return []
 
     # --- Check existence in neurons table ---
     # placeholders = ",".join("?" * len(neuron_ids))
@@ -199,8 +224,13 @@ def _hydrate_vector_candidates(
     #     neuron_ids,
     # )
     # existing_ids = {row[0] for row in cursor.fetchall()}
+    placeholders = ",".join("?" * len(neuron_ids))
+    cursor = conn.execute(
+        f"SELECT id FROM neurons WHERE id IN ({placeholders}) AND status != 'archived'",
+        neuron_ids,
+    )
+    existing_ids = {row[0] for row in cursor.fetchall()}
 
     # --- Filter to existing ---
     # return [r for r in vec0_results if r["neuron_id"] in existing_ids]
-
-    pass
+    return [r for r in vec0_results if r["neuron_id"] in existing_ids]

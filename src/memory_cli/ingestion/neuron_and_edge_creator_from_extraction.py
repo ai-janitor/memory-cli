@@ -33,6 +33,9 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+from ..neuron.neuron_add_with_autotags_and_embed import neuron_add
+from ..edge.edge_add_with_reason_and_weight import edge_add
+
 # TYPE_CHECKING avoids circular imports at runtime
 from typing import TYPE_CHECKING
 
@@ -123,32 +126,35 @@ def create_neurons_and_edges(
     # result = CreationResult()
     # ingestion_tags = _build_ingestion_tags(project, tags)
     # ingestion_attrs = _build_ingestion_attrs(source, project, session_id)
+    result = CreationResult()
+    ingestion_tags = _build_ingestion_tags(project, tags)
+    ingestion_attrs = _build_ingestion_attrs(source, project, session_id)
 
     # --- Pass 1: Create neurons for entities ---
-    # for entity in extraction.entities:
-    #     try:
-    #         neuron_id = _create_neuron_from_item(
-    #             conn, entity.content, "entity",
-    #             ingestion_tags, ingestion_attrs, entity.local_id
-    #         )
-    #         result.local_id_to_neuron_id[entity.local_id] = neuron_id
-    #         result.neuron_ids.append(neuron_id)
-    #         result.neuron_count += 1
-    #     except Exception as e:
-    #         result.warnings.append(f"Failed to create entity neuron '{entity.local_id}': {e}")
+    for entity in extraction.entities:
+        try:
+            neuron_id = _create_neuron_from_item(
+                conn, entity.content, "entity",
+                ingestion_tags, ingestion_attrs, entity.local_id
+            )
+            result.local_id_to_neuron_id[entity.local_id] = neuron_id
+            result.neuron_ids.append(neuron_id)
+            result.neuron_count += 1
+        except Exception as e:
+            result.warnings.append(f"Failed to create entity neuron '{entity.local_id}': {e}")
 
     # --- Pass 1 continued: Create neurons for facts ---
-    # for fact in extraction.facts:
-    #     try:
-    #         neuron_id = _create_neuron_from_item(
-    #             conn, fact.content, "fact",
-    #             ingestion_tags, ingestion_attrs, fact.local_id
-    #         )
-    #         result.local_id_to_neuron_id[fact.local_id] = neuron_id
-    #         result.neuron_ids.append(neuron_id)
-    #         result.neuron_count += 1
-    #     except Exception as e:
-    #         result.warnings.append(f"Failed to create fact neuron '{fact.local_id}': {e}")
+    for fact in extraction.facts:
+        try:
+            neuron_id = _create_neuron_from_item(
+                conn, fact.content, "fact",
+                ingestion_tags, ingestion_attrs, fact.local_id
+            )
+            result.local_id_to_neuron_id[fact.local_id] = neuron_id
+            result.neuron_ids.append(neuron_id)
+            result.neuron_count += 1
+        except Exception as e:
+            result.warnings.append(f"Failed to create fact neuron '{fact.local_id}': {e}")
 
     # --- Pass 2: Create edges from relationships ---
     # edge_count, edge_warnings = _create_edges_from_relationships(
@@ -156,10 +162,14 @@ def create_neurons_and_edges(
     # )
     # result.edge_count = edge_count
     # result.warnings.extend(edge_warnings)
+    edge_count, edge_warnings = _create_edges_from_relationships(
+        conn, extraction.relationships, result.local_id_to_neuron_id
+    )
+    result.edge_count = edge_count
+    result.warnings.extend(edge_warnings)
 
     # return result
-
-    pass
+    return result
 
 
 def _create_neuron_from_item(
@@ -199,13 +209,13 @@ def _create_neuron_from_item(
     """
     # --- Build full attrs ---
     # attrs = {**base_attrs, "ingest_role": ingest_role, "ingest_local_id": local_id}
+    attrs = {**base_attrs, "ingest_role": ingest_role, "ingest_local_id": local_id}
 
     # --- Create neuron via neuron_add ---
-    # from ..neuron.neuron_add_with_autotags_and_embed import neuron_add
     # result = neuron_add(conn, content, tags=tags, attrs=attrs, source=attrs.get("source"))
     # return result["id"]
-
-    pass
+    result = neuron_add(conn, content, tags=tags, attrs=attrs, source=attrs.get("source"))
+    return result["id"]
 
 
 def _create_edges_from_relationships(
@@ -236,25 +246,25 @@ def _create_edges_from_relationships(
     # --- Resolve and create edges ---
     # edge_count = 0
     # warnings = []
-    # for rel in relationships:
-    #     source_id = id_map.get(rel.from_id)
-    #     target_id = id_map.get(rel.to_id)
-    #     if source_id is None:
-    #         warnings.append(f"Unresolvable from_id '{rel.from_id}' in relationship")
-    #         continue
-    #     if target_id is None:
-    #         warnings.append(f"Unresolvable to_id '{rel.to_id}' in relationship")
-    #         continue
-    #     try:
-    #         from ..edge.edge_add_with_validation import edge_add
-    #         edge_add(conn, source_id, target_id, rel.reason)
-    #         edge_count += 1
-    #     except Exception as e:
-    #         warnings.append(f"Failed to create edge {rel.from_id}->{rel.to_id}: {e}")
+    edge_count = 0
+    warnings: List[str] = []
+    for rel in relationships:
+        source_id = id_map.get(rel.from_id)
+        target_id = id_map.get(rel.to_id)
+        if source_id is None:
+            warnings.append(f"Unresolvable from_id '{rel.from_id}' in relationship")
+            continue
+        if target_id is None:
+            warnings.append(f"Unresolvable to_id '{rel.to_id}' in relationship")
+            continue
+        try:
+            edge_add(conn, source_id, target_id, rel.reason)
+            edge_count += 1
+        except Exception as e:
+            warnings.append(f"Failed to create edge {rel.from_id}->{rel.to_id}: {e}")
 
     # return (edge_count, warnings)
-
-    pass
+    return (edge_count, warnings)
 
 
 def _build_ingestion_tags(
@@ -282,8 +292,12 @@ def _build_ingestion_tags(
     # if user_tags:
     #     tags.extend(user_tags)
     # return list(dict.fromkeys(tags))  # deduplicate preserving order
-
-    pass
+    tags: List[str] = ["ingested"]
+    if project:
+        tags.append(f"project:{project}")
+    if user_tags:
+        tags.extend(user_tags)
+    return list(dict.fromkeys(tags))  # deduplicate preserving order
 
 
 def _build_ingestion_attrs(
@@ -315,5 +329,10 @@ def _build_ingestion_attrs(
     # if project:
     #     attrs["project"] = project
     # return attrs
-
-    pass
+    attrs: Dict[str, str] = {
+        "source": source,
+        "ingested_session_id": session_id,
+    }
+    if project:
+        attrs["project"] = project
+    return attrs

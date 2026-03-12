@@ -26,4 +26,4 @@
 # --- Public API exports ---
 # The orchestrator is the only public entry point for this package.
 
-# from .heavy_search_orchestrator import heavy_search
+from .heavy_search_orchestrator import heavy_search

@@ -24,11 +24,11 @@ from __future__ import annotations
 import sys
 from typing import Dict, List, Optional, Any, Callable
 
-# from memory_cli.cli.global_flags_format_config_db import parse_global_flags, GlobalFlags
-# from memory_cli.cli.exit_codes_0_1_2 import EXIT_SUCCESS, EXIT_NOT_FOUND, EXIT_ERROR, exit_with
-# from memory_cli.cli.help_system_three_levels import show_top_level_help, show_noun_help, show_verb_help
-# from memory_cli.cli.init_command_top_level_exception import handle_init
-# from memory_cli.cli.output_envelope_json_and_text import format_output, write_output
+from memory_cli.cli.global_flags_format_config_db import parse_global_flags, GlobalFlags
+from memory_cli.cli.exit_codes_0_1_2 import EXIT_SUCCESS, EXIT_NOT_FOUND, EXIT_ERROR, exit_with
+from memory_cli.cli.help_system_three_levels import show_top_level_help, show_noun_help, show_verb_help, has_help_flag
+from memory_cli.cli.init_command_top_level_exception import handle_init
+from memory_cli.cli.output_envelope_json_and_text import format_output, write_output, write_error, Result
 # NOTE: get_registry() is defined in THIS module (line 65), not imported from noun_handlers.
 # Importing noun_handlers triggers self-registration of all noun handlers into _registry.
 
@@ -50,7 +50,7 @@ from typing import Dict, List, Optional, Any, Callable
 #     "verb_map": Dict[str, VerbHandler]   — verb name -> callable
 #     "description": str                    — one-line noun description for help
 #     "flag_defs": Dict[str, FlagDef]       — verb-specific flag definitions
-# _registry: Registry = {}
+_registry: Dict[str, Any] = {}
 
 
 def register_noun(name: str, entry: Dict[str, Any]) -> None:
@@ -60,7 +60,13 @@ def register_noun(name: str, entry: Dict[str, Any]) -> None:
     Validates that entry has required keys: verb_map, description.
     Raises ValueError if noun name already registered (no silent overwrite).
     """
-    pass
+    if "verb_map" not in entry:
+        raise ValueError(f"Noun entry for '{name}' missing required key: verb_map")
+    if "description" not in entry:
+        raise ValueError(f"Noun entry for '{name}' missing required key: description")
+    if name in _registry:
+        raise ValueError(f"Noun '{name}' is already registered")
+    _registry[name] = entry
 
 
 def get_registry() -> Dict[str, Any]:
@@ -68,7 +74,7 @@ def get_registry() -> Dict[str, Any]:
 
     Used by help system to enumerate available nouns and verbs.
     """
-    pass
+    return _registry
 
 
 # =============================================================================
@@ -93,7 +99,61 @@ def main(argv: Optional[List[str]] = None) -> None:
     7. Call _dispatch(global_flags, remaining_tokens)
     8. Catch all exceptions in _handle_error(), format, exit 2
     """
-    pass
+    import memory_cli.cli.noun_handlers  # triggers self-registration of all noun handlers
+    if argv is None:
+        argv = sys.argv[1:]
+    try:
+        global_flags, remaining_tokens = parse_global_flags(argv)
+    except ValueError as exc:
+        write_error(str(exc))
+        sys.exit(EXIT_ERROR)
+
+    if not remaining_tokens:
+        registry = get_registry()
+        help_text = show_top_level_help(registry)
+        write_output(help_text, stream=sys.stdout)
+        sys.exit(EXIT_SUCCESS)
+
+    first_token = remaining_tokens[0]
+
+    if first_token == "init":
+        try:
+            result = handle_init(remaining_tokens[1:], global_flags)
+        except ValueError as exc:
+            result = Result(status="error", error=str(exc))
+        formatted = format_output(result, global_flags.format)
+        write_output(formatted, stream=sys.stdout)
+        exit_with(result.status)
+        return
+
+    if has_help_flag(remaining_tokens):
+        registry = get_registry()
+        if len(remaining_tokens) == 1 or remaining_tokens[0] in ("--help", "-h"):
+            help_text = show_top_level_help(registry)
+        elif len(remaining_tokens) >= 2:
+            noun_name = remaining_tokens[0]
+            noun_entry = registry.get(noun_name)
+            if noun_entry is None:
+                help_text = show_top_level_help(registry)
+            else:
+                non_help = [t for t in remaining_tokens[1:] if t not in ("--help", "-h")]
+                if non_help:
+                    verb_name = non_help[0]
+                    help_text = show_verb_help(noun_name, verb_name, noun_entry)
+                else:
+                    help_text = show_noun_help(noun_name, noun_entry)
+        else:
+            help_text = show_top_level_help(registry)
+        write_output(help_text, stream=sys.stdout)
+        sys.exit(EXIT_SUCCESS)
+        return
+
+    try:
+        _dispatch(global_flags, remaining_tokens)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        _handle_error(exc, global_flags)
 
 
 # =============================================================================
@@ -124,7 +184,39 @@ def _dispatch(global_flags: Any, tokens: List[str]) -> None:
     10. write_output(formatted, stream=sys.stdout)
     11. exit_with(result.status)
     """
-    pass
+    noun_name = tokens[0]
+    noun_entry = _registry.get(noun_name)
+    if noun_entry is None:
+        write_error(f"Unknown noun: {noun_name}. Run `memory --help` to see available nouns.")
+        sys.exit(EXIT_ERROR)
+
+    if len(tokens) < 2:
+        help_text = show_noun_help(noun_name, noun_entry)
+        write_output(help_text, stream=sys.stdout)
+        sys.exit(EXIT_SUCCESS)
+
+    verb_name = tokens[1]
+    verb_map = noun_entry.get("verb_map", {})
+    verb_handler = verb_map.get(verb_name)
+    if verb_handler is None:
+        available = ", ".join(sorted(verb_map.keys()))
+        write_error(
+            f"Unknown verb '{verb_name}' for noun '{noun_name}'. "
+            f"Available verbs: {available}"
+        )
+        sys.exit(EXIT_ERROR)
+
+    remaining_args = tokens[2:]
+
+    if has_help_flag(remaining_args):
+        help_text = show_verb_help(noun_name, verb_name, noun_entry)
+        write_output(help_text, stream=sys.stdout)
+        sys.exit(EXIT_SUCCESS)
+
+    result = verb_handler(remaining_args, global_flags)
+    formatted = format_output(result, global_flags.format)
+    write_output(formatted, stream=sys.stdout)
+    exit_with(result.status)
 
 
 # =============================================================================
@@ -140,4 +232,12 @@ def _handle_error(exc: Exception, global_flags: Any) -> None:
     3. Write to stderr
     4. Exit 2
     """
-    pass
+    error_result = Result(status="error", error=str(exc))
+    fmt = getattr(global_flags, "format", "json") if global_flags is not None else "json"
+    try:
+        formatted = format_output(error_result, fmt)
+        write_output(formatted, stream=sys.stderr)
+    except Exception:
+        sys.stderr.write(f"memory: error: {exc}\n")
+        sys.stderr.flush()
+    sys.exit(EXIT_ERROR)

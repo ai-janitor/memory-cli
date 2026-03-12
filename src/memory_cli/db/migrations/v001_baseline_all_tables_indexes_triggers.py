@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 
 
 def apply(conn: sqlite3.Connection) -> None:
@@ -48,6 +49,12 @@ def apply(conn: sqlite3.Connection) -> None:
     # )
     # Rationale: Must exist first so other steps can reference it, and so
     # schema_version can be set at the end.
+    conn.execute("""
+        CREATE TABLE meta (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    """)
 
     # =========================================================================
     # STEP 2: Create the neurons table
@@ -63,30 +70,47 @@ def apply(conn: sqlite3.Connection) -> None:
     #   status              TEXT NOT NULL DEFAULT 'active'
     #                       CHECK(status IN ('active', 'archived'))
     # )
+    conn.execute("""
+        CREATE TABLE neurons (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            content             TEXT NOT NULL CHECK(length(content) > 0),
+            created_at          INTEGER NOT NULL,
+            updated_at          INTEGER NOT NULL,
+            project             TEXT NOT NULL CHECK(length(project) > 0),
+            source              TEXT,
+            embedding_updated_at INTEGER,
+            status              TEXT NOT NULL DEFAULT 'active'
+                                CHECK(status IN ('active', 'archived'))
+        )
+    """)
 
     # =========================================================================
     # STEP 3: Create neurons indexes
     # =========================================================================
     # CREATE INDEX idx_neurons_project ON neurons(project)
     # Rationale: Most queries filter by project first
+    conn.execute("CREATE INDEX idx_neurons_project ON neurons(project)")
 
     # =========================================================================
     # STEP 4: Create neurons created_at index
     # =========================================================================
     # CREATE INDEX idx_neurons_created_at ON neurons(created_at)
     # Rationale: Time-range queries, recent-first ordering
+    conn.execute("CREATE INDEX idx_neurons_created_at ON neurons(created_at)")
 
     # =========================================================================
     # STEP 5: Create neurons status index
     # =========================================================================
     # CREATE INDEX idx_neurons_status ON neurons(status)
     # Rationale: Filter active vs archived neurons
+    conn.execute("CREATE INDEX idx_neurons_status ON neurons(status)")
 
     # =========================================================================
     # STEP 6: Create neurons embedding_updated_at index
     # =========================================================================
     # CREATE INDEX idx_neurons_embedding_updated_at ON neurons(embedding_updated_at)
     # Rationale: Find neurons that need embedding (WHERE embedding_updated_at IS NULL)
+    conn.execute("CREATE INDEX idx_neurons_embedding_updated_at ON neurons(embedding_updated_at)")
 
     # =========================================================================
     # STEP 7: Create the edges table
@@ -103,16 +127,28 @@ def apply(conn: sqlite3.Connection) -> None:
     #   - Self-referential edges allowed (source_id == target_id)
     #   - Multiple edges between same neuron pair allowed (no unique constraint)
     #   - CASCADE delete: if a neuron is deleted, all its edges go too
+    conn.execute("""
+        CREATE TABLE edges (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_id  INTEGER NOT NULL REFERENCES neurons(id) ON DELETE CASCADE,
+            target_id  INTEGER NOT NULL REFERENCES neurons(id) ON DELETE CASCADE,
+            reason     TEXT NOT NULL CHECK(length(reason) > 0),
+            weight     REAL NOT NULL DEFAULT 1.0 CHECK(weight > 0),
+            created_at INTEGER NOT NULL
+        )
+    """)
 
     # =========================================================================
     # STEP 8: Create edges source_id index
     # =========================================================================
     # CREATE INDEX idx_edges_source_id ON edges(source_id)
+    conn.execute("CREATE INDEX idx_edges_source_id ON edges(source_id)")
 
     # =========================================================================
     # STEP 9: Create edges target_id index
     # =========================================================================
     # CREATE INDEX idx_edges_target_id ON edges(target_id)
+    conn.execute("CREATE INDEX idx_edges_target_id ON edges(target_id)")
 
     # =========================================================================
     # STEP 10: Create the tags table
@@ -123,6 +159,13 @@ def apply(conn: sqlite3.Connection) -> None:
     #              CHECK(name = lower(name)),   -- enforce lowercase
     #   created_at INTEGER NOT NULL
     # )
+    conn.execute("""
+        CREATE TABLE tags (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            name       TEXT NOT NULL UNIQUE CHECK(length(name) > 0) CHECK(name = lower(name)),
+            created_at INTEGER NOT NULL
+        )
+    """)
 
     # =========================================================================
     # STEP 11: Create the neuron_tags junction table
@@ -132,12 +175,20 @@ def apply(conn: sqlite3.Connection) -> None:
     #   tag_id    INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
     #   PRIMARY KEY (neuron_id, tag_id)
     # )
+    conn.execute("""
+        CREATE TABLE neuron_tags (
+            neuron_id INTEGER NOT NULL REFERENCES neurons(id) ON DELETE CASCADE,
+            tag_id    INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+            PRIMARY KEY (neuron_id, tag_id)
+        )
+    """)
 
     # =========================================================================
     # STEP 12: Create neuron_tags tag_id index
     # =========================================================================
     # CREATE INDEX idx_neuron_tags_tag_id ON neuron_tags(tag_id)
     # Rationale: Reverse lookup — find all neurons for a given tag
+    conn.execute("CREATE INDEX idx_neuron_tags_tag_id ON neuron_tags(tag_id)")
 
     # =========================================================================
     # STEP 13: Create the attr_keys table
@@ -147,6 +198,13 @@ def apply(conn: sqlite3.Connection) -> None:
     #   name       TEXT NOT NULL UNIQUE CHECK(length(name) > 0),
     #   created_at INTEGER NOT NULL
     # )
+    conn.execute("""
+        CREATE TABLE attr_keys (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            name       TEXT NOT NULL UNIQUE CHECK(length(name) > 0),
+            created_at INTEGER NOT NULL
+        )
+    """)
 
     # =========================================================================
     # STEP 14: Create the neuron_attrs table
@@ -159,11 +217,20 @@ def apply(conn: sqlite3.Connection) -> None:
     # )
     # Note: attr_keys uses ON DELETE RESTRICT — cannot delete an attr_key
     # that is still referenced. This prevents orphaned attribute values.
+    conn.execute("""
+        CREATE TABLE neuron_attrs (
+            neuron_id   INTEGER NOT NULL REFERENCES neurons(id) ON DELETE CASCADE,
+            attr_key_id INTEGER NOT NULL REFERENCES attr_keys(id) ON DELETE RESTRICT,
+            value       TEXT NOT NULL,
+            PRIMARY KEY (neuron_id, attr_key_id)
+        )
+    """)
 
     # =========================================================================
     # STEP 15: Create neuron_attrs attr_key_id index
     # =========================================================================
     # CREATE INDEX idx_neuron_attrs_attr_key_id ON neuron_attrs(attr_key_id)
+    conn.execute("CREATE INDEX idx_neuron_attrs_attr_key_id ON neuron_attrs(attr_key_id)")
 
     # =========================================================================
     # STEP 16: Create the FTS5 virtual table (neurons_fts)
@@ -179,6 +246,15 @@ def apply(conn: sqlite3.Connection) -> None:
     # reads content from the neurons table, but we must manually keep it in sync
     # via triggers. tags_blob is a space-separated string of tag names for
     # combined content+tag search.
+    conn.execute("""
+        CREATE VIRTUAL TABLE neurons_fts USING fts5(
+            content,
+            tags_blob,
+            content='neurons',
+            content_rowid='id',
+            tokenize='porter unicode61'
+        )
+    """)
 
     # =========================================================================
     # STEP 17: FTS trigger — AFTER INSERT on neurons
@@ -189,6 +265,13 @@ def apply(conn: sqlite3.Connection) -> None:
     #   VALUES (new.id, new.content, '');
     # END;
     # Note: New neurons start with empty tags_blob. Tag triggers update it.
+    conn.execute("""
+        CREATE TRIGGER trg_neurons_fts_insert AFTER INSERT ON neurons
+        BEGIN
+            INSERT INTO neurons_fts(rowid, content, tags_blob)
+            VALUES (new.id, new.content, '');
+        END
+    """)
 
     # =========================================================================
     # STEP 18: FTS trigger — AFTER UPDATE on neurons
@@ -207,6 +290,21 @@ def apply(conn: sqlite3.Connection) -> None:
     #               WHERE nt.neuron_id = new.id), ''));
     # END;
     # Note: Must delete old row then insert new. FTS5 content-sync protocol.
+    conn.execute("""
+        CREATE TRIGGER trg_neurons_fts_update AFTER UPDATE ON neurons
+        BEGIN
+            INSERT INTO neurons_fts(neurons_fts, rowid, content, tags_blob)
+            VALUES ('delete', old.id, old.content,
+                COALESCE((SELECT group_concat(t.name, ' ')
+                          FROM neuron_tags nt JOIN tags t ON nt.tag_id = t.id
+                          WHERE nt.neuron_id = old.id), ''));
+            INSERT INTO neurons_fts(rowid, content, tags_blob)
+            VALUES (new.id, new.content,
+                COALESCE((SELECT group_concat(t.name, ' ')
+                          FROM neuron_tags nt JOIN tags t ON nt.tag_id = t.id
+                          WHERE nt.neuron_id = new.id), ''));
+        END
+    """)
 
     # =========================================================================
     # STEP 19: FTS trigger — AFTER DELETE on neurons
@@ -219,6 +317,16 @@ def apply(conn: sqlite3.Connection) -> None:
     #               FROM neuron_tags nt JOIN tags t ON nt.tag_id = t.id
     #               WHERE nt.neuron_id = old.id), ''));
     # END;
+    conn.execute("""
+        CREATE TRIGGER trg_neurons_fts_delete AFTER DELETE ON neurons
+        BEGIN
+            INSERT INTO neurons_fts(neurons_fts, rowid, content, tags_blob)
+            VALUES ('delete', old.id, old.content,
+                COALESCE((SELECT group_concat(t.name, ' ')
+                          FROM neuron_tags nt JOIN tags t ON nt.tag_id = t.id
+                          WHERE nt.neuron_id = old.id), ''));
+        END
+    """)
 
     # =========================================================================
     # STEP 20: FTS trigger — AFTER INSERT on neuron_tags
@@ -241,6 +349,24 @@ def apply(conn: sqlite3.Connection) -> None:
     #               FROM neuron_tags nt JOIN tags t ON nt.tag_id = t.id
     #               WHERE nt.neuron_id = new.neuron_id), ''));
     # END;
+    conn.execute("""
+        CREATE TRIGGER trg_neuron_tags_fts_insert AFTER INSERT ON neuron_tags
+        BEGIN
+            INSERT INTO neurons_fts(neurons_fts, rowid, content, tags_blob)
+            VALUES ('delete', new.neuron_id,
+                (SELECT content FROM neurons WHERE id = new.neuron_id),
+                COALESCE((SELECT group_concat(t.name, ' ')
+                          FROM neuron_tags nt JOIN tags t ON nt.tag_id = t.id
+                          WHERE nt.neuron_id = new.neuron_id
+                          AND nt.tag_id != new.tag_id), ''));
+            INSERT INTO neurons_fts(rowid, content, tags_blob)
+            VALUES (new.neuron_id,
+                (SELECT content FROM neurons WHERE id = new.neuron_id),
+                COALESCE((SELECT group_concat(t.name, ' ')
+                          FROM neuron_tags nt JOIN tags t ON nt.tag_id = t.id
+                          WHERE nt.neuron_id = new.neuron_id), ''));
+        END
+    """)
 
     # =========================================================================
     # STEP 21: FTS trigger — AFTER DELETE on neuron_tags
@@ -272,6 +398,27 @@ def apply(conn: sqlite3.Connection) -> None:
     # END;
     # Note: The delete trigger must reconstruct the OLD tags_blob (before the
     # tag was removed) for the FTS delete command to match correctly.
+    conn.execute("""
+        CREATE TRIGGER trg_neuron_tags_fts_delete AFTER DELETE ON neuron_tags
+        BEGIN
+            INSERT INTO neurons_fts(neurons_fts, rowid, content, tags_blob)
+            VALUES ('delete', old.neuron_id,
+                (SELECT content FROM neurons WHERE id = old.neuron_id),
+                COALESCE(
+                    (SELECT group_concat(name, ' ') FROM (
+                        SELECT t.name FROM neuron_tags nt JOIN tags t ON nt.tag_id = t.id
+                        WHERE nt.neuron_id = old.neuron_id
+                        UNION ALL
+                        SELECT t2.name FROM tags t2 WHERE t2.id = old.tag_id
+                    )), ''));
+            INSERT INTO neurons_fts(rowid, content, tags_blob)
+            VALUES (old.neuron_id,
+                (SELECT content FROM neurons WHERE id = old.neuron_id),
+                COALESCE((SELECT group_concat(t.name, ' ')
+                          FROM neuron_tags nt JOIN tags t ON nt.tag_id = t.id
+                          WHERE nt.neuron_id = old.neuron_id), ''));
+        END
+    """)
 
     # =========================================================================
     # STEP 22: Create the vec0 virtual table (neurons_vec)
@@ -287,6 +434,12 @@ def apply(conn: sqlite3.Connection) -> None:
     #     1. Query neurons_vec for nearest neighbor IDs
     #     2. Query neurons table with those IDs
     #   - 768 dimensions matches the default embedding model
+    conn.execute("""
+        CREATE VIRTUAL TABLE neurons_vec USING vec0(
+            neuron_id INTEGER PRIMARY KEY,
+            embedding float[768]
+        )
+    """)
 
     # =========================================================================
     # STEP 23: Seed the meta table with initial values
@@ -308,5 +461,26 @@ def apply(conn: sqlite3.Connection) -> None:
     # If any are missing: raise RuntimeError with list of missing tables
     # This is a sanity check — if we get here, all CREATEs succeeded,
     # but belt-and-suspenders for debugging
+    now_ms = str(int(time.time() * 1000))
+    conn.executemany(
+        "INSERT INTO meta (key, value) VALUES (?, ?)",
+        [
+            ("schema_version", "1"),
+            ("embedding_model", "default"),
+            ("embedding_dimensions", "768"),
+            ("created_at", now_ms),
+            ("last_migrated_at", now_ms),
+        ],
+    )
 
-    pass
+    expected_tables = {
+        "neurons", "edges", "tags", "neuron_tags", "attr_keys",
+        "neuron_attrs", "neurons_fts", "neurons_vec", "meta",
+    }
+    rows = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type IN ('table', 'shadow')"
+    ).fetchall()
+    found = {row[0] for row in rows if not row[0].startswith("sqlite_")}
+    missing = expected_tables - found
+    if missing:
+        raise RuntimeError(f"Migration v001 verification failed — missing tables: {sorted(missing)}")

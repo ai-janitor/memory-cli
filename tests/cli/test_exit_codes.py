@@ -16,11 +16,11 @@
 
 from __future__ import annotations
 
-# import pytest
-# from memory_cli.cli.exit_codes_0_1_2 import (
-#     EXIT_SUCCESS, EXIT_NOT_FOUND, EXIT_ERROR,
-#     status_to_exit_code, exit_with,
-# )
+import pytest
+from memory_cli.cli.exit_codes_0_1_2 import (
+    EXIT_SUCCESS, EXIT_NOT_FOUND, EXIT_ERROR,
+    status_to_exit_code, exit_with,
+)
 
 
 # =============================================================================
@@ -31,18 +31,15 @@ class TestExitCodeConstants:
 
     def test_exit_success_is_0(self) -> None:
         """EXIT_SUCCESS == 0."""
-        # assert EXIT_SUCCESS == 0
-        pass
+        assert EXIT_SUCCESS == 0
 
     def test_exit_not_found_is_1(self) -> None:
         """EXIT_NOT_FOUND == 1."""
-        # assert EXIT_NOT_FOUND == 1
-        pass
+        assert EXIT_NOT_FOUND == 1
 
     def test_exit_error_is_2(self) -> None:
         """EXIT_ERROR == 2."""
-        # assert EXIT_ERROR == 2
-        pass
+        assert EXIT_ERROR == 2
 
 
 # =============================================================================
@@ -58,7 +55,7 @@ class TestStatusToExitCode:
         1. Call status_to_exit_code("ok")
         2. Assert returns 0
         """
-        pass
+        assert status_to_exit_code("ok") == 0
 
     def test_not_found_maps_to_1(self) -> None:
         """status "not_found" -> 1.
@@ -67,7 +64,7 @@ class TestStatusToExitCode:
         1. Call status_to_exit_code("not_found")
         2. Assert returns 1
         """
-        pass
+        assert status_to_exit_code("not_found") == 1
 
     def test_error_maps_to_2(self) -> None:
         """status "error" -> 2.
@@ -76,7 +73,7 @@ class TestStatusToExitCode:
         1. Call status_to_exit_code("error")
         2. Assert returns 2
         """
-        pass
+        assert status_to_exit_code("error") == 2
 
     def test_unknown_status_defaults_to_2(self) -> None:
         """Unknown status string -> 2 (error).
@@ -85,7 +82,7 @@ class TestStatusToExitCode:
         1. Call status_to_exit_code("banana")
         2. Assert returns 2 (unknown = error)
         """
-        pass
+        assert status_to_exit_code("banana") == 2
 
 
 # =============================================================================
@@ -102,7 +99,9 @@ class TestExitWith:
         2. Call exit_with("ok")
         3. Assert exc.value.code == 0
         """
-        pass
+        with pytest.raises(SystemExit) as exc:
+            exit_with("ok")
+        assert exc.value.code == 0
 
     def test_exit_with_not_found_raises_systemexit_1(self) -> None:
         """exit_with("not_found") -> SystemExit(1).
@@ -112,7 +111,9 @@ class TestExitWith:
         2. Call exit_with("not_found")
         3. Assert exc.value.code == 1
         """
-        pass
+        with pytest.raises(SystemExit) as exc:
+            exit_with("not_found")
+        assert exc.value.code == 1
 
     def test_exit_with_error_raises_systemexit_2(self) -> None:
         """exit_with("error") -> SystemExit(2).
@@ -122,4 +123,6 @@ class TestExitWith:
         2. Call exit_with("error")
         3. Assert exc.value.code == 2
         """
-        pass
+        with pytest.raises(SystemExit) as exc:
+            exit_with("error")
+        assert exc.value.code == 2

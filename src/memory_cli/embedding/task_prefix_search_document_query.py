@@ -51,11 +51,19 @@ def prepend_prefix(text: str, operation: OperationType) -> str:
     # --- Step 1: Validate operation type ---
     # If operation not in ("index", "query"):
     #   raise ValueError(f"Unknown operation type: {operation}. Must be 'index' or 'query'.")
+    if operation not in ("index", "query"):
+        raise ValueError(
+            f"Unknown operation type: {operation!r}. Must be 'index' or 'query'."
+        )
 
     # --- Step 2: Select prefix ---
     # If operation == "index": prefix = INDEX_PREFIX
     # Else: prefix = QUERY_PREFIX
+    if operation == "index":
+        prefix = INDEX_PREFIX
+    else:
+        prefix = QUERY_PREFIX
 
     # --- Step 3: Prepend and return ---
     # return prefix + text
-    pass
+    return prefix + text

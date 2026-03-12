@@ -19,8 +19,7 @@ from __future__ import annotations
 
 from typing import List, Any
 
-# from memory_cli.cli.entrypoint_and_argv_dispatch import register_noun
-# from memory_cli.cli.output_envelope_json_and_text import Result
+from memory_cli.cli.entrypoint_and_argv_dispatch import register_noun
 
 
 # =============================================================================
@@ -50,7 +49,7 @@ def handle_export(args: List[str], global_flags: Any) -> Any:
     5. Return Result(status="ok", data={"exported": count, "path": path_or_stdout})
     6. Error path: DB not initialized, write permission denied, etc.
     """
-    pass
+    raise NotImplementedError
 
 
 # =============================================================================
@@ -83,7 +82,7 @@ def handle_import(args: List[str], global_flags: Any) -> Any:
        })
     7. Error path: file not found, malformed data, DB errors
     """
-    pass
+    raise NotImplementedError
 
 
 # =============================================================================
@@ -115,7 +114,7 @@ def handle_reembed(args: List[str], global_flags: Any) -> Any:
        })
     5. Error path: embedding model not available, DB errors
     """
-    pass
+    raise NotImplementedError
 
 
 # =============================================================================
@@ -162,7 +161,12 @@ def register() -> None:
          "flag_defs": _FLAG_DEFS,
        })
     """
-    pass
+    register_noun("batch", {
+        "verb_map": _VERB_MAP,
+        "description": "Batch — bulk export, import, and reembedding",
+        "verb_descriptions": _VERB_DESCRIPTIONS,
+        "flag_defs": _FLAG_DEFS,
+    })
 
 # --- Self-register on import ---
-# register()
+register()

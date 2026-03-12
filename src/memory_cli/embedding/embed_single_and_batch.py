@@ -22,27 +22,31 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+import warnings
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     pass
+
+from .dimension_enforcement_768 import validate_dimensions, validate_dimensions_batch
+from .task_prefix_search_document_query import prepend_prefix
 
 # Type alias for clarity
 Vector = list[float]
 OperationType = Literal["index", "query"]
 
 
-def embed_single(text: str, operation: OperationType) -> Vector | None:
+def embed_single(model: Any, text: str, op_type: OperationType) -> Vector:
     """Embed a single text into a 768-dim L2-normalized float vector.
 
     Args:
+        model: A loaded Llama instance configured for embedding.
         text: The assembled embedding input (content + tags, WITHOUT prefix).
               Prefix is prepended internally based on operation type.
-        operation: "index" for storing/indexing, "query" for searching.
+        op_type: "index" for storing/indexing, "query" for searching.
 
     Returns:
-        A list of 768 floats (L2-normalized), or None if the model is
-        unavailable (with a warning emitted).
+        A list of 768 floats (L2-normalized).
 
     Raises:
         ValueError: If the resulting vector is not exactly 768 dimensions.
@@ -57,31 +61,39 @@ def embed_single(text: str, operation: OperationType) -> Vector | None:
 
     # --- Step 2: Prepend task prefix ---
     # prefixed_text = prepend_prefix(text, operation)
+    prefixed_text = prepend_prefix(text, op_type)
 
     # --- Step 3: Call Llama.embed() ---
     # result = model.embed(prefixed_text)
     # Llama.embed() returns a list of floats for single input
+    result = model.embed(prefixed_text, normalize=True)
+
+    # Handle nested list: model may return [[...]] for a single input
+    if result and isinstance(result[0], list):
+        result = result[0]
 
     # --- Step 4: Validate dimensions ---
     # validate_dimensions(result)  # raises ValueError if not 768
+    validate_dimensions(result)
 
     # --- Step 5: Return the vector ---
     # return result
-    pass
+    return result
 
 
-def embed_batch(texts: list[str], operation: OperationType) -> list[Vector] | None:
+def embed_batch(model: Any, texts: list[str], op_type: OperationType) -> list[Vector]:
     """Embed a batch of texts into a list of 768-dim L2-normalized float vectors.
 
     All texts in the batch use the same operation type (all index or all query).
 
     Args:
+        model: A loaded Llama instance configured for embedding.
         texts: List of assembled embedding inputs (content + tags, WITHOUT prefix).
                Empty list returns empty list (not None).
-        operation: "index" for storing/indexing, "query" for searching.
+        op_type: "index" for storing/indexing, "query" for searching.
 
     Returns:
-        A list of vectors (each 768 floats), or None if the model is unavailable.
+        A list of vectors (each 768 floats).
         Empty input list returns empty output list.
 
     Raises:
@@ -90,6 +102,8 @@ def embed_batch(texts: list[str], operation: OperationType) -> list[Vector] | No
     """
     # --- Step 1: Handle empty input ---
     # If texts is empty list: return []
+    if not texts:
+        return []
 
     # --- Step 2: Attempt to get the model ---
     # Try get_model() from model_loader_lazy_singleton
@@ -99,15 +113,18 @@ def embed_batch(texts: list[str], operation: OperationType) -> list[Vector] | No
 
     # --- Step 3: Prepend task prefix to all texts ---
     # prefixed_texts = [prepend_prefix(t, operation) for t in texts]
+    prefixed_texts = [prepend_prefix(t, op_type) for t in texts]
 
     # --- Step 4: Call Llama.embed() with list ---
     # results = model.embed(prefixed_texts)
     # Llama.embed() with list input returns list of vectors
+    results = model.embed(prefixed_texts, normalize=True)
 
     # --- Step 5: Validate dimensions for each vector ---
     # for vec in results:
     #   validate_dimensions(vec)  # raises ValueError if not 768
+    validate_dimensions_batch(results)
 
     # --- Step 6: Return the list of vectors ---
     # return results
-    pass
+    return results

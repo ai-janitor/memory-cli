@@ -39,127 +39,168 @@ from memory_cli.ingestion.message_assembler_transcript import (
 # Helpers — build ParsedMessage fixtures
 # -----------------------------------------------------------------------------
 
-# _msg(role, content, timestamp=None, line_number=0) -> ParsedMessage
+def _msg(role: str, content: str, timestamp: str = None, line_number: int = 0) -> ParsedMessage:
+    """Create a ParsedMessage for testing."""
+    return ParsedMessage(
+        role=role,
+        content=content,
+        timestamp=timestamp,
+        line_number=line_number,
+    )
 
 
 class TestAssembleTranscriptChunks:
-    """Test the main assemble_transcript_chunks() entry point.
+    """Test the main assemble_transcript_chunks() entry point."""
 
-    Tests:
-    - test_single_chunk_small_conversation
-      3 messages well under budget
-      Verify: returns list with 1 chunk, chunk contains "Human:" and "Assistant:"
-    - test_multiple_chunks_large_conversation
-      Many messages exceeding budget
-      Verify: returns multiple chunks, each under budget, no mid-turn splits
-    - test_empty_input_returns_empty
-      Empty message list
-      Verify: returns []
-    - test_single_message_returns_single_chunk
-      1 message
-      Verify: returns list with 1 chunk
-    - test_chunks_separated_by_double_newline
-      Verify: turns within a chunk are joined by "\\n\\n"
-    - test_messages_sorted_before_chunking
-      Messages passed in reverse timestamp order
-      Verify: chunk content has correct chronological order
-    - test_oversized_single_turn_gets_own_chunk
-      One message with content exceeding budget
-      Verify: that turn is its own chunk (not dropped, not split)
-    """
+    def test_single_chunk_small_conversation(self):
+        """3 messages well under budget -> 1 chunk containing all turns."""
+        msgs = [
+            _msg("user", "hi", "2024-01-01T00:00:00"),
+            _msg("assistant", "hello", "2024-01-01T00:00:01"),
+            _msg("user", "bye", "2024-01-01T00:00:02"),
+        ]
+        chunks = assemble_transcript_chunks(msgs)
+        assert len(chunks) == 1
+        assert "Human: hi" in chunks[0]
+        assert "Assistant: hello" in chunks[0]
+        assert "Human: bye" in chunks[0]
 
-    # --- test_single_chunk_small_conversation ---
-    # msgs = [_msg("user", "hi", "2024-01-01T00:00:00"),
-    #         _msg("assistant", "hello", "2024-01-01T00:00:01")]
-    # chunks = assemble_transcript_chunks(msgs)
-    # assert len(chunks) == 1
-    # assert "Human: hi" in chunks[0]
-    # assert "Assistant: hello" in chunks[0]
+    def test_multiple_chunks_large_conversation(self):
+        """Many messages exceeding budget -> multiple chunks."""
+        # Create messages that each are ~1/4 of the budget
+        big_content = "x" * (TRANSCRIPT_CHUNK_BUDGET * CHARS_PER_TOKEN_ESTIMATE // 3 + 1)
+        msgs = [
+            _msg("user", big_content, f"2024-01-01T00:00:0{i}", i)
+            for i in range(6)
+        ]
+        chunks = assemble_transcript_chunks(msgs)
+        assert len(chunks) > 1
 
-    # --- test_multiple_chunks_large_conversation ---
-    # --- test_empty_input_returns_empty ---
-    # --- test_single_message_returns_single_chunk ---
-    # --- test_chunks_separated_by_double_newline ---
-    # --- test_messages_sorted_before_chunking ---
-    # --- test_oversized_single_turn_gets_own_chunk ---
+    def test_empty_input_returns_empty(self):
+        """Empty message list -> return []."""
+        chunks = assemble_transcript_chunks([])
+        assert chunks == []
 
-    pass
+    def test_single_message_returns_single_chunk(self):
+        """1 message -> list with 1 chunk."""
+        msgs = [_msg("user", "hello")]
+        chunks = assemble_transcript_chunks(msgs)
+        assert len(chunks) == 1
+
+    def test_chunks_separated_by_double_newline(self):
+        """Turns within a chunk are joined by "\\n\\n"."""
+        msgs = [
+            _msg("user", "hi", "2024-01-01T00:00:00"),
+            _msg("assistant", "hello", "2024-01-01T00:00:01"),
+        ]
+        chunks = assemble_transcript_chunks(msgs)
+        assert len(chunks) == 1
+        assert "\n\nAssistant:" in chunks[0]
+
+    def test_messages_sorted_before_chunking(self):
+        """Messages passed in reverse order -> chunk content in chronological order."""
+        msgs = [
+            _msg("assistant", "second", "2024-01-01T00:00:01"),
+            _msg("user", "first", "2024-01-01T00:00:00"),
+        ]
+        chunks = assemble_transcript_chunks(msgs)
+        assert len(chunks) == 1
+        # "first" should appear before "second" in the chunk
+        chunk = chunks[0]
+        assert chunk.index("first") < chunk.index("second")
+
+    def test_oversized_single_turn_gets_own_chunk(self):
+        """One message with content exceeding budget -> its own chunk."""
+        huge_content = "x" * (TRANSCRIPT_CHUNK_BUDGET * CHARS_PER_TOKEN_ESTIMATE * 2)
+        msgs = [_msg("user", huge_content)]
+        chunks = assemble_transcript_chunks(msgs)
+        assert len(chunks) == 1
+        assert "Human: " in chunks[0]
 
 
 class TestFormatTurn:
-    """Test _format_turn() formatting logic.
+    """Test _format_turn() formatting logic."""
 
-    Tests:
-    - test_user_message_formats_as_human
-      ParsedMessage(role="user", content="hello")
-      Verify: returns "Human: hello"
-    - test_assistant_message_formats_as_assistant
-      ParsedMessage(role="assistant", content="hi")
-      Verify: returns "Assistant: hi"
-    - test_multiline_content_preserved
-      Content with newlines
-      Verify: newlines preserved in output
-    """
+    def test_user_message_formats_as_human(self):
+        """ParsedMessage(role="user") -> "Human: <content>"."""
+        msg = ParsedMessage(role="user", content="hello")
+        assert _format_turn(msg) == "Human: hello"
 
-    # --- test_user_message_formats_as_human ---
-    # msg = ParsedMessage(role="user", content="hello")
-    # assert _format_turn(msg) == "Human: hello"
+    def test_assistant_message_formats_as_assistant(self):
+        """ParsedMessage(role="assistant") -> "Assistant: <content>"."""
+        msg = ParsedMessage(role="assistant", content="hi")
+        assert _format_turn(msg) == "Assistant: hi"
 
-    # --- test_assistant_message_formats_as_assistant ---
-    # --- test_multiline_content_preserved ---
-
-    pass
+    def test_multiline_content_preserved(self):
+        """Newlines in content are preserved."""
+        msg = ParsedMessage(role="user", content="line1\nline2")
+        result = _format_turn(msg)
+        assert "line1\nline2" in result
 
 
 class TestEstimateTokens:
-    """Test _estimate_tokens() heuristic.
+    """Test _estimate_tokens() heuristic."""
 
-    Tests:
-    - test_short_text
-      "hello" (5 chars) -> ceil(5/4) = 2 tokens
-      Verify: returns 2
-    - test_empty_text
-      "" -> at least 1 token (minimum)
-      Verify: returns 1
-    - test_long_text_proportional
-      400 chars -> 100 tokens
-      Verify: returns 100
-    """
+    def test_short_text(self):
+        """'hello' (5 chars) -> ceil(5/4) = 2 tokens."""
+        assert _estimate_tokens("hello") == 2
 
-    # --- test_short_text ---
-    # assert _estimate_tokens("hello") == 2
+    def test_empty_text(self):
+        """Empty string -> at least 1 token (minimum)."""
+        assert _estimate_tokens("") == 1
 
-    # --- test_empty_text ---
-    # --- test_long_text_proportional ---
+    def test_long_text_proportional(self):
+        """400 chars -> 100 tokens."""
+        assert _estimate_tokens("x" * 400) == 100
 
-    pass
+    def test_four_char_text(self):
+        """4 chars -> 1 token."""
+        assert _estimate_tokens("abcd") == 1
+
+    def test_five_char_text(self):
+        """5 chars -> ceil(5/4) = 2 tokens."""
+        assert _estimate_tokens("abcde") == 2
 
 
 class TestSortMessagesByTimestamp:
-    """Test _sort_messages_by_timestamp() ordering.
+    """Test _sort_messages_by_timestamp() ordering."""
 
-    Tests:
-    - test_sorts_by_timestamp_ascending
-      Messages with timestamps out of order
-      Verify: sorted by timestamp ascending
-    - test_none_timestamps_sort_last
-      Mix of timestamped and None-timestamp messages
-      Verify: None-timestamp messages appear at end
-    - test_same_timestamp_preserves_line_order
-      Messages with identical timestamps but different line_numbers
-      Verify: sorted by line_number within same timestamp
-    - test_does_not_mutate_input
-      Verify: original list is unchanged after sort
-    """
+    def test_sorts_by_timestamp_ascending(self):
+        """Messages with timestamps out of order -> sorted ascending."""
+        msgs = [
+            _msg("user", "b", "2024-01-02", line_number=2),
+            _msg("user", "a", "2024-01-01", line_number=1),
+        ]
+        sorted_msgs = _sort_messages_by_timestamp(msgs)
+        assert sorted_msgs[0].content == "a"
+        assert sorted_msgs[1].content == "b"
 
-    # --- test_sorts_by_timestamp_ascending ---
-    # msgs = [_msg("user", "b", "2024-01-02", line_number=2),
-    #         _msg("user", "a", "2024-01-01", line_number=1)]
-    # sorted_msgs = _sort_messages_by_timestamp(msgs)
-    # assert sorted_msgs[0].content == "a"
+    def test_none_timestamps_sort_last(self):
+        """Messages with None timestamps appear at end."""
+        msgs = [
+            _msg("user", "no-ts", None, line_number=1),
+            _msg("user", "has-ts", "2024-01-01", line_number=2),
+        ]
+        sorted_msgs = _sort_messages_by_timestamp(msgs)
+        assert sorted_msgs[0].content == "has-ts"
+        assert sorted_msgs[1].content == "no-ts"
 
-    # --- test_none_timestamps_sort_last ---
-    # --- test_same_timestamp_preserves_line_order ---
-    # --- test_does_not_mutate_input ---
+    def test_same_timestamp_preserves_line_order(self):
+        """Same timestamp -> sorted by line_number."""
+        msgs = [
+            _msg("user", "line3", "2024-01-01", line_number=3),
+            _msg("user", "line1", "2024-01-01", line_number=1),
+            _msg("user", "line2", "2024-01-01", line_number=2),
+        ]
+        sorted_msgs = _sort_messages_by_timestamp(msgs)
+        assert [m.line_number for m in sorted_msgs] == [1, 2, 3]
 
-    pass
+    def test_does_not_mutate_input(self):
+        """Original list is unchanged after sort."""
+        msgs = [
+            _msg("user", "b", "2024-01-02"),
+            _msg("user", "a", "2024-01-01"),
+        ]
+        original_order = [m.content for m in msgs]
+        _sort_messages_by_timestamp(msgs)
+        assert [m.content for m in msgs] == original_order

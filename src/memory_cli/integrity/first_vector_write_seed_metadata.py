@@ -46,24 +46,32 @@ def seed_metadata_on_first_vector(
         True if metadata was seeded (first time), False if already present.
     """
     # --- Step 1: Check if metadata already exists ---
-    # Read embedding_model_name from meta table
-    # If it is not None → metadata already seeded, return False
+    # Read embedding_model from meta table (key used by migration)
+    # If it is not None and not 'default' → metadata already seeded, return False
+    if _meta_key_exists(conn, "embedding_model"):
+        return False
 
     # --- Step 2: Seed both values atomically ---
-    # Use INSERT OR IGNORE to handle race condition where another agent
-    # seeds between our check and our write
-    # INSERT OR IGNORE INTO meta (key, value) VALUES ('embedding_model_name', ?)
-    # INSERT OR IGNORE INTO meta (key, value) VALUES ('embedding_dimensions', ?)
+    # The v001 migration pre-seeds embedding_model='default' as a placeholder.
+    # First vector write must atomically update the 'default' placeholder to the
+    # real model name. We use a conditional UPDATE that only fires if value is
+    # still 'default' (concurrent-safe: if another agent updated it first, our
+    # UPDATE affects 0 rows and we return False).
     #
-    # We use INSERT OR IGNORE (not INSERT OR REPLACE) because:
-    #   - If another agent inserted between our check and our write,
-    #     we want to keep THEIR values (they won the race)
-    #   - REPLACE would overwrite, violating concurrent safety
+    # For embedding_dimensions, we similarly update only if still at default.
+    cursor1 = conn.execute(
+        "UPDATE meta SET value = ? WHERE key = 'embedding_model' AND value = 'default'",
+        (model_name,),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO meta (key, value) VALUES ('embedding_dimensions', ?)",
+        (str(dimensions),),
+    )
 
     # --- Step 3: Return whether we actually seeded ---
-    # Check rowcount or re-read to confirm we were the ones who wrote
-    # Return True if we seeded, False if another agent beat us
-    pass
+    # cursor1.rowcount == 1 means we successfully updated from 'default'
+    # If another agent already updated it, rowcount == 0
+    return cursor1.rowcount == 1
 
 
 def _meta_key_exists(conn: sqlite3.Connection, key: str) -> bool:
@@ -76,6 +84,11 @@ def _meta_key_exists(conn: sqlite3.Connection, key: str) -> bool:
     Returns:
         True if the key exists, False otherwise.
     """
-    # SELECT 1 FROM meta WHERE key = ? LIMIT 1
-    # Return True if row found, False otherwise
-    pass
+    # SELECT value FROM meta WHERE key = ? LIMIT 1
+    # Return True if key exists AND value != 'default' (default means not yet seeded)
+    row = conn.execute(
+        "SELECT value FROM meta WHERE key = ? LIMIT 1", (key,)
+    ).fetchone()
+    if row is None:
+        return False
+    return row[0] != "default"

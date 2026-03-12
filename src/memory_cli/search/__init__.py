@@ -28,4 +28,4 @@
 # --- Public API exports ---
 # The main entry point for CLI commands is the pipeline orchestrator.
 
-# from .light_search_pipeline_orchestrator import light_search
+from .light_search_pipeline_orchestrator import light_search, SearchOptions, SearchResultEnvelope

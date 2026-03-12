@@ -44,7 +44,12 @@ def validate_dimensions(vector: list[float]) -> None:
     #     f"Expected {EXPECTED_DIMENSIONS}-dim vector, got {actual}-dim. "
     #     f"This indicates a model mismatch or embedding corruption."
     #   )
-    pass
+    actual = len(vector)
+    if actual != EXPECTED_DIMENSIONS:
+        raise ValueError(
+            f"Expected {EXPECTED_DIMENSIONS}-dim vector, got {actual}-dim. "
+            f"This indicates a model mismatch or embedding corruption."
+        )
 
 
 def validate_dimensions_batch(vectors: list[list[float]]) -> None:
@@ -67,4 +72,10 @@ def validate_dimensions_batch(vectors: list[list[float]]) -> None:
     #       f"Vector at index {i}: expected {EXPECTED_DIMENSIONS}-dim, got {actual}-dim. "
     #       f"This indicates a model mismatch or embedding corruption."
     #     )
-    pass
+    for i, vector in enumerate(vectors):
+        actual = len(vector)
+        if actual != EXPECTED_DIMENSIONS:
+            raise ValueError(
+                f"Vector at index {i}: expected {EXPECTED_DIMENSIONS}-dim, got {actual}-dim. "
+                f"This indicates a model mismatch or embedding corruption."
+            )

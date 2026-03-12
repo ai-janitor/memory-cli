@@ -42,16 +42,15 @@ def handle_dimension_drift(db_dimensions: int | str, config_dimensions: int | st
         SystemExit: Always exits with code 2.
     """
     # --- Step 1: Normalize dimensions to int for display ---
-    # db_dims_int = int(db_dimensions)
-    # config_dims_int = int(config_dimensions)
+    db_dims_int = int(db_dimensions)
+    config_dims_int = int(config_dimensions)
 
     # --- Step 2: Format error message ---
-    # error_msg = _format_dimension_error(db_dims_int, config_dims_int)
+    error_msg = _format_dimension_error(db_dims_int, config_dims_int)
 
     # --- Step 3: Write to stderr and exit ---
-    # sys.stderr.write(error_msg)
-    # sys.exit(2)
-    pass
+    sys.stderr.write(error_msg)
+    sys.exit(2)
 
 
 def _format_dimension_error(db_dims: int, config_dims: int) -> str:
@@ -64,19 +63,18 @@ def _format_dimension_error(db_dims: int, config_dims: int) -> str:
     Returns:
         Multi-line error string explaining the mismatch and remediation.
     """
-    # Build a clear error message:
-    #   "ERROR: Embedding dimension mismatch"
-    #   "  Database vectors: {db_dims} dimensions"
-    #   "  Config model:     {config_dims} dimensions"
-    #   ""
-    #   "  The sqlite-vec index was created for {db_dims}-dimensional vectors."
-    #   "  Vectors of {config_dims} dimensions cannot be stored or searched."
-    #   ""
-    #   "  To resolve:"
-    #   "    1. Change config back to a {db_dims}-dimensional model, OR"
-    #   "    2. Delete all vectors and re-embed: `memory batch reembed --force`"
-    #   ""
-    #   "  All operations are blocked until this is resolved."
-    #
-    # Return the formatted string with trailing newline
-    pass
+    # Build a clear error message with both dimension values and remediation steps
+    return (
+        f"ERROR: Embedding dimension mismatch\n"
+        f"  Database vectors: {db_dims} dimensions\n"
+        f"  Config model:     {config_dims} dimensions\n"
+        f"\n"
+        f"  The sqlite-vec index was created for {db_dims}-dimensional vectors.\n"
+        f"  Vectors of {config_dims} dimensions cannot be stored or searched.\n"
+        f"\n"
+        f"  To resolve:\n"
+        f"    1. Change config back to a {db_dims}-dimensional model, OR\n"
+        f"    2. Delete all vectors and re-embed: `memory batch reembed --force`\n"
+        f"\n"
+        f"  All operations are blocked until this is resolved.\n"
+    )

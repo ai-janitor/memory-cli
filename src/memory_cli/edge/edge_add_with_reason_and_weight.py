@@ -101,33 +101,39 @@ def edge_add(
     # --- Step 1: Validate source neuron exists ---
     # _validate_neuron_exists(conn, source_id)
     # Raises EdgeAddError(exit_code=1) if not found
+    _validate_neuron_exists(conn, source_id)
 
     # --- Step 2: Validate target neuron exists ---
     # _validate_neuron_exists(conn, target_id)
     # Raises EdgeAddError(exit_code=1) if not found
+    _validate_neuron_exists(conn, target_id)
 
     # --- Step 3: Validate reason non-empty ---
     # _validate_reason(reason)
     # Raises EdgeAddError(exit_code=2) if empty/whitespace
+    clean_reason = _validate_reason(reason)
 
     # --- Step 4: Resolve weight ---
     # resolved_weight = weight if weight is not None else DEFAULT_WEIGHT
+    resolved_weight = weight if weight is not None else DEFAULT_WEIGHT
 
     # --- Step 5: Validate weight > 0.0 ---
     # _validate_weight(resolved_weight)
     # Raises EdgeAddError(exit_code=2) if <= 0.0
+    _validate_weight(resolved_weight)
 
     # --- Step 6: Check duplicate ---
     # _check_duplicate(conn, source_id, target_id)
     # Raises EdgeAddError(exit_code=2) with existing reason if duplicate
+    _check_duplicate(conn, source_id, target_id)
 
     # --- Step 7: Insert edge ---
     # edge_dict = _insert_edge(conn, source_id, target_id, reason, resolved_weight)
+    edge_dict = _insert_edge(conn, source_id, target_id, clean_reason, resolved_weight)
 
     # --- Step 8: Return created edge ---
     # return edge_dict
-
-    pass
+    return edge_dict
 
 
 def _validate_neuron_exists(conn: sqlite3.Connection, neuron_id: int) -> None:
@@ -145,7 +151,9 @@ def _validate_neuron_exists(conn: sqlite3.Connection, neuron_id: int) -> None:
     Raises:
         EdgeAddError: If neuron does not exist (exit_code=1).
     """
-    pass
+    row = conn.execute("SELECT id FROM neurons WHERE id = ?", (neuron_id,)).fetchone()
+    if row is None:
+        raise EdgeAddError(f"Neuron {neuron_id} not found", exit_code=1)
 
 
 def _validate_reason(reason: str) -> str:
@@ -166,7 +174,10 @@ def _validate_reason(reason: str) -> str:
     Raises:
         EdgeAddError: If reason is empty after stripping (exit_code=2).
     """
-    pass
+    stripped = reason.strip()
+    if not stripped:
+        raise EdgeAddError("Reason cannot be empty", exit_code=2)
+    return stripped
 
 
 def _validate_weight(weight: float) -> None:
@@ -182,7 +193,8 @@ def _validate_weight(weight: float) -> None:
     Raises:
         EdgeAddError: If weight <= 0.0 (exit_code=2).
     """
-    pass
+    if weight <= 0.0:
+        raise EdgeAddError(f"Weight must be greater than 0.0, got {weight}", exit_code=2)
 
 
 def _check_duplicate(
@@ -203,7 +215,16 @@ def _check_duplicate(
     Raises:
         EdgeAddError: If duplicate edge exists (exit_code=2).
     """
-    pass
+    row = conn.execute(
+        "SELECT reason FROM edges WHERE source_id = ? AND target_id = ?",
+        (source_id, target_id),
+    ).fetchone()
+    if row is not None:
+        existing_reason = row[0]
+        raise EdgeAddError(
+            f"Edge from {source_id} to {target_id} already exists (reason: '{existing_reason}')",
+            exit_code=2,
+        )
 
 
 def _insert_edge(
@@ -231,4 +252,15 @@ def _insert_edge(
     Returns:
         Dict with the created edge record.
     """
-    pass
+    created_at = int(time.time() * 1000)
+    conn.execute(
+        "INSERT INTO edges (source_id, target_id, reason, weight, created_at) VALUES (?, ?, ?, ?, ?)",
+        (source_id, target_id, reason, weight, created_at),
+    )
+    return {
+        "source_id": source_id,
+        "target_id": target_id,
+        "reason": reason,
+        "weight": weight,
+        "created_at": created_at,
+    }

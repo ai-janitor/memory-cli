@@ -67,6 +67,7 @@ def check_session_already_ingested(
     """
     # --- Query for existing session neurons ---
     # count = _query_existing_session_neurons(conn, session_id)
+    count = _query_existing_session_neurons(conn, session_id)
 
     # --- Return result ---
     # return DedupCheckResult(
@@ -74,8 +75,11 @@ def check_session_already_ingested(
     #     existing_neuron_count=count,
     #     session_id=session_id,
     # )
-
-    pass
+    return DedupCheckResult(
+        already_ingested=(count > 0),
+        existing_neuron_count=count,
+        session_id=session_id,
+    )
 
 
 def _query_existing_session_neurons(
@@ -119,5 +123,16 @@ def _query_existing_session_neurons(
     #     (session_id,),
     # )
     # return cursor.fetchone()[0]
-
-    pass
+    cursor = conn.execute(
+        """
+        SELECT COUNT(DISTINCT n.id)
+        FROM neurons n
+        JOIN neuron_attrs na ON n.id = na.neuron_id
+        JOIN attr_keys ak ON na.attr_key_id = ak.id
+        WHERE ak.name = 'ingested_session_id'
+          AND na.value = ?
+          AND n.status = 'active'
+        """,
+        (session_id,),
+    )
+    return cursor.fetchone()[0]

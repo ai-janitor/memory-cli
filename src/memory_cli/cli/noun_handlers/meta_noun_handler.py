@@ -18,8 +18,7 @@ from __future__ import annotations
 
 from typing import List, Any
 
-# from memory_cli.cli.entrypoint_and_argv_dispatch import register_noun
-# from memory_cli.cli.output_envelope_json_and_text import Result
+from memory_cli.cli.entrypoint_and_argv_dispatch import register_noun
 
 
 # =============================================================================
@@ -48,7 +47,7 @@ def handle_info(args: List[str], global_flags: Any) -> Any:
     5. Error path: DB not initialized -> Result(status="error",
        error="Database not initialized. Run `memory init`.")
     """
-    pass
+    raise NotImplementedError
 
 
 # =============================================================================
@@ -79,7 +78,7 @@ def handle_stats(args: List[str], global_flags: Any) -> Any:
     4. Return Result(status="ok", data=stats_dict)
     5. Error path: DB not initialized -> error result
     """
-    pass
+    raise NotImplementedError
 
 
 # =============================================================================
@@ -112,7 +111,12 @@ def register() -> None:
          "flag_defs": _FLAG_DEFS,
        })
     """
-    pass
+    register_noun("meta", {
+        "verb_map": _VERB_MAP,
+        "description": "Meta — database introspection and statistics",
+        "verb_descriptions": _VERB_DESCRIPTIONS,
+        "flag_defs": _FLAG_DEFS,
+    })
 
 # --- Self-register on import ---
-# register()
+register()

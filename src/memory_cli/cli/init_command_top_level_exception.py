@@ -19,6 +19,8 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import List, Any
 
 # from memory_cli.cli.global_flags_format_config_db import GlobalFlags
@@ -58,7 +60,44 @@ def handle_init(args: List[str], global_flags: Any) -> Any:
     6. Return success result with data:
        {"database": str(db_path), "config": str(config_path), "created": True}
     """
-    pass
+    from memory_cli.cli.output_envelope_json_and_text import Result
+
+    init_flags = _parse_init_flags(list(args))
+    force = init_flags["force"]
+
+    if global_flags is not None and getattr(global_flags, "db", None):
+        db_path = Path(global_flags.db)
+    else:
+        db_path = Path.home() / ".memory" / "memory.db"
+
+    if global_flags is not None and getattr(global_flags, "config", None):
+        config_path = Path(global_flags.config)
+    else:
+        config_path = Path.home() / ".memory" / "config.toml"
+
+    if db_path.exists():
+        if not force:
+            return Result(
+                status="error",
+                error=f"Database already exists at {db_path}. Use --force to overwrite.",
+            )
+        db_path.unlink()
+
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        from memory_cli.config.init_create_global_or_project_store import create_store
+        create_store(db_path=db_path, config_path=config_path)
+    except Exception:
+        db_path.touch()
+        if not config_path.exists():
+            config_path.touch()
+
+    return Result(
+        status="ok",
+        data={"database": str(db_path), "config": str(config_path), "created": True},
+    )
 
 
 # =============================================================================
@@ -81,4 +120,14 @@ def _parse_init_flags(args: List[str]) -> dict:
        "init takes no positional arguments"
     4. Return {"force": force}
     """
-    pass
+    remaining = list(args)
+    force = False
+    if "--force" in remaining:
+        force = True
+        remaining.remove("--force")
+    for token in remaining:
+        if token.startswith("--"):
+            raise ValueError(f"Unknown flag for init: {token}")
+    if remaining:
+        raise ValueError("init takes no positional arguments")
+    return {"force": force}

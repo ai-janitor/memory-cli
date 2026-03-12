@@ -22,7 +22,7 @@
 # --- Public API exports ---
 # These will be the primary entry points consumed by CLI commands and other packages.
 
-# from .edge_add_with_reason_and_weight import edge_add
-# from .edge_remove_by_source_target import edge_remove
-# from .edge_list_by_neuron_direction import edge_list
-# from .link_flag_atomic_neuron_plus_edge import link_flag_atomic_create
+from .edge_add_with_reason_and_weight import edge_add
+from .edge_remove_by_source_target import edge_remove
+from .edge_list_by_neuron_direction import edge_list
+from .link_flag_atomic_neuron_plus_edge import link_flag_atomic_create

@@ -76,6 +76,9 @@ def retrieve_bm25(conn: sqlite3.Connection, query: str) -> List[Dict[str, Any]]:
     # fts5_query = _build_fts5_query(query)
     # if not fts5_query:
     #     return []
+    fts5_query = _build_fts5_query(query)
+    if not fts5_query:
+        return []
 
     # --- Execute FTS5 MATCH ---
     # try:
@@ -88,6 +91,16 @@ def retrieve_bm25(conn: sqlite3.Connection, query: str) -> List[Dict[str, Any]]:
     # except sqlite3.OperationalError:
     #     # FTS5 MATCH syntax error — invalid query expression
     #     return []
+    try:
+        cursor = conn.execute(
+            f"SELECT rowid, bm25({FTS5_TABLE}) AS raw_score "
+            f"FROM {FTS5_TABLE} WHERE {FTS5_TABLE} MATCH ? "
+            f"ORDER BY raw_score LIMIT ?",
+            (fts5_query, BM25_CANDIDATE_CAP),
+        )
+    except sqlite3.OperationalError:
+        # FTS5 MATCH syntax error — invalid query expression
+        return []
 
     # --- Build candidate list ---
     # candidates = []
@@ -103,8 +116,19 @@ def retrieve_bm25(conn: sqlite3.Connection, query: str) -> List[Dict[str, Any]]:
     #     })
 
     # return candidates
+    candidates = []
+    for rank, row in enumerate(cursor.fetchall()):
+        neuron_id = row[0]  # rowid maps to neuron.id
+        raw_score = row[1]
+        normalized = _normalize_bm25_score(raw_score)
+        candidates.append({
+            "neuron_id": neuron_id,
+            "bm25_raw": raw_score,
+            "bm25_normalized": normalized,
+            "bm25_rank": rank,
+        })
 
-    pass
+    return candidates
 
 
 def _build_fts5_query(query: str) -> str:
@@ -129,7 +153,14 @@ def _build_fts5_query(query: str) -> str:
     Returns:
         Sanitized FTS5 MATCH expression, or "" if empty.
     """
-    pass
+    stripped = query.strip()
+    if not stripped:
+        return ""
+    tokens = stripped.split()
+    # Double-quote each token to prevent FTS5 operator injection.
+    # Escape any existing double-quotes inside the token by doubling them.
+    escaped = ['"' + token.replace('"', '""') + '"' for token in tokens]
+    return " ".join(escaped)
 
 
 def _normalize_bm25_score(raw_score: float) -> float:
@@ -152,5 +183,5 @@ def _normalize_bm25_score(raw_score: float) -> float:
     """
     # abs_score = abs(raw_score)
     # return abs_score / (1.0 + abs_score)
-
-    pass
+    abs_score = abs(raw_score)
+    return abs_score / (1.0 + abs_score)

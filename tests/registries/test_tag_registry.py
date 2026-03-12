@@ -31,14 +31,14 @@ import sqlite3
 
 import pytest
 
-# from memory_cli.registries.tag_registry_crud_normalize_autocreate import (
-#     TagRegistryError,
-#     normalize_tag_name,
-#     tag_add,
-#     tag_autocreate,
-#     tag_list,
-#     tag_remove,
-# )
+from memory_cli.registries.tag_registry_crud_normalize_autocreate import (
+    TagRegistryError,
+    normalize_tag_name,
+    tag_add,
+    tag_autocreate,
+    tag_list,
+    tag_remove,
+)
 
 
 # -----------------------------------------------------------------------------
@@ -65,7 +65,22 @@ def conn():
     #      tag_id INTEGER NOT NULL)
     # 4. Yield connection
     # 5. Close connection in teardown
-    pass
+    c = sqlite3.connect(":memory:")
+    c.execute("""
+        CREATE TABLE tags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            created_at INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    c.execute("""
+        CREATE TABLE neuron_tags (
+            neuron_id INTEGER NOT NULL,
+            tag_id INTEGER NOT NULL
+        )
+    """)
+    yield c
+    c.close()
 
 
 # =============================================================================
@@ -81,7 +96,12 @@ class TestTagAdd:
         # 3. Assert "id" key exists and is int
         # 4. Assert "name" key equals "project"
         # 5. Assert "created_at" key exists and is non-empty string
-        pass
+        result = tag_add(conn, "project")
+        assert isinstance(result, dict)
+        assert isinstance(result["id"], int)
+        assert result["name"] == "project"
+        assert "created_at" in result
+        assert result["created_at"] is not None
 
     def test_add_duplicate_tag_is_idempotent(self, conn):
         """Adding the same tag name twice returns the same entry both times."""
@@ -89,28 +109,37 @@ class TestTagAdd:
         # 2. Call tag_add(conn, "important") -> result2
         # 3. Assert result1["id"] == result2["id"]
         # 4. Assert result1["name"] == result2["name"]
-        pass
+        result1 = tag_add(conn, "important")
+        result2 = tag_add(conn, "important")
+        assert result1["id"] == result2["id"]
+        assert result1["name"] == result2["name"]
 
     def test_add_case_variant_is_idempotent(self, conn):
         """Adding "Urgent" after "urgent" returns the same entry (normalization)."""
         # 1. Call tag_add(conn, "urgent") -> result1
         # 2. Call tag_add(conn, "Urgent") -> result2
         # 3. Assert same id (normalization made them the same)
-        pass
+        result1 = tag_add(conn, "urgent")
+        result2 = tag_add(conn, "Urgent")
+        assert result1["id"] == result2["id"]
 
     def test_add_whitespace_variant_is_idempotent(self, conn):
         """Adding "  todo  " after "todo" returns the same entry."""
         # 1. Call tag_add(conn, "todo") -> result1
         # 2. Call tag_add(conn, "  todo  ") -> result2
         # 3. Assert same id
-        pass
+        result1 = tag_add(conn, "todo")
+        result2 = tag_add(conn, "  todo  ")
+        assert result1["id"] == result2["id"]
 
     def test_add_multiple_tags_get_distinct_ids(self, conn):
         """Different tag names get different IDs."""
         # 1. tag_add(conn, "alpha") -> r1
         # 2. tag_add(conn, "beta") -> r2
         # 3. Assert r1["id"] != r2["id"]
-        pass
+        r1 = tag_add(conn, "alpha")
+        r2 = tag_add(conn, "beta")
+        assert r1["id"] != r2["id"]
 
 
 # =============================================================================
@@ -122,30 +151,35 @@ class TestTagNormalization:
     def test_empty_string_rejected(self, conn):
         """Empty string raises TagRegistryError."""
         # 1. Call tag_add(conn, "") -> expect TagRegistryError
-        pass
+        with pytest.raises(TagRegistryError):
+            tag_add(conn, "")
 
     def test_whitespace_only_rejected(self, conn):
         """Whitespace-only string raises TagRegistryError."""
         # 1. Call tag_add(conn, "   ") -> expect TagRegistryError
-        pass
+        with pytest.raises(TagRegistryError):
+            tag_add(conn, "   ")
 
     def test_internal_whitespace_preserved(self, conn):
         """Tag "my project" preserves the internal space."""
         # 1. Call tag_add(conn, "my project") -> result
         # 2. Assert result["name"] == "my project"
-        pass
+        result = tag_add(conn, "my project")
+        assert result["name"] == "my project"
 
     def test_mixed_case_lowered(self, conn):
         """Tag "FooBar" is stored as "foobar"."""
         # 1. Call tag_add(conn, "FooBar") -> result
         # 2. Assert result["name"] == "foobar"
-        pass
+        result = tag_add(conn, "FooBar")
+        assert result["name"] == "foobar"
 
     def test_leading_trailing_whitespace_stripped(self, conn):
         """Tag "  hello  " is stored as "hello"."""
         # 1. Call tag_add(conn, "  hello  ") -> result
         # 2. Assert result["name"] == "hello"
-        pass
+        result = tag_add(conn, "  hello  ")
+        assert result["name"] == "hello"
 
 
 # =============================================================================
@@ -158,7 +192,8 @@ class TestTagList:
         """Empty registry returns [] not an error."""
         # 1. Call tag_list(conn) -> result
         # 2. Assert result == []
-        pass
+        result = tag_list(conn)
+        assert result == []
 
     def test_list_returns_all_tags_ordered_by_id(self, conn):
         """Tags are returned in insertion order (by id)."""
@@ -169,14 +204,27 @@ class TestTagList:
         # 5. Assert len(result) == 3
         # 6. Assert result[0]["name"] == "charlie" (first inserted, lowest id)
         # 7. Assert IDs are monotonically increasing
-        pass
+        tag_add(conn, "charlie")
+        tag_add(conn, "alpha")
+        tag_add(conn, "bravo")
+        result = tag_list(conn)
+        assert len(result) == 3
+        assert result[0]["name"] == "charlie"
+        assert result[1]["name"] == "alpha"
+        assert result[2]["name"] == "bravo"
+        assert result[0]["id"] < result[1]["id"] < result[2]["id"]
 
     def test_list_entries_have_correct_shape(self, conn):
         """Each entry has id, name, and created_at."""
         # 1. tag_add(conn, "test")
         # 2. tag_list(conn) -> result
         # 3. Assert each entry has keys: id, name, created_at
-        pass
+        tag_add(conn, "test")
+        result = tag_list(conn)
+        for entry in result:
+            assert "id" in entry
+            assert "name" in entry
+            assert "created_at" in entry
 
 
 # =============================================================================
@@ -190,30 +238,40 @@ class TestTagRemove:
         # 1. tag_add(conn, "deleteme")
         # 2. tag_remove(conn, "deleteme") -> True
         # 3. tag_list(conn) -> empty list
-        pass
+        tag_add(conn, "deleteme")
+        result = tag_remove(conn, "deleteme")
+        assert result is True
+        assert tag_list(conn) == []
 
     def test_remove_by_id(self, conn):
         """Remove a tag by its integer ID."""
         # 1. tag_add(conn, "byid") -> result, get id
         # 2. tag_remove(conn, result["id"]) -> True
         # 3. tag_list(conn) -> empty list
-        pass
+        added = tag_add(conn, "byid")
+        result = tag_remove(conn, added["id"])
+        assert result is True
+        assert tag_list(conn) == []
 
     def test_remove_by_string_id(self, conn):
         """Remove using a string that parses as int, e.g., "1"."""
         # 1. tag_add(conn, "stringid") -> result
         # 2. tag_remove(conn, str(result["id"])) -> True
-        pass
+        added = tag_add(conn, "stringid")
+        result = tag_remove(conn, str(added["id"]))
+        assert result is True
 
     def test_remove_not_found_returns_false(self, conn):
         """Removing a tag that doesn't exist returns False."""
         # 1. tag_remove(conn, "nonexistent") -> False
-        pass
+        result = tag_remove(conn, "nonexistent")
+        assert result is False
 
     def test_remove_not_found_by_id_returns_false(self, conn):
         """Removing a non-existent ID returns False."""
         # 1. tag_remove(conn, 9999) -> False
-        pass
+        result = tag_remove(conn, 9999)
+        assert result is False
 
     def test_remove_in_use_blocked(self, conn):
         """Removing a tag referenced by neurons raises TagRegistryError."""
@@ -221,13 +279,24 @@ class TestTagRemove:
         # 2. INSERT INTO neuron_tags (neuron_id, tag_id) VALUES (1, result["id"])
         # 3. tag_remove(conn, "inuse") -> expect TagRegistryError
         # 4. Verify tag still exists in tag_list
-        pass
+        added = tag_add(conn, "inuse")
+        conn.execute(
+            "INSERT INTO neuron_tags (neuron_id, tag_id) VALUES (1, ?)",
+            (added["id"],)
+        )
+        with pytest.raises(TagRegistryError):
+            tag_remove(conn, "inuse")
+        # Verify tag still exists
+        remaining = tag_list(conn)
+        assert any(t["name"] == "inuse" for t in remaining)
 
     def test_remove_normalizes_name(self, conn):
         """Removing "  MyTag  " matches stored "mytag"."""
         # 1. tag_add(conn, "mytag")
         # 2. tag_remove(conn, "  MyTag  ") -> True
-        pass
+        tag_add(conn, "mytag")
+        result = tag_remove(conn, "  MyTag  ")
+        assert result is True
 
 
 # =============================================================================
@@ -241,23 +310,31 @@ class TestTagAutocreate:
         # 1. tag_autocreate(conn, "auto") -> tag_id
         # 2. Assert tag_id is an int
         # 3. Verify tag exists in tag_list
-        pass
+        tag_id = tag_autocreate(conn, "auto")
+        assert isinstance(tag_id, int)
+        tags = tag_list(conn)
+        assert any(t["id"] == tag_id and t["name"] == "auto" for t in tags)
 
     def test_autocreate_existing_tag_returns_same_id(self, conn):
         """Auto-creating an existing tag returns the same ID (idempotent)."""
         # 1. tag_add(conn, "existing") -> result
         # 2. tag_autocreate(conn, "existing") -> tag_id
         # 3. Assert tag_id == result["id"]
-        pass
+        result = tag_add(conn, "existing")
+        tag_id = tag_autocreate(conn, "existing")
+        assert tag_id == result["id"]
 
     def test_autocreate_normalizes_name(self, conn):
         """Auto-create normalizes the name before creating."""
         # 1. tag_autocreate(conn, "  NEW TAG  ") -> id1
         # 2. tag_autocreate(conn, "new tag") -> id2
         # 3. Assert id1 == id2
-        pass
+        id1 = tag_autocreate(conn, "  NEW TAG  ")
+        id2 = tag_autocreate(conn, "new tag")
+        assert id1 == id2
 
     def test_autocreate_empty_name_rejected(self, conn):
         """Auto-create rejects empty names."""
         # 1. tag_autocreate(conn, "") -> expect TagRegistryError
-        pass
+        with pytest.raises(TagRegistryError):
+            tag_autocreate(conn, "")

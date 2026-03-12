@@ -73,14 +73,15 @@ def merge_and_paginate(
     """
     # --- Step 1: Merge with deduplication ---
     # merged = _deduplicate_by_neuron_id(reranked, expansion_results)
+    merged = _deduplicate_by_neuron_id(reranked, expansion_results)
 
     # --- Step 2: Apply pagination ---
     # page = _apply_pagination(merged, limit, offset)
+    page = _apply_pagination(merged, limit, offset)
 
     # --- Step 3: Build envelope ---
     # return _build_result_envelope(query, page, len(merged), limit, offset)
-
-    pass
+    return _build_result_envelope(query, page, len(merged), limit, offset)
 
 
 def _deduplicate_by_neuron_id(
@@ -107,7 +108,13 @@ def _deduplicate_by_neuron_id(
     Returns:
         Merged list with no duplicate neuron IDs.
     """
-    pass
+    result = list(primary)
+    seen_ids: Set[Any] = {item["id"] for item in primary}
+    for item in secondary:
+        if item["id"] not in seen_ids:
+            result.append(item)
+            seen_ids.add(item["id"])
+    return result
 
 
 def _apply_pagination(
@@ -133,7 +140,10 @@ def _apply_pagination(
     Returns:
         Sliced result list.
     """
-    pass
+    if limit <= 0:
+        return []
+    start = max(0, offset)
+    return merged[start: start + limit]
 
 
 def _build_result_envelope(
@@ -165,4 +175,10 @@ def _build_result_envelope(
             "offset": offset,
         }
     """
-    pass
+    return {
+        "query": query,
+        "results": results,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }

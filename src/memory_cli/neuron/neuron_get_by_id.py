@@ -83,7 +83,20 @@ def neuron_get(conn: sqlite3.Connection, neuron_id: int) -> Optional[Dict[str, A
     # --- Step 5: Return ---
     # return neuron_dict
 
-    pass
+    row = conn.execute(
+        """SELECT id, content, created_at, updated_at, project, source, status,
+                  embedding_updated_at
+           FROM neurons WHERE id = ?""",
+        (neuron_id,)
+    ).fetchone()
+
+    if row is None:
+        return None
+
+    neuron_dict = dict(row)
+    neuron_dict["tags"] = _hydrate_tags(conn, neuron_id)
+    neuron_dict["attrs"] = _hydrate_attrs(conn, neuron_id)
+    return neuron_dict
 
 
 def _hydrate_tags(conn: sqlite3.Connection, neuron_id: int) -> List[str]:
@@ -106,7 +119,15 @@ def _hydrate_tags(conn: sqlite3.Connection, neuron_id: int) -> List[str]:
     Returns:
         Sorted list of tag name strings.
     """
-    pass
+    rows = conn.execute(
+        """SELECT t.name
+           FROM neuron_tags nt
+           JOIN tags t ON nt.tag_id = t.id
+           WHERE nt.neuron_id = ?
+           ORDER BY t.name ASC""",
+        (neuron_id,)
+    ).fetchall()
+    return [row[0] for row in rows]
 
 
 def _hydrate_attrs(conn: sqlite3.Connection, neuron_id: int) -> Dict[str, str]:
@@ -128,4 +149,12 @@ def _hydrate_attrs(conn: sqlite3.Connection, neuron_id: int) -> Dict[str, str]:
     Returns:
         Dict mapping attribute key names to their values.
     """
-    pass
+    rows = conn.execute(
+        """SELECT ak.name, na.value
+           FROM neuron_attrs na
+           JOIN attr_keys ak ON na.attr_key_id = ak.id
+           WHERE na.neuron_id = ?
+           ORDER BY ak.name ASC""",
+        (neuron_id,)
+    ).fetchall()
+    return {row[0]: row[1] for row in rows}

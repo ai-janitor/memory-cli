@@ -25,8 +25,12 @@
 
 from __future__ import annotations
 
+import copy
+import json
 from pathlib import Path
 from typing import Optional
+
+from .config_schema_and_defaults import CONFIG_DEFAULTS
 
 
 class InitError(Exception):
@@ -40,7 +44,10 @@ class InitError(Exception):
     # reason: str
     # details: str
 
-    pass
+    def __init__(self, reason: str, details: str):
+        self.reason = reason
+        self.details = details
+        super().__init__(details)
 
 
 def init_memory_store(
@@ -97,7 +104,47 @@ def init_memory_store(
     Raises:
         InitError: If store already exists (without --force) or permissions fail.
     """
-    pass
+    # 1. Determine store path
+    base = cwd if cwd is not None else Path.cwd()
+    if project:
+        store_path = base / ".memory"
+    else:
+        store_path = Path.home() / ".memory"
+
+    # 2. Check existing store
+    try:
+        store_exists = store_path.exists()
+    except PermissionError as e:
+        raise InitError(
+            reason="permission_denied",
+            details=f"Permission denied checking store directory: {e}",
+        )
+
+    if store_exists and not force:
+        # EC-11: raise InitError if store already exists without --force
+        raise InitError(
+            reason="already_exists",
+            details=(
+                f"Memory store already exists at {store_path}. "
+                "Use --force to overwrite the config (DB will be preserved)."
+            ),
+        )
+
+    # 3. Create directory structure
+    _create_directory_structure(store_path)
+
+    # 4. Write config.json
+    _write_default_config(store_path, force=force)
+
+    # 5. Create empty DB file (preserves existing if present)
+    db_path = store_path / "memory.db"
+    _create_empty_db_file(db_path)
+
+    # 6. Print post-init instructions
+    _print_post_init_instructions(store_path, project=project)
+
+    # 7. Return store_path
+    return store_path
 
 
 def _create_directory_structure(store_path: Path) -> None:
@@ -115,7 +162,14 @@ def _create_directory_structure(store_path: Path) -> None:
     Raises:
         InitError: On permission errors.
     """
-    pass
+    try:
+        store_path.mkdir(parents=True, exist_ok=True)
+        (store_path / "models").mkdir(parents=True, exist_ok=True)
+    except PermissionError as e:
+        raise InitError(
+            reason="permission_denied",
+            details=f"Permission denied creating store directory: {e}",
+        )
 
 
 def _write_default_config(store_path: Path, force: bool = False) -> Path:
@@ -137,7 +191,23 @@ def _write_default_config(store_path: Path, force: bool = False) -> Path:
     Returns:
         Path to the written config.json.
     """
-    pass
+    # 1. Build config dict from CONFIG_DEFAULTS
+    config = copy.deepcopy(CONFIG_DEFAULTS)
+
+    # 2. Override db_path with absolute path
+    config["db_path"] = str(store_path / "memory.db")
+
+    # 3. Override embedding.model_path
+    config["embedding"]["model_path"] = str(store_path / "models" / "default.gguf")
+
+    # 4. Serialize to JSON with indent=2
+    config_json = json.dumps(config, indent=2)
+
+    # 5. Write to store_path / "config.json"
+    config_path = store_path / "config.json"
+    config_path.write_text(config_json, encoding="utf-8")
+
+    return config_path
 
 
 def _create_empty_db_file(db_path: Path) -> None:
@@ -153,7 +223,12 @@ def _create_empty_db_file(db_path: Path) -> None:
     Args:
         db_path: Absolute path to the SQLite DB file.
     """
-    pass
+    # If file exists: do nothing (preserve data on --force reinit)
+    if db_path.exists():
+        return
+
+    # If file doesn't exist: touch (create empty file)
+    db_path.touch()
 
 
 def _print_post_init_instructions(store_path: Path, project: bool) -> None:
@@ -169,4 +244,24 @@ def _print_post_init_instructions(store_path: Path, project: bool) -> None:
         store_path: Root directory of the created memory store.
         project: Whether this was a project-scoped init.
     """
-    pass
+    scope = "project" if project else "global"
+    print(f"Memory store initialized ({scope}) at: {store_path}")
+    print(f"  Config:   {store_path / 'config.json'}")
+    print(f"  Database: {store_path / 'memory.db'}")
+    print(f"  Models:   {store_path / 'models'}/")
+    print()
+    model_dest = store_path / "models" / "default.gguf"
+    model_url = (
+        "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF"
+        "/resolve/main/nomic-embed-text-v1.5.Q8_0.gguf"
+    )
+    print("Next steps:")
+    print("  1. Download the embedding model:")
+    print(f"       curl -L -o {model_dest} \\")
+    print(f"         {model_url}")
+    print(
+        f"  2. (Optional) Update embedding.model_path in {store_path / 'config.json'}"
+        " if you use a different model file."
+    )
+    print(f"  3. Add your first memory:")
+    print(f"       memory neuron add \"Your first memory\"")

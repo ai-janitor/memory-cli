@@ -110,20 +110,25 @@ def goto_follow_edges(
     # --- Step 1: Validate reference neuron exists ---
     # _validate_reference(conn, neuron_id)
     # If None -> raise LookupError(f"Neuron {neuron_id} not found")
+    ref_row = _validate_reference(conn, neuron_id)
+    if ref_row is None:
+        raise LookupError(f"Neuron {neuron_id} not found")
 
     # --- Step 2: Count total edges pre-pagination ---
     # total = _count_edges(conn, neuron_id, direction)
+    total = _count_edges(conn, neuron_id, direction)
 
     # --- Step 3: Fetch paginated edge + neuron rows ---
     # rows = _build_edge_query(conn, neuron_id, direction, limit, offset)
+    rows = _build_edge_query(conn, neuron_id, direction, limit, offset)
 
     # --- Step 4: Hydrate results ---
     # results = _hydrate_goto_results(conn, rows)
+    results = _hydrate_goto_results(conn, rows)
 
     # --- Step 5: Build envelope ---
     # return _build_envelope(neuron_id, direction, results, total, limit, offset)
-
-    pass
+    return _build_envelope(neuron_id, direction, results, total, limit, offset)
 
 
 def _validate_reference(conn: sqlite3.Connection, neuron_id: int) -> Optional[sqlite3.Row]:
@@ -140,7 +145,12 @@ def _validate_reference(conn: sqlite3.Connection, neuron_id: int) -> Optional[sq
     Returns:
         Row with id, or None if not found.
     """
-    pass
+    # SELECT id FROM neurons WHERE id = ?
+    # Return row or None
+    return conn.execute(
+        "SELECT id FROM neurons WHERE id = ?",
+        (neuron_id,),
+    ).fetchone()
 
 
 def _build_edge_query(
@@ -187,7 +197,47 @@ def _build_edge_query(
     Returns:
         List of rows with edge + connected neuron data.
     """
-    pass
+    # Determine query shape from direction.
+    # For "both": wrap UNION ALL in subquery, apply ORDER BY and LIMIT on outer.
+    outgoing_sql = """
+        SELECT e.created_at AS edge_created_at,
+               e.reason, e.weight,
+               n.id AS neuron_id, n.content, n.created_at AS neuron_created_at,
+               n.project, n.source,
+               'outgoing' AS edge_direction
+        FROM edges e
+        JOIN neurons n ON e.target_id = n.id
+        WHERE e.source_id = ?
+    """
+    incoming_sql = """
+        SELECT e.created_at AS edge_created_at,
+               e.reason, e.weight,
+               n.id AS neuron_id, n.content, n.created_at AS neuron_created_at,
+               n.project, n.source,
+               'incoming' AS edge_direction
+        FROM edges e
+        JOIN neurons n ON e.source_id = n.id
+        WHERE e.target_id = ?
+    """
+
+    if direction == "outgoing":
+        sql = f"{outgoing_sql} ORDER BY edge_created_at DESC, neuron_id ASC LIMIT ? OFFSET ?"
+        return conn.execute(sql, (ref_id, limit, offset)).fetchall()
+    elif direction == "incoming":
+        sql = f"{incoming_sql} ORDER BY edge_created_at DESC, neuron_id ASC LIMIT ? OFFSET ?"
+        return conn.execute(sql, (ref_id, limit, offset)).fetchall()
+    else:
+        # both: UNION ALL wrapped in subquery with outer ORDER BY + LIMIT
+        sql = f"""
+            SELECT * FROM (
+                {outgoing_sql}
+                UNION ALL
+                {incoming_sql}
+            )
+            ORDER BY edge_created_at DESC, neuron_id ASC
+            LIMIT ? OFFSET ?
+        """
+        return conn.execute(sql, (ref_id, ref_id, limit, offset)).fetchall()
 
 
 def _count_edges(
@@ -217,7 +267,30 @@ def _count_edges(
     Returns:
         Total count of matching edges.
     """
-    pass
+    # Determine WHERE clause from direction.
+    # "both" count must match the UNION ALL row count — self-loops counted once per direction.
+    if direction == "outgoing":
+        row = conn.execute(
+            "SELECT COUNT(*) FROM edges WHERE source_id = ?", (ref_id,)
+        ).fetchone()
+        return row[0] if row else 0
+    elif direction == "incoming":
+        row = conn.execute(
+            "SELECT COUNT(*) FROM edges WHERE target_id = ?", (ref_id,)
+        ).fetchone()
+        return row[0] if row else 0
+    else:
+        # both: sum of outgoing + incoming (self-loops appear in both halves,
+        # so they correctly contribute 2 to the total, matching UNION ALL)
+        out_row = conn.execute(
+            "SELECT COUNT(*) FROM edges WHERE source_id = ?", (ref_id,)
+        ).fetchone()
+        in_row = conn.execute(
+            "SELECT COUNT(*) FROM edges WHERE target_id = ?", (ref_id,)
+        ).fetchone()
+        out_count = out_row[0] if out_row else 0
+        in_count = in_row[0] if in_row else 0
+        return out_count + in_count
 
 
 def _hydrate_goto_results(conn: sqlite3.Connection, rows: List[sqlite3.Row]) -> List[Dict[str, Any]]:
@@ -247,7 +320,40 @@ def _hydrate_goto_results(conn: sqlite3.Connection, rows: List[sqlite3.Row]) -> 
     Returns:
         List of {neuron: {...}, edge: {...}} dicts.
     """
-    pass
+    # For each row:
+    #   a. Build neuron dict: {id, content, created_at, project, source}
+    #   b. Hydrate tags for the connected neuron
+    #   c. Build edge dict: {reason, weight, created_at, direction}
+    #   d. Combine: {neuron: neuron_dict, edge: edge_dict}
+    results = []
+    for row in rows:
+        neuron = {
+            "id": row["neuron_id"],
+            "content": row["content"],
+            "created_at": row["neuron_created_at"],
+            "project": row["project"],
+            "source": row["source"],
+        }
+        tag_rows = conn.execute(
+            """
+            SELECT t.name
+            FROM neuron_tags nt
+            JOIN tags t ON nt.tag_id = t.id
+            WHERE nt.neuron_id = ?
+            ORDER BY t.name ASC
+            """,
+            (row["neuron_id"],),
+        ).fetchall()
+        neuron["tags"] = [tr["name"] for tr in tag_rows]
+
+        edge = {
+            "reason": row["reason"],
+            "weight": row["weight"],
+            "created_at": row["edge_created_at"],
+            "direction": row["edge_direction"],
+        }
+        results.append({"neuron": neuron, "edge": edge})
+    return results
 
 
 def _build_envelope(
@@ -281,4 +387,13 @@ def _build_envelope(
     Returns:
         JSON-serializable envelope dict.
     """
-    pass
+    # Return dict with: command, reference_id, direction, results, total, limit, offset
+    return {
+        "command": "goto",
+        "reference_id": reference_id,
+        "direction": direction,
+        "results": results,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }

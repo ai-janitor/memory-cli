@@ -24,9 +24,12 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
+import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -39,151 +42,285 @@ from memory_cli.ingestion.ingest_orchestrator import (
 
 
 # -----------------------------------------------------------------------------
-# Fixtures
+# Fixtures / helpers
 # -----------------------------------------------------------------------------
+
+def _make_jsonl_file(session_id: str = "sess-test", n_messages: int = 2) -> Path:
+    """Create a temp JSONL file with valid user/assistant messages."""
+    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False)
+    for i in range(n_messages):
+        role = "user" if i % 2 == 0 else "assistant"
+        data = {
+            "type": role,
+            "message": {"content": f"message {i}"},
+            "sessionId": session_id,
+            "timestamp": f"2024-01-01T00:00:0{i}Z",
+        }
+        tmp.write(json.dumps(data) + "\n")
+    tmp.close()
+    return Path(tmp.name)
+
+
+def _make_empty_jsonl_file() -> Path:
+    """Create a temp JSONL file with no valid messages."""
+    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False)
+    tmp.write("")
+    tmp.close()
+    return Path(tmp.name)
+
+
+@dataclass
+class MockDedupResult:
+    already_ingested: bool
+    existing_neuron_count: int
+    session_id: str
+
+
+@dataclass
+class MockCreationResult:
+    neuron_count: int = 0
+    edge_count: int = 0
+    neuron_ids: List[int] = field(default_factory=list)
+    local_id_to_neuron_id: Dict[str, int] = field(default_factory=dict)
+    warnings: List[str] = field(default_factory=list)
+
+
+@dataclass
+class MockExtractionResult:
+    entities: list = field(default_factory=list)
+    facts: list = field(default_factory=list)
+    relationships: list = field(default_factory=list)
+    raw_response: Optional[Dict] = None
 
 
 class TestIngestSessionFullPipeline:
-    """Test the happy-path full pipeline with all stages mocked.
+    """Test the happy-path full pipeline with all stages mocked."""
 
-    Each stage is mocked to return valid data, verifying that the
-    orchestrator correctly chains them together and aggregates results.
+    def test_full_pipeline_creates_neurons_and_edges(self):
+        """Mock all stages -> IngestResult has correct neuron_count, edge_count."""
+        path = _make_jsonl_file("sess-test")
+        conn = MagicMock()
 
-    Tests:
-    - test_full_pipeline_creates_neurons_and_edges
-      Mock parse -> 3 messages, assemble -> 1 chunk, extract -> 2 entities + 1 fact + 1 rel
-      Verify: IngestResult has correct neuron_count, edge_count, context_neuron_id
-    - test_full_pipeline_multiple_chunks
-      Mock parse -> many messages, assemble -> 2 chunks, extract called twice
-      Verify: extraction called once per chunk, results merged
-    - test_pipeline_passes_project_and_tags_through
-      Call with project="myproj" and tags=["custom"]
-      Verify: project and tags are passed to create_neurons_and_edges
-    - test_pipeline_returns_session_id
-      Verify: IngestResult.session_id matches extracted session ID
-    """
+        dedup_result = MockDedupResult(already_ingested=False, existing_neuron_count=0, session_id="sess-test")
+        extraction = MockExtractionResult()
+        creation = MockCreationResult(neuron_count=3, edge_count=1, neuron_ids=[1, 2, 3])
 
-    # --- test_full_pipeline_creates_neurons_and_edges ---
-    # Mock all 6 stages, call ingest_session, assert IngestResult fields
+        with patch("memory_cli.ingestion.ingest_orchestrator.check_session_already_ingested",
+                   return_value=dedup_result):
+            with patch("memory_cli.ingestion.ingest_orchestrator.assemble_transcript_chunks",
+                       return_value=["chunk1"]):
+                with patch("memory_cli.ingestion.ingest_orchestrator.haiku_extract",
+                           return_value=extraction):
+                    with patch("memory_cli.ingestion.ingest_orchestrator.create_neurons_and_edges",
+                               return_value=creation):
+                        with patch("memory_cli.ingestion.ingest_orchestrator.capture_context_star",
+                                   return_value=(99, 3)):
+                            result = ingest_session(conn, path)
 
-    # --- test_full_pipeline_multiple_chunks ---
-    # Mock assembler to return 2 chunks, verify haiku_extract called twice
+        assert result.neurons_created == 3
+        assert not result.skipped
+        assert result.session_id == "sess-test"
 
-    # --- test_pipeline_passes_project_and_tags_through ---
-    # Verify create_neurons_and_edges receives project and tags args
+    def test_pipeline_returns_session_id(self):
+        """IngestResult.session_id matches extracted session ID."""
+        path = _make_jsonl_file("my-session-id")
+        conn = MagicMock()
 
-    # --- test_pipeline_returns_session_id ---
-    # Verify result.session_id is set from parsed messages
+        dedup_result = MockDedupResult(already_ingested=False, existing_neuron_count=0, session_id="my-session-id")
+        extraction = MockExtractionResult()
+        creation = MockCreationResult(neuron_count=1, edge_count=0, neuron_ids=[1])
 
-    pass
+        with patch("memory_cli.ingestion.ingest_orchestrator.check_session_already_ingested",
+                   return_value=dedup_result):
+            with patch("memory_cli.ingestion.ingest_orchestrator.assemble_transcript_chunks",
+                       return_value=["chunk"]):
+                with patch("memory_cli.ingestion.ingest_orchestrator.haiku_extract",
+                           return_value=extraction):
+                    with patch("memory_cli.ingestion.ingest_orchestrator.create_neurons_and_edges",
+                               return_value=creation):
+                        with patch("memory_cli.ingestion.ingest_orchestrator.capture_context_star",
+                                   return_value=(99, 1)):
+                            result = ingest_session(conn, path)
+        assert result.session_id == "my-session-id"
 
 
 class TestIngestSessionDryRun:
-    """Test that dry-run mode reports what would happen without writing.
+    """Test that dry-run mode reports what would happen without writing."""
 
-    Tests:
-    - test_dry_run_skips_neuron_creation
-      Call with dry_run=True, verify neuron_add never called
-    - test_dry_run_skips_edge_creation
-      Call with dry_run=True, verify edge_add never called
-    - test_dry_run_skips_context_star
-      Call with dry_run=True, verify capture_context_star never called
-    - test_dry_run_still_parses_and_extracts
-      Call with dry_run=True, verify parse and extract still called
-      (needed to report what WOULD be created)
-    """
+    def test_dry_run_skips_neuron_creation(self):
+        """call with dry_run=True -> create_neurons_and_edges never called."""
+        path = _make_jsonl_file("sess-dry")
+        conn = MagicMock()
 
-    # --- test_dry_run_skips_neuron_creation ---
-    # --- test_dry_run_skips_edge_creation ---
-    # --- test_dry_run_skips_context_star ---
-    # --- test_dry_run_still_parses_and_extracts ---
+        dedup_result = MockDedupResult(already_ingested=False, existing_neuron_count=0, session_id="sess-dry")
+        extraction = MockExtractionResult()
 
-    pass
+        with patch("memory_cli.ingestion.ingest_orchestrator.check_session_already_ingested",
+                   return_value=dedup_result):
+            with patch("memory_cli.ingestion.ingest_orchestrator.assemble_transcript_chunks",
+                       return_value=["chunk"]):
+                with patch("memory_cli.ingestion.ingest_orchestrator.haiku_extract",
+                           return_value=extraction):
+                    with patch("memory_cli.ingestion.ingest_orchestrator.create_neurons_and_edges") as mock_create:
+                        with patch("memory_cli.ingestion.ingest_orchestrator.capture_context_star") as mock_star:
+                            result = ingest_session(conn, path, dry_run=True)
+        mock_create.assert_not_called()
+        mock_star.assert_not_called()
+
+    def test_dry_run_still_parses_and_extracts(self):
+        """dry_run=True -> parse and extract still called."""
+        path = _make_jsonl_file("sess-dry")
+        conn = MagicMock()
+
+        dedup_result = MockDedupResult(already_ingested=False, existing_neuron_count=0, session_id="sess-dry")
+        extraction = MockExtractionResult()
+
+        with patch("memory_cli.ingestion.ingest_orchestrator.check_session_already_ingested",
+                   return_value=dedup_result):
+            with patch("memory_cli.ingestion.ingest_orchestrator.assemble_transcript_chunks",
+                       return_value=["chunk"]) as mock_assemble:
+                with patch("memory_cli.ingestion.ingest_orchestrator.haiku_extract",
+                           return_value=extraction) as mock_extract:
+                    with patch("memory_cli.ingestion.ingest_orchestrator.create_neurons_and_edges",
+                               return_value=MockCreationResult()):
+                        with patch("memory_cli.ingestion.ingest_orchestrator.capture_context_star",
+                                   return_value=(99, 0)):
+                            result = ingest_session(conn, path, dry_run=True)
+        mock_assemble.assert_called_once()
+        mock_extract.assert_called_once()
 
 
 class TestIngestSessionErrors:
-    """Test error propagation from each pipeline stage.
+    """Test error propagation from each pipeline stage."""
 
-    Tests:
-    - test_file_not_found_raises_ingest_error
-      Pass nonexistent path, verify IngestError with "parse" step
-    - test_empty_file_raises_ingest_error
-      Parse returns empty message list, verify IngestError
-    - test_haiku_api_failure_raises_ingest_error
-      Mock haiku_extract to raise, verify IngestError with "extract" step
-    - test_neuron_creation_failure_is_warning_not_error
-      Mock neuron_add to fail for one item, verify it's a warning in result
-    - test_edge_creation_failure_is_warning_not_error
-      Mock edge_add to fail, verify it's a warning in result
-    """
+    def test_file_not_found_raises_ingest_error(self):
+        """Pass nonexistent path -> IngestError."""
+        conn = MagicMock()
+        with pytest.raises(IngestError) as exc_info:
+            ingest_session(conn, Path("/nonexistent/file.jsonl"))
+        assert exc_info.value.step == "parse"
 
-    # --- test_file_not_found_raises_ingest_error ---
-    # ingest_session(conn, Path("/nonexistent/file.jsonl"))
-    # assert raises IngestError
+    def test_empty_file_raises_ingest_error(self):
+        """Parse returns empty message list -> IngestError."""
+        path = _make_empty_jsonl_file()
+        conn = MagicMock()
+        with pytest.raises(IngestError) as exc_info:
+            ingest_session(conn, path)
+        assert exc_info.value.step == "parse"
 
-    # --- test_empty_file_raises_ingest_error ---
-    # Mock parse to return ParseResult(messages=[], warnings=[])
-    # assert raises IngestError
+    def test_haiku_api_failure_raises_ingest_error(self):
+        """Mock haiku_extract to raise -> IngestError with "extract" step."""
+        path = _make_jsonl_file("sess-err")
+        conn = MagicMock()
+        dedup_result = MockDedupResult(already_ingested=False, existing_neuron_count=0, session_id="sess-err")
 
-    # --- test_haiku_api_failure_raises_ingest_error ---
-    # Mock haiku_extract to raise Exception
-    # assert raises IngestError
-
-    # --- test_neuron_creation_failure_is_warning_not_error ---
-    # Mock neuron_add to raise for first call, succeed for rest
-    # assert result.warnings has failure message, result.neurons_created > 0
-
-    # --- test_edge_creation_failure_is_warning_not_error ---
-    # Mock edge_add to raise, assert warning in result
-
-    pass
+        with patch("memory_cli.ingestion.ingest_orchestrator.check_session_already_ingested",
+                   return_value=dedup_result):
+            with patch("memory_cli.ingestion.ingest_orchestrator.assemble_transcript_chunks",
+                       return_value=["chunk"]):
+                with patch("memory_cli.ingestion.ingest_orchestrator.haiku_extract",
+                           side_effect=Exception("API failed")):
+                    with pytest.raises(IngestError) as exc_info:
+                        ingest_session(conn, path)
+        assert exc_info.value.step == "extract"
 
 
 class TestIngestSessionDedup:
-    """Test session dedup guard integration.
+    """Test session dedup guard integration."""
 
-    Tests:
-    - test_already_ingested_returns_skipped
-      Mock check_session_already_ingested to return already_ingested=True
-      Verify: result.skipped is True, no further pipeline stages called
-    - test_already_ingested_with_force_proceeds
-      Mock dedup check returns True, call with force=True
-      Verify: pipeline proceeds, result.skipped is False
-    - test_new_session_proceeds_normally
-      Mock dedup check returns False
-      Verify: pipeline proceeds normally
-    - test_force_adds_warning_about_reingestion
-      Call with force=True on already-ingested session
-      Verify: result.warnings includes re-ingestion notice
-    """
+    def test_already_ingested_returns_skipped(self):
+        """Mock dedup check returns already_ingested=True -> result.skipped is True."""
+        path = _make_jsonl_file("sess-dup")
+        conn = MagicMock()
+        dedup_result = MockDedupResult(already_ingested=True, existing_neuron_count=5, session_id="sess-dup")
 
-    # --- test_already_ingested_returns_skipped ---
-    # --- test_already_ingested_with_force_proceeds ---
-    # --- test_new_session_proceeds_normally ---
-    # --- test_force_adds_warning_about_reingestion ---
+        with patch("memory_cli.ingestion.ingest_orchestrator.check_session_already_ingested",
+                   return_value=dedup_result):
+            result = ingest_session(conn, path)
+        assert result.skipped is True
+        assert result.session_id == "sess-dup"
 
-    pass
+    def test_already_ingested_with_force_proceeds(self):
+        """force=True on already-ingested session -> pipeline proceeds."""
+        path = _make_jsonl_file("sess-dup")
+        conn = MagicMock()
+        dedup_result = MockDedupResult(already_ingested=True, existing_neuron_count=5, session_id="sess-dup")
+        extraction = MockExtractionResult()
+        creation = MockCreationResult(neuron_count=1, edge_count=0, neuron_ids=[1])
+
+        with patch("memory_cli.ingestion.ingest_orchestrator.check_session_already_ingested",
+                   return_value=dedup_result):
+            with patch("memory_cli.ingestion.ingest_orchestrator.assemble_transcript_chunks",
+                       return_value=["chunk"]):
+                with patch("memory_cli.ingestion.ingest_orchestrator.haiku_extract",
+                           return_value=extraction):
+                    with patch("memory_cli.ingestion.ingest_orchestrator.create_neurons_and_edges",
+                               return_value=creation):
+                        with patch("memory_cli.ingestion.ingest_orchestrator.capture_context_star",
+                                   return_value=(99, 1)):
+                            result = ingest_session(conn, path, force=True)
+        assert result.skipped is False
+
+    def test_new_session_proceeds_normally(self):
+        """Dedup check returns False -> pipeline proceeds normally."""
+        path = _make_jsonl_file("sess-new")
+        conn = MagicMock()
+        dedup_result = MockDedupResult(already_ingested=False, existing_neuron_count=0, session_id="sess-new")
+        extraction = MockExtractionResult()
+        creation = MockCreationResult(neuron_count=2, edge_count=1, neuron_ids=[1, 2])
+
+        with patch("memory_cli.ingestion.ingest_orchestrator.check_session_already_ingested",
+                   return_value=dedup_result):
+            with patch("memory_cli.ingestion.ingest_orchestrator.assemble_transcript_chunks",
+                       return_value=["chunk"]):
+                with patch("memory_cli.ingestion.ingest_orchestrator.haiku_extract",
+                           return_value=extraction):
+                    with patch("memory_cli.ingestion.ingest_orchestrator.create_neurons_and_edges",
+                               return_value=creation):
+                        with patch("memory_cli.ingestion.ingest_orchestrator.capture_context_star",
+                                   return_value=(99, 2)):
+                            result = ingest_session(conn, path)
+        assert result.skipped is False
+        assert result.neurons_created == 2
+
+    def test_force_adds_warning_about_reingestion(self):
+        """force=True on already-ingested -> result.warnings includes re-ingestion notice."""
+        path = _make_jsonl_file("sess-dup2")
+        conn = MagicMock()
+        dedup_result = MockDedupResult(already_ingested=True, existing_neuron_count=3, session_id="sess-dup2")
+        extraction = MockExtractionResult()
+        creation = MockCreationResult(neuron_count=1, edge_count=0, neuron_ids=[1])
+
+        with patch("memory_cli.ingestion.ingest_orchestrator.check_session_already_ingested",
+                   return_value=dedup_result):
+            with patch("memory_cli.ingestion.ingest_orchestrator.assemble_transcript_chunks",
+                       return_value=["chunk"]):
+                with patch("memory_cli.ingestion.ingest_orchestrator.haiku_extract",
+                           return_value=extraction):
+                    with patch("memory_cli.ingestion.ingest_orchestrator.create_neurons_and_edges",
+                               return_value=creation):
+                        with patch("memory_cli.ingestion.ingest_orchestrator.capture_context_star",
+                                   return_value=(99, 1)):
+                            result = ingest_session(conn, path, force=True)
+        assert any("force" in w.lower() or "re-ingest" in w.lower() or "Re-ingest" in w for w in result.warnings)
 
 
 class TestIngestResult:
-    """Test IngestResult dataclass defaults and behavior.
+    """Test IngestResult dataclass defaults and behavior."""
 
-    Tests:
-    - test_default_values
-      Verify: neurons_created=0, edges_created=0, context_neuron_id=None,
-      warnings=[], session_id=None, skipped=False
-    - test_warnings_list_is_independent
-      Verify: two IngestResult instances don't share the same warnings list
-    """
+    def test_default_values(self):
+        """Verify all defaults are as expected."""
+        result = IngestResult()
+        assert result.neurons_created == 0
+        assert result.edges_created == 0
+        assert result.context_neuron_id is None
+        assert result.warnings == []
+        assert result.session_id is None
+        assert result.skipped is False
 
-    # --- test_default_values ---
-    # result = IngestResult()
-    # assert result.neurons_created == 0
-    # assert result.skipped is False
-
-    # --- test_warnings_list_is_independent ---
-    # r1 = IngestResult(); r2 = IngestResult()
-    # r1.warnings.append("x")
-    # assert r2.warnings == []
-
-    pass
+    def test_warnings_list_is_independent(self):
+        """Two IngestResult instances don't share the same warnings list."""
+        r1 = IngestResult()
+        r2 = IngestResult()
+        r1.warnings.append("x")
+        assert r2.warnings == []

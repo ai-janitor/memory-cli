@@ -28,6 +28,28 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from .bm25_retrieval_fts5_match import retrieve_bm25
+from .vector_retrieval_two_step_knn import retrieve_vectors
+from .rrf_fusion_rank_based_k60 import fuse_rrf
+from .spreading_activation_bfs_linear_decay import spread
+from .temporal_decay_exponential_halflife import apply_temporal_decay
+from .tag_filter_post_activation import filter_by_tags
+from .final_score_combine_and_rank import compute_final_scores
+from .explain_scoring_breakdown import build_explain_breakdowns
+from .search_result_hydration_and_envelope import hydrate_results, build_envelope
+
+# Embedding imports — done at module level so they can be mocked in tests.
+# Will fail at import time only if the embedding package itself is broken,
+# not if the model file is missing (that's caught at get_model() call time).
+try:
+    from memory_cli.embedding import get_model, embed_single, build_embedding_input
+    _EMBEDDING_AVAILABLE = True
+except ImportError:
+    _EMBEDDING_AVAILABLE = False
+    get_model = None  # type: ignore
+    embed_single = None  # type: ignore
+    build_embedding_input = None  # type: ignore
+
 
 # -----------------------------------------------------------------------------
 # Search options — all CLI flags parsed into a structured object.
@@ -180,73 +202,87 @@ def light_search(conn: sqlite3.Connection, options: SearchOptions) -> SearchResu
     """
     # --- Initialize pipeline state ---
     # state = PipelineState()
+    state = PipelineState()
 
-    # --- Stage 1: Query Embedding ---
-    # Try to embed the query with "search_query:" prefix.
-    # On failure: set state.vector_unavailable = True, log warning.
+    try:
+        # --- Stage 1: Query Embedding ---
+        # Try to embed the query with "search_query:" prefix.
+        # On failure: set state.vector_unavailable = True, log warning.
+        _run_retrieval_stage(conn, state, options)
 
-    # --- Stage 2: BM25 Retrieval ---
-    # state.bm25_candidates = bm25_retrieval.retrieve_bm25(conn, options.query)
+        # --- Stage 2: BM25 Retrieval ---
+        # state.bm25_candidates = bm25_retrieval.retrieve_bm25(conn, options.query)
 
-    # --- Stage 3: Vector Retrieval ---
-    # if not state.vector_unavailable:
-    #     state.vector_candidates = vector_retrieval.retrieve_vectors(
-    #         conn, state.query_embedding
-    #     )
-    # else:
-    #     state.vector_candidates = []
+        # --- Stage 3: Vector Retrieval ---
+        # if not state.vector_unavailable:
+        #     state.vector_candidates = vector_retrieval.retrieve_vectors(
+        #         conn, state.query_embedding
+        #     )
+        # else:
+        #     state.vector_candidates = []
 
-    # --- Stage 4: RRF Fusion ---
-    # state.rrf_candidates = rrf_fusion.fuse_rrf(
-    #     state.bm25_candidates, state.vector_candidates
-    # )
+        # --- Stage 4: RRF Fusion ---
+        # state.rrf_candidates = rrf_fusion.fuse_rrf(
+        #     state.bm25_candidates, state.vector_candidates
+        # )
 
-    # --- Stage 5: Spreading Activation ---
-    # state.activated_candidates = spreading_activation.spread(
-    #     conn, state.rrf_candidates, fan_out_depth=options.fan_out_depth
-    # )
+        # --- Stage 5: Spreading Activation ---
+        # state.activated_candidates = spreading_activation.spread(
+        #     conn, state.rrf_candidates, fan_out_depth=options.fan_out_depth
+        # )
 
-    # --- Stage 6: Temporal Decay ---
-    # state.temporally_weighted = temporal_decay.apply_temporal_decay(
-    #     conn, state.activated_candidates
-    # )
+        # --- Stage 6: Temporal Decay ---
+        # state.temporally_weighted = temporal_decay.apply_temporal_decay(
+        #     conn, state.activated_candidates
+        # )
 
-    # --- Stage 7: Tag Filtering ---
-    # if options.tags:
-    #     state.tag_filtered = tag_filter.filter_by_tags(
-    #         conn, state.temporally_weighted, options.tags, options.tag_mode
-    #     )
-    # else:
-    #     state.tag_filtered = state.temporally_weighted
+        # --- Stage 7: Tag Filtering ---
+        # if options.tags:
+        #     state.tag_filtered = tag_filter.filter_by_tags(
+        #         conn, state.temporally_weighted, options.tags, options.tag_mode
+        #     )
+        # else:
+        #     state.tag_filtered = state.temporally_weighted
 
-    # --- Stage 8: Final Score ---
-    # state.final_ranked = final_score.compute_final_scores(state.tag_filtered)
+        # --- Stage 8: Final Score ---
+        # state.final_ranked = final_score.compute_final_scores(state.tag_filtered)
+        _run_scoring_stage(conn, state, options)
 
-    # --- Stage 9: Pagination ---
-    # total = len(state.final_ranked)
-    # state.paginated = state.final_ranked[options.offset:options.offset + options.limit]
+        # --- Stage 9: Pagination ---
+        # total = len(state.final_ranked)
+        # state.paginated = state.final_ranked[options.offset:options.offset + options.limit]
 
-    # --- Stage 10: Hydration & Output ---
-    # if options.explain:
-    #     explain_breakdown.build_explain_breakdowns(
-    #         state.paginated, vector_unavailable=state.vector_unavailable
-    #     )
-    # state.results = hydration.hydrate_results(
-    #     conn, state.paginated, explain=options.explain
-    # )
+        # --- Stage 10: Hydration & Output ---
+        # if options.explain:
+        #     explain_breakdown.build_explain_breakdowns(
+        #         state.paginated, vector_unavailable=state.vector_unavailable
+        #     )
+        # state.results = hydration.hydrate_results(
+        #     conn, state.paginated, explain=options.explain
+        # )
 
-    # --- Build envelope ---
-    # envelope = SearchResultEnvelope(
-    #     results=state.results,
-    #     total_before_pagination=total,
-    #     limit=options.limit,
-    #     offset=options.offset,
-    #     vector_unavailable=state.vector_unavailable,
-    #     exit_code=0 if state.results else 1,
-    # )
-    # return envelope
+        # --- Build envelope ---
+        # envelope = SearchResultEnvelope(
+        #     results=state.results,
+        #     total_before_pagination=total,
+        #     limit=options.limit,
+        #     offset=options.offset,
+        #     vector_unavailable=state.vector_unavailable,
+        #     exit_code=0 if state.results else 1,
+        # )
+        # return envelope
+        return _run_output_stage(conn, state, options)
 
-    pass
+    except Exception:
+        # Database or pipeline error → exit code 2
+        return SearchResultEnvelope(
+            results=[],
+            total_before_pagination=0,
+            limit=options.limit,
+            offset=options.offset,
+            vector_unavailable=state.vector_unavailable,
+            exit_code=2,
+        )
 
 
 def _run_retrieval_stage(
@@ -273,7 +309,25 @@ def _run_retrieval_stage(
         state: Pipeline state to populate.
         options: Search options with query text.
     """
-    pass
+    # --- Stage 1: Try to get query embedding ---
+    try:
+        if not _EMBEDDING_AVAILABLE or get_model is None:
+            raise RuntimeError("Embedding package not available")
+        model = get_model(None)  # config=None falls back to defaults
+        embedding_input = build_embedding_input(options.query, [])
+        state.query_embedding = embed_single(model, embedding_input, "query")
+    except Exception:
+        # Embedding unavailable — BM25-only fallback
+        state.vector_unavailable = True
+
+    # --- Stage 2: BM25 retrieval ---
+    state.bm25_candidates = retrieve_bm25(conn, options.query)
+
+    # --- Stage 3: Vector retrieval (only if embedding available) ---
+    if not state.vector_unavailable and state.query_embedding is not None:
+        state.vector_candidates = retrieve_vectors(conn, state.query_embedding)
+    else:
+        state.vector_candidates = []
 
 
 def _run_scoring_stage(
@@ -297,7 +351,27 @@ def _run_scoring_stage(
         state: Pipeline state with retrieval results.
         options: Search options with tags, fan-out-depth, etc.
     """
-    pass
+    # --- Stage 4: RRF fusion ---
+    state.rrf_candidates = fuse_rrf(state.bm25_candidates, state.vector_candidates)
+
+    # --- Stage 5: Spreading activation ---
+    state.activated_candidates = spread(
+        conn, state.rrf_candidates, fan_out_depth=options.fan_out_depth
+    )
+
+    # --- Stage 6: Temporal decay ---
+    state.temporally_weighted = apply_temporal_decay(conn, state.activated_candidates)
+
+    # --- Stage 7: Tag filtering (only if tags specified) ---
+    if options.tags:
+        state.tag_filtered = filter_by_tags(
+            conn, state.temporally_weighted, options.tags, options.tag_mode
+        )
+    else:
+        state.tag_filtered = state.temporally_weighted
+
+    # --- Stage 8: Final score computation and ranking ---
+    state.final_ranked = compute_final_scores(state.tag_filtered)
 
 
 def _run_output_stage(
@@ -322,4 +396,23 @@ def _run_output_stage(
     Returns:
         SearchResultEnvelope ready for CLI serialization.
     """
-    pass
+    # --- Stage 9: Pagination ---
+    total = len(state.final_ranked)
+    state.paginated = state.final_ranked[options.offset:options.offset + options.limit]
+
+    # --- Stage 10: Hydration & explain breakdown ---
+    if options.explain:
+        build_explain_breakdowns(
+            state.paginated, vector_unavailable=state.vector_unavailable
+        )
+
+    state.results = hydrate_results(conn, state.paginated, explain=options.explain)
+
+    return SearchResultEnvelope(
+        results=state.results,
+        total_before_pagination=total,
+        limit=options.limit,
+        offset=options.offset,
+        vector_unavailable=state.vector_unavailable,
+        exit_code=0 if state.results else 1,
+    )

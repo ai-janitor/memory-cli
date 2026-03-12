@@ -20,8 +20,7 @@ from __future__ import annotations
 
 from typing import List, Any
 
-# from memory_cli.cli.entrypoint_and_argv_dispatch import register_noun
-# from memory_cli.cli.output_envelope_json_and_text import Result
+from memory_cli.cli.entrypoint_and_argv_dispatch import register_noun
 
 
 # =============================================================================
@@ -50,7 +49,7 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
     7. Return Result(status="ok", data={"id": neuron_id, ...})
     8. Error path: storage failure -> Result(status="error", error=str(e))
     """
-    pass
+    raise NotImplementedError
 
 
 # =============================================================================
@@ -73,7 +72,7 @@ def handle_get(args: List[str], global_flags: Any) -> Any:
     4. If not found: return Result(status="not_found", error="Neuron {id} not found")
     5. If found: return Result(status="ok", data=neuron_dict)
     """
-    pass
+    raise NotImplementedError
 
 
 # =============================================================================
@@ -102,7 +101,7 @@ def handle_list(args: List[str], global_flags: Any) -> Any:
                      meta={"total": total, "limit": limit, "offset": offset})
     5. Empty results are success (exit 0), not "not_found"
     """
-    pass
+    raise NotImplementedError
 
 
 # =============================================================================
@@ -127,7 +126,7 @@ def handle_update(args: List[str], global_flags: Any) -> Any:
     6. If --content changed: trigger re-embedding
     7. Return Result(status="ok", data=updated_neuron_dict)
     """
-    pass
+    raise NotImplementedError
 
 
 # =============================================================================
@@ -149,7 +148,7 @@ def handle_archive(args: List[str], global_flags: Any) -> Any:
     3. If not found: return Result(status="not_found")
     4. Return Result(status="ok", data={"id": neuron_id, "archived": True})
     """
-    pass
+    raise NotImplementedError
 
 
 # =============================================================================
@@ -172,7 +171,7 @@ def handle_restore(args: List[str], global_flags: Any) -> Any:
     4. If not archived: return Result(status="error", error="Neuron is not archived")
     5. Return Result(status="ok", data={"id": neuron_id, "archived": False})
     """
-    pass
+    raise NotImplementedError
 
 
 # =============================================================================
@@ -201,7 +200,7 @@ def handle_search(args: List[str], global_flags: Any) -> Any:
                      meta={"total": len(results), "query": query_text})
     7. Empty results are success (exit 0), data=[]
     """
-    pass
+    raise NotImplementedError
 
 
 # =============================================================================
@@ -270,7 +269,12 @@ def register() -> None:
          "flag_defs": _FLAG_DEFS,
        })
     """
-    pass
+    register_noun("neuron", {
+        "verb_map": _VERB_MAP,
+        "description": "Memory neurons — content nodes in the graph",
+        "verb_descriptions": _VERB_DESCRIPTIONS,
+        "flag_defs": _FLAG_DEFS,
+    })
 
 # --- Self-register on import ---
-# register()
+register()

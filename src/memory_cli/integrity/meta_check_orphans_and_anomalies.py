@@ -22,9 +22,11 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
+import struct
 from dataclasses import dataclass, field
-# from datetime import datetime, timezone
+from datetime import datetime, timezone
 
 
 @dataclass
@@ -75,35 +77,46 @@ def run_meta_check(conn: sqlite3.Connection, config: dict) -> dict:
             - last_integrity_check_at: str (ISO 8601, when this check completed)
     """
     # --- Step 1: Run all 9 checks ---
-    # checks = [
-    #     _check_db_accessible(conn),
-    #     _check_schema_version(conn),
-    #     _check_model_match(conn, config),
-    #     _check_dimension_match(conn, config),
-    #     _check_stale_flag(conn),
-    #     _check_orphaned_vectors(conn),
-    #     _check_orphaned_edges(conn),
-    #     _check_orphaned_fts(conn),
-    #     _check_dimension_consistency(conn, config),
-    # ]
+    checks = [
+        _check_db_accessible(conn),
+        _check_schema_version(conn),
+        _check_model_match(conn, config),
+        _check_dimension_match(conn, config),
+        _check_stale_flag(conn),
+        _check_orphaned_vectors(conn),
+        _check_orphaned_edges(conn),
+        _check_orphaned_fts(conn),
+        _check_dimension_consistency(conn, config),
+    ]
 
     # --- Step 2: Aggregate results ---
-    # result = MetaCheckResult()
-    # For each check in checks:
-    #   result.checks.append(check)
-    #   If check.passed: result.checks_passed += 1
-    #   Else: result.checks_failed += 1; result.issues.append(check.detail)
-    # result.status = "ok" if result.checks_failed == 0 else "issues_found"
+    result = MetaCheckResult()
+    for check in checks:
+        result.checks.append(check)
+        if check.passed:
+            result.checks_passed += 1
+        else:
+            result.checks_failed += 1
+            if check.detail is not None:
+                result.issues.append(check.detail)
+    result.status = "ok" if result.checks_failed == 0 else "issues_found"
 
     # --- Step 3: Update last_integrity_check_at ---
-    # now_iso = datetime.now(timezone.utc).isoformat()
-    # INSERT OR REPLACE INTO meta (key, value) VALUES ('last_integrity_check_at', now_iso)
-    # conn.commit()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('last_integrity_check_at', ?)",
+        (now_iso,),
+    )
+    conn.commit()
 
-    # --- Step 4: Return as dict ---
-    # Return dict with status, checks_passed, checks_failed, issues,
-    # and last_integrity_check_at
-    pass
+    # --- Step 4: Return as dict with status, counts, issues, and timestamp ---
+    return {
+        "status": result.status,
+        "checks_passed": result.checks_passed,
+        "checks_failed": result.checks_failed,
+        "issues": result.issues,
+        "last_integrity_check_at": now_iso,
+    }
 
 
 # =============================================================================
@@ -119,7 +132,11 @@ def _check_db_accessible(conn: sqlite3.Connection) -> CheckItem:
     # Try: SELECT 1
     # If succeeds → CheckItem("db_accessible", True)
     # If fails → CheckItem("db_accessible", False, "Database not accessible: {error}")
-    pass
+    try:
+        conn.execute("SELECT 1").fetchone()
+        return CheckItem(name="db_accessible", passed=True)
+    except Exception as exc:
+        return CheckItem(name="db_accessible", passed=False, detail=f"Database not accessible: {exc}")
 
 
 def _check_schema_version(conn: sqlite3.Connection) -> CheckItem:
@@ -127,11 +144,23 @@ def _check_schema_version(conn: sqlite3.Connection) -> CheckItem:
 
     Reads the schema version and confirms it is a recognized value.
     """
-    # Read schema version (PRAGMA user_version or meta table)
+    # Read schema version from meta table (seeded as '1' by v001 migration)
     # If version >= 1 and version <= MAX_KNOWN_VERSION → pass
-    # If version == 0 → fail: "Schema not initialized"
+    # If version == 0 or missing → fail: "Schema not initialized"
     # If version > MAX_KNOWN_VERSION → fail: "Unknown schema version {v}"
-    pass
+    MAX_KNOWN_VERSION = 1
+    try:
+        row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+        if row is None:
+            return CheckItem(name="schema_version", passed=False, detail="Schema not initialized (no schema_version in meta)")
+        version = int(row[0])
+        if version == 0:
+            return CheckItem(name="schema_version", passed=False, detail="Schema not initialized (schema_version = 0)")
+        if version > MAX_KNOWN_VERSION:
+            return CheckItem(name="schema_version", passed=False, detail=f"Unknown schema version {version} (max known: {MAX_KNOWN_VERSION})")
+        return CheckItem(name="schema_version", passed=True)
+    except Exception as exc:
+        return CheckItem(name="schema_version", passed=False, detail=f"Could not read schema version: {exc}")
 
 
 def _check_model_match(conn: sqlite3.Connection, config: dict) -> CheckItem:
@@ -139,12 +168,23 @@ def _check_model_match(conn: sqlite3.Connection, config: dict) -> CheckItem:
 
     If no model stored in DB (no vectors yet), this check passes.
     """
-    # Read embedding_model_name from meta
-    # If None → pass (no vectors written yet, nothing to compare)
-    # Extract config model basename
+    # Read embedding_model from meta (key used by v001 migration)
+    # If None or 'default' → pass (no vectors written yet, nothing to compare)
+    # Extract config model basename and compare
     # If DB model == config model → pass
     # Else → fail: "Model mismatch: DB has {db}, config has {config}"
-    pass
+    row = conn.execute("SELECT value FROM meta WHERE key = 'embedding_model'").fetchone()
+    if row is None or row[0] == "default":
+        return CheckItem(name="model_match", passed=True)
+    db_model = row[0]
+    config_model = os.path.basename(config["embedding"]["model_path"])
+    if db_model == config_model:
+        return CheckItem(name="model_match", passed=True)
+    return CheckItem(
+        name="model_match",
+        passed=False,
+        detail=f"Model mismatch: DB has '{db_model}', config has '{config_model}'",
+    )
 
 
 def _check_dimension_match(conn: sqlite3.Connection, config: dict) -> CheckItem:
@@ -154,10 +194,24 @@ def _check_dimension_match(conn: sqlite3.Connection, config: dict) -> CheckItem:
     """
     # Read embedding_dimensions from meta
     # If None → pass (no vectors written yet)
-    # Compare int(db_dims) vs int(config["embedding_dimensions"])
+    # Compare int(db_dims) vs int(config["embedding"]["dimensions"])
     # If match → pass
     # Else → fail: "Dimension mismatch: DB has {db}, config has {config}"
-    pass
+    row = conn.execute("SELECT value FROM meta WHERE key = 'embedding_dimensions'").fetchone()
+    if row is None:
+        return CheckItem(name="dimension_match", passed=True)
+    try:
+        db_dims = int(row[0])
+    except (ValueError, TypeError):
+        return CheckItem(name="dimension_match", passed=True)
+    config_dims = int(config["embedding"]["dimensions"])
+    if db_dims == config_dims:
+        return CheckItem(name="dimension_match", passed=True)
+    return CheckItem(
+        name="dimension_match",
+        passed=False,
+        detail=f"Dimension mismatch: DB has {db_dims}, config has {config_dims}",
+    )
 
 
 def _check_stale_flag(conn: sqlite3.Connection) -> CheckItem:
@@ -166,9 +220,16 @@ def _check_stale_flag(conn: sqlite3.Connection) -> CheckItem:
     Stale vectors indicate a past model drift that hasn't been resolved.
     """
     # Read vectors_marked_stale_at from meta
-    # If None → pass
-    # Else → fail: "Vectors marked stale since {timestamp}. Run `memory batch reembed`"
-    pass
+    # If None → pass (no stale condition)
+    # Else → fail with timestamp and remediation instruction
+    row = conn.execute("SELECT value FROM meta WHERE key = 'vectors_marked_stale_at'").fetchone()
+    if row is None:
+        return CheckItem(name="stale_flag", passed=True)
+    return CheckItem(
+        name="stale_flag",
+        passed=False,
+        detail=f"Vectors marked stale since {row[0]}. Run `memory batch reembed` to resolve.",
+    )
 
 
 def _check_orphaned_vectors(conn: sqlite3.Connection) -> CheckItem:
@@ -176,13 +237,20 @@ def _check_orphaned_vectors(conn: sqlite3.Connection) -> CheckItem:
 
     Orphaned vectors waste space and can confuse search results.
     """
-    # SELECT COUNT(*) FROM neuron_vectors v
-    # LEFT JOIN neurons n ON v.neuron_id = n.id
-    # WHERE n.id IS NULL
-    #
-    # If count == 0 → pass
-    # Else → fail: "{count} orphaned vectors found (neuron deleted but vector remains)"
-    pass
+    # Count vectors in neurons_vec whose neuron_id has no matching row in neurons
+    # vec0 does not support JOINs, so use a subquery approach
+    row = conn.execute("""
+        SELECT COUNT(*) FROM neurons_vec
+        WHERE neuron_id NOT IN (SELECT id FROM neurons)
+    """).fetchone()
+    count = row[0] if row is not None else 0
+    if count == 0:
+        return CheckItem(name="orphaned_vectors", passed=True)
+    return CheckItem(
+        name="orphaned_vectors",
+        passed=False,
+        detail=f"{count} orphaned vector(s) found (neuron deleted but vector remains)",
+    )
 
 
 def _check_orphaned_edges(conn: sqlite3.Connection) -> CheckItem:
@@ -190,14 +258,22 @@ def _check_orphaned_edges(conn: sqlite3.Connection) -> CheckItem:
 
     Orphaned edges can cause traversal errors and confusing results.
     """
-    # SELECT COUNT(*) FROM edges e
-    # LEFT JOIN neurons n1 ON e.source_id = n1.id
-    # LEFT JOIN neurons n2 ON e.target_id = n2.id
-    # WHERE n1.id IS NULL OR n2.id IS NULL
-    #
-    # If count == 0 → pass
-    # Else → fail: "{count} orphaned edges found (source or target neuron deleted)"
-    pass
+    # Count edges where source or target neuron no longer exists
+    # Edges use ON DELETE CASCADE, but orphans may appear if FK was disabled
+    row = conn.execute("""
+        SELECT COUNT(*) FROM edges e
+        LEFT JOIN neurons n1 ON e.source_id = n1.id
+        LEFT JOIN neurons n2 ON e.target_id = n2.id
+        WHERE n1.id IS NULL OR n2.id IS NULL
+    """).fetchone()
+    count = row[0] if row is not None else 0
+    if count == 0:
+        return CheckItem(name="orphaned_edges", passed=True)
+    return CheckItem(
+        name="orphaned_edges",
+        passed=False,
+        detail=f"{count} orphaned edge(s) found (source or target neuron deleted)",
+    )
 
 
 def _check_orphaned_fts(conn: sqlite3.Connection) -> CheckItem:
@@ -205,16 +281,25 @@ def _check_orphaned_fts(conn: sqlite3.Connection) -> CheckItem:
 
     Orphaned FTS entries can produce phantom search results.
     """
-    # SELECT COUNT(*) FROM neurons_fts f
-    # LEFT JOIN neurons n ON f.rowid = n.id
-    # WHERE n.id IS NULL
-    #
-    # If count == 0 → pass
-    # Else → fail: "{count} orphaned FTS entries found"
-    #
-    # Note: FTS5 content-sync tables may handle this differently —
-    # adjust query based on actual schema (content= vs content-sync)
-    pass
+    # FTS5 content-backed table — use the shadow docsize table to detect orphans
+    # neurons_fts_docsize has one row per indexed document.
+    # A rowid in docsize with no matching neurons.id = orphaned FTS entry.
+    try:
+        row = conn.execute("""
+            SELECT COUNT(*) FROM neurons_fts_docsize
+            WHERE rowid NOT IN (SELECT id FROM neurons)
+        """).fetchone()
+        count = row[0] if row is not None else 0
+    except Exception:
+        # Shadow table may not be accessible in all configurations — pass trivially
+        return CheckItem(name="orphaned_fts", passed=True)
+    if count == 0:
+        return CheckItem(name="orphaned_fts", passed=True)
+    return CheckItem(
+        name="orphaned_fts",
+        passed=False,
+        detail=f"{count} orphaned FTS entry/entries found (neuron deleted but FTS index not cleaned up)",
+    )
 
 
 def _check_dimension_consistency(conn: sqlite3.Connection, config: dict) -> CheckItem:
@@ -223,15 +308,42 @@ def _check_dimension_consistency(conn: sqlite3.Connection, config: dict) -> Chec
     This catches corrupted or mismatched vectors that slipped past checks.
     """
     # Read expected dimensions from config
-    # SELECT vector FROM neuron_vectors LIMIT 100
-    # For each vector:
-    #   Decode the vector blob/array
-    #   Count its dimensions
-    #   If dimension count != expected → record as inconsistent
+    expected_dims = int(config["embedding"]["dimensions"])
+    # SELECT embedding FROM neurons_vec LIMIT 100
+    # Embeddings are stored as float32 blobs — each float is 4 bytes
+    # If dimension count != expected → record as inconsistent
     #
-    # If all consistent → pass
-    # If any inconsistent → fail: "{count} of {sampled} sampled vectors have wrong dimensions"
-    #
-    # Note: How to decode depends on vec0 storage format (float32 array → len/4 = dims)
     # Handle case where no vectors exist → pass trivially
-    pass
+    try:
+        rows = conn.execute("SELECT embedding FROM neurons_vec LIMIT 100").fetchall()
+    except Exception:
+        return CheckItem(name="dimension_consistency", passed=True)
+
+    if not rows:
+        return CheckItem(name="dimension_consistency", passed=True)
+
+    inconsistent = 0
+    sampled = len(rows)
+    for row in rows:
+        emb = row[0]
+        if emb is None:
+            continue
+        # float32 blob: each float is 4 bytes
+        if isinstance(emb, (bytes, bytearray)):
+            actual_dims = len(emb) // 4
+        else:
+            # Some vec0 builds return a list or other type
+            try:
+                actual_dims = len(emb)
+            except TypeError:
+                continue
+        if actual_dims != expected_dims:
+            inconsistent += 1
+
+    if inconsistent == 0:
+        return CheckItem(name="dimension_consistency", passed=True)
+    return CheckItem(
+        name="dimension_consistency",
+        passed=False,
+        detail=f"{inconsistent} of {sampled} sampled vector(s) have wrong dimensions (expected {expected_dims})",
+    )

@@ -78,7 +78,7 @@ def neuron_archive(conn: sqlite3.Connection, neuron_id: int) -> Dict[str, Any]:
     # Delegate to shared transition logic
     # return _transition_status(conn, neuron_id, STATUS_ARCHIVED)
 
-    pass
+    return _transition_status(conn, neuron_id, STATUS_ARCHIVED)
 
 
 def neuron_restore(conn: sqlite3.Connection, neuron_id: int) -> Dict[str, Any]:
@@ -107,7 +107,7 @@ def neuron_restore(conn: sqlite3.Connection, neuron_id: int) -> Dict[str, Any]:
     # Delegate to shared transition logic
     # return _transition_status(conn, neuron_id, STATUS_ACTIVE)
 
-    pass
+    return _transition_status(conn, neuron_id, STATUS_ACTIVE)
 
 
 def _transition_status(
@@ -153,4 +153,22 @@ def _transition_status(
     # from .neuron_get_by_id import neuron_get
     # return neuron_get(conn, neuron_id)
 
-    pass
+    from .neuron_get_by_id import neuron_get
+
+    row = conn.execute(
+        "SELECT id, status FROM neurons WHERE id = ?",
+        (neuron_id,)
+    ).fetchone()
+
+    if row is None:
+        raise NeuronLifecycleError(f"Neuron {neuron_id} not found")
+
+    if row["status"] != target_status:
+        now_ms = int(time.time() * 1000)
+        conn.execute(
+            "UPDATE neurons SET status = ?, updated_at = ? WHERE id = ?",
+            (target_status, now_ms, neuron_id)
+        )
+        conn.commit()
+
+    return neuron_get(conn, neuron_id)

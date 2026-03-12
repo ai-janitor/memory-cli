@@ -26,14 +26,15 @@
 
 from __future__ import annotations
 
-# import json
-# import pytest
-# from unittest.mock import patch
-# from io import StringIO
-# from memory_cli.cli.output_envelope_json_and_text import (
-#     Result, format_output, write_output, write_error,
-#     _build_json_envelope, _build_text_output, _is_tty, _json_serializer,
-# )
+import json
+import sys
+from io import StringIO
+from unittest.mock import patch
+
+from memory_cli.cli.output_envelope_json_and_text import (
+    Result, format_output, write_output, write_error,
+    _build_json_envelope, _build_text_output, _is_tty, _json_serializer,
+)
 
 
 # =============================================================================
@@ -52,7 +53,11 @@ class TestResult:
         4. Assert r.error is None
         5. Assert r.meta is None
         """
-        pass
+        r = Result()
+        assert r.status == "ok"
+        assert r.data is None
+        assert r.error is None
+        assert r.meta is None
 
     def test_custom_fields(self) -> None:
         """Result with all fields set retains values.
@@ -61,7 +66,11 @@ class TestResult:
         1. r = Result(status="error", data={"x": 1}, error="boom", meta={"total": 5})
         2. Assert all fields match
         """
-        pass
+        r = Result(status="error", data={"x": 1}, error="boom", meta={"total": 5})
+        assert r.status == "error"
+        assert r.data == {"x": 1}
+        assert r.error == "boom"
+        assert r.meta == {"total": 5}
 
 
 # =============================================================================
@@ -82,7 +91,13 @@ class TestJsonEnvelope:
         6. Assert parsed["error"] is None
         7. Assert parsed["meta"] is None
         """
-        pass
+        r = Result(status="ok", data={"id": "abc"})
+        output = format_output(r, "json")
+        parsed = json.loads(output)
+        assert parsed["status"] == "ok"
+        assert parsed["data"] == {"id": "abc"}
+        assert parsed["error"] is None
+        assert parsed["meta"] is None
 
     def test_error_envelope_shape(self) -> None:
         """Error result -> {"status": "error", "data": null, "error": "msg", "meta": null}.
@@ -95,7 +110,12 @@ class TestJsonEnvelope:
         5. Assert parsed["error"] == "something broke"
         6. Assert parsed["data"] is None
         """
-        pass
+        r = Result(status="error", error="something broke")
+        output = format_output(r, "json")
+        parsed = json.loads(output)
+        assert parsed["status"] == "error"
+        assert parsed["error"] == "something broke"
+        assert parsed["data"] is None
 
     def test_not_found_envelope_shape(self) -> None:
         """Not found result -> status="not_found".
@@ -106,7 +126,10 @@ class TestJsonEnvelope:
         3. parsed = json.loads(output)
         4. Assert parsed["status"] == "not_found"
         """
-        pass
+        r = Result(status="not_found", error="Neuron abc not found")
+        output = format_output(r, "json")
+        parsed = json.loads(output)
+        assert parsed["status"] == "not_found"
 
     def test_list_with_pagination_meta(self) -> None:
         """List result includes meta with total, limit, offset.
@@ -120,7 +143,13 @@ class TestJsonEnvelope:
         5. Assert parsed["meta"]["limit"] == 50
         6. Assert parsed["meta"]["offset"] == 0
         """
-        pass
+        r = Result(status="ok", data=[{"id": "a"}, {"id": "b"}],
+                   meta={"total": 100, "limit": 50, "offset": 0})
+        output = format_output(r, "json")
+        parsed = json.loads(output)
+        assert parsed["meta"]["total"] == 100
+        assert parsed["meta"]["limit"] == 50
+        assert parsed["meta"]["offset"] == 0
 
     def test_json_is_valid_json(self) -> None:
         """All JSON output is parseable by json.loads().
@@ -130,7 +159,16 @@ class TestJsonEnvelope:
         2. output = format_output(r, "json")
         3. Assert json.loads(output) does not raise
         """
-        pass
+        results = [
+            Result(status="ok"),
+            Result(status="error", error="oops"),
+            Result(status="not_found"),
+            Result(status="ok", data=[]),
+            Result(status="ok", data=[{"id": "x"}]),
+        ]
+        for r in results:
+            output = format_output(r, "json")
+            json.loads(output)
 
     def test_no_ansi_in_json(self) -> None:
         """JSON output never contains ANSI escape codes.
@@ -140,7 +178,9 @@ class TestJsonEnvelope:
         2. Assert "\\x1b" not in output
         3. Assert "\\033" not in output
         """
-        pass
+        output = format_output(Result(status="ok", data="test"), "json")
+        assert "\x1b" not in output
+        assert "\033" not in output
 
 
 # =============================================================================
@@ -157,7 +197,9 @@ class TestTextOutput:
         2. output = format_output(r, "text")
         3. Assert output contains "Error: boom"
         """
-        pass
+        r = Result(status="error", error="boom")
+        output = format_output(r, "text")
+        assert "Error: boom" in output
 
     def test_not_found_text_format(self) -> None:
         """Not found in text mode -> "Not found" message.
@@ -167,7 +209,9 @@ class TestTextOutput:
         2. output = format_output(r, "text")
         3. Assert "not found" in output.lower()
         """
-        pass
+        r = Result(status="not_found", error="Neuron xyz not found")
+        output = format_output(r, "text")
+        assert "not found" in output.lower()
 
     def test_empty_list_text_format(self) -> None:
         """Empty list in text mode -> "No results." (still exit 0).
@@ -177,7 +221,9 @@ class TestTextOutput:
         2. output = format_output(r, "text")
         3. Assert "No results" in output or similar
         """
-        pass
+        r = Result(status="ok", data=[])
+        output = format_output(r, "text")
+        assert "No results" in output
 
     def test_dict_data_text_format(self) -> None:
         """Dict data in text mode -> key: value lines.
@@ -187,7 +233,9 @@ class TestTextOutput:
         2. output = format_output(r, "text")
         3. Assert "id: abc" in output or "id" and "abc" both present
         """
-        pass
+        r = Result(status="ok", data={"id": "abc", "type": "memory"})
+        output = format_output(r, "text")
+        assert "id" in output and "abc" in output
 
     def test_list_data_text_format(self) -> None:
         """List data in text mode -> tabular or line-per-item format.
@@ -197,7 +245,10 @@ class TestTextOutput:
         2. output = format_output(r, "text")
         3. Assert both items are represented in output
         """
-        pass
+        r = Result(status="ok", data=[{"id": "a"}, {"id": "b"}])
+        output = format_output(r, "text")
+        assert "a" in output
+        assert "b" in output
 
 
 # =============================================================================
@@ -214,7 +265,9 @@ class TestOutputRouting:
         2. write_output("test data", stream=captured)
         3. Assert captured.getvalue() contains "test data"
         """
-        pass
+        captured = StringIO()
+        write_output("test data", stream=captured)
+        assert "test data" in captured.getvalue()
 
     def test_write_error_goes_to_stderr(self) -> None:
         """write_error() writes to stderr.
@@ -224,7 +277,10 @@ class TestOutputRouting:
         2. write_error("diagnostic message")
         3. Assert captured stderr contains "diagnostic message"
         """
-        pass
+        captured = StringIO()
+        with patch("sys.stderr", captured):
+            write_error("diagnostic message")
+        assert "diagnostic message" in captured.getvalue()
 
     def test_write_error_prefixed_with_memory(self) -> None:
         """write_error() prefixes message with "memory: ".
@@ -234,7 +290,10 @@ class TestOutputRouting:
         2. write_error("something")
         3. Assert output starts with "memory: "
         """
-        pass
+        captured = StringIO()
+        with patch("sys.stderr", captured):
+            write_error("something")
+        assert captured.getvalue().startswith("memory: ")
 
 
 # =============================================================================
@@ -250,7 +309,8 @@ class TestEdgeCases:
         1. output = format_output(Result(), "xml")
         2. Assert output is valid JSON (fallback worked)
         """
-        pass
+        output = format_output(Result(), "xml")
+        json.loads(output)
 
     def test_none_data_in_json(self) -> None:
         """data=None in JSON -> "data": null.
@@ -260,7 +320,9 @@ class TestEdgeCases:
         2. parsed = json.loads(output)
         3. Assert parsed["data"] is None
         """
-        pass
+        output = format_output(Result(status="ok", data=None), "json")
+        parsed = json.loads(output)
+        assert parsed["data"] is None
 
     def test_trailing_newline(self) -> None:
         """Output ends with newline for clean terminal display.
@@ -270,4 +332,6 @@ class TestEdgeCases:
         2. write_output("data", stream=captured)
         3. Assert captured.getvalue().endswith("\\n")
         """
-        pass
+        captured = StringIO()
+        write_output("data", stream=captured)
+        assert captured.getvalue().endswith("\n")

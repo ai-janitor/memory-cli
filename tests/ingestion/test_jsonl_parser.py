@@ -44,134 +44,235 @@ from memory_cli.ingestion.jsonl_parser_claude_code_sessions import (
 # Helpers — build JSONL lines for test fixtures
 # -----------------------------------------------------------------------------
 
-# _make_user_line(content, **kwargs) -> JSON string for a user message
-# _make_assistant_line(content, **kwargs) -> JSON string for an assistant message
-# _make_tool_line() -> JSON string for a tool_use message (should be filtered)
-# _write_jsonl_file(lines) -> Path to temp file with given lines
+def _make_user_line(content: str, **kwargs) -> str:
+    """Build a JSON string for a user message."""
+    data: dict = {"type": "user", "message": {"content": content}}
+    data.update(kwargs)
+    return json.dumps(data)
+
+
+def _make_assistant_line(content: str, **kwargs) -> str:
+    """Build a JSON string for an assistant message."""
+    data: dict = {"type": "assistant", "message": {"content": content}}
+    data.update(kwargs)
+    return json.dumps(data)
+
+
+def _make_tool_line() -> str:
+    """Build a JSON string for a tool_use message (should be filtered)."""
+    return json.dumps({"type": "tool_use", "tool": "bash", "input": "ls"})
+
+
+def _write_jsonl_file(lines: list) -> Path:
+    """Write lines to a temp file and return the path."""
+    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False)
+    for line in lines:
+        tmp.write(line + "\n")
+    tmp.close()
+    return Path(tmp.name)
 
 
 class TestParseJsonlSession:
-    """Test the main parse_jsonl_session() entry point.
+    """Test the main parse_jsonl_session() entry point."""
 
-    Tests:
-    - test_parse_valid_user_and_assistant_messages
-      JSONL with 2 user + 2 assistant messages
-      Verify: 4 ParsedMessages returned, roles correct, content correct
-    - test_parse_skips_invalid_json_with_warning
-      JSONL with 1 valid line + 1 malformed line
-      Verify: 1 message returned, 1 warning about the malformed line
-    - test_parse_skips_empty_lines_silently
-      JSONL with blank lines between valid messages
-      Verify: messages parsed correctly, no warnings for blank lines
-    - test_parse_filters_non_message_types
-      JSONL with user, assistant, tool_use, system lines
-      Verify: only user and assistant messages returned
-    - test_parse_extracts_metadata
-      JSONL with timestamp, cwd, sessionId fields
-      Verify: ParsedMessage has correct metadata values
-    - test_parse_empty_file_returns_empty
-      Empty JSONL file
-      Verify: ParseResult(messages=[], warnings=[])
-    - test_parse_file_not_found_raises
-      Nonexistent path
-      Verify: FileNotFoundError raised
-    - test_parse_line_numbers_are_correct
-      Verify: each ParsedMessage.line_number matches its position in file
-    """
+    def test_parse_valid_user_and_assistant_messages(self):
+        """JSONL with 2 user + 2 assistant messages."""
+        lines = [
+            _make_user_line("Hello"),
+            _make_assistant_line("Hi there"),
+            _make_user_line("How are you?"),
+            _make_assistant_line("I'm fine"),
+        ]
+        path = _write_jsonl_file(lines)
+        result = parse_jsonl_session(path)
+        assert len(result.messages) == 4
+        assert result.messages[0].role == "user"
+        assert result.messages[0].content == "Hello"
+        assert result.messages[1].role == "assistant"
+        assert result.messages[1].content == "Hi there"
 
-    # --- test_parse_valid_user_and_assistant_messages ---
-    # Write JSONL file with user + assistant lines
-    # result = parse_jsonl_session(path)
-    # assert len(result.messages) == 4
-    # assert result.messages[0].role == "user"
+    def test_parse_skips_invalid_json_with_warning(self):
+        """JSONL with 1 valid line + 1 malformed line."""
+        lines = [
+            _make_user_line("valid"),
+            "not valid json {{{",
+        ]
+        path = _write_jsonl_file(lines)
+        result = parse_jsonl_session(path)
+        assert len(result.messages) == 1
+        assert len(result.warnings) == 1
+        assert "Line 2" in result.warnings[0]
 
-    # --- test_parse_skips_invalid_json_with_warning ---
-    # Write file with "not valid json" on line 2
-    # assert len(result.warnings) == 1
-    # assert "Line 2" in result.warnings[0]
+    def test_parse_skips_empty_lines_silently(self):
+        """JSONL with blank lines between valid messages."""
+        lines = [
+            _make_user_line("first"),
+            "",
+            "   ",
+            _make_assistant_line("second"),
+        ]
+        path = _write_jsonl_file(lines)
+        result = parse_jsonl_session(path)
+        assert len(result.messages) == 2
+        assert len(result.warnings) == 0
 
-    # --- test_parse_skips_empty_lines_silently ---
-    # --- test_parse_filters_non_message_types ---
-    # --- test_parse_extracts_metadata ---
-    # --- test_parse_empty_file_returns_empty ---
-    # --- test_parse_file_not_found_raises ---
-    # --- test_parse_line_numbers_are_correct ---
+    def test_parse_filters_non_message_types(self):
+        """JSONL with user, assistant, tool_use, system lines."""
+        lines = [
+            _make_user_line("hello"),
+            _make_tool_line(),
+            json.dumps({"type": "system", "content": "init"}),
+            _make_assistant_line("world"),
+        ]
+        path = _write_jsonl_file(lines)
+        result = parse_jsonl_session(path)
+        assert len(result.messages) == 2
+        assert result.messages[0].role == "user"
+        assert result.messages[1].role == "assistant"
 
-    pass
+    def test_parse_extracts_metadata(self):
+        """JSONL with timestamp, cwd, sessionId fields."""
+        line = json.dumps({
+            "type": "user",
+            "message": {"content": "hi"},
+            "timestamp": "2024-01-15T10:30:00Z",
+            "cwd": "/home/user/project",
+            "sessionId": "sess-abc-123",
+        })
+        path = _write_jsonl_file([line])
+        result = parse_jsonl_session(path)
+        assert len(result.messages) == 1
+        msg = result.messages[0]
+        assert msg.timestamp == "2024-01-15T10:30:00Z"
+        assert msg.cwd == "/home/user/project"
+        assert msg.session_id == "sess-abc-123"
+
+    def test_parse_empty_file_returns_empty(self):
+        """Empty JSONL file."""
+        path = _write_jsonl_file([])
+        result = parse_jsonl_session(path)
+        assert result.messages == []
+        assert result.warnings == []
+
+    def test_parse_file_not_found_raises(self):
+        """Nonexistent path raises FileNotFoundError."""
+        with pytest.raises(FileNotFoundError):
+            parse_jsonl_session(Path("/nonexistent/file.jsonl"))
+
+    def test_parse_line_numbers_are_correct(self):
+        """Each ParsedMessage.line_number matches its position in file."""
+        lines = [
+            _make_user_line("line 1"),
+            "bad json",
+            _make_assistant_line("line 3"),
+        ]
+        path = _write_jsonl_file(lines)
+        result = parse_jsonl_session(path)
+        assert len(result.messages) == 2
+        assert result.messages[0].line_number == 1
+        assert result.messages[1].line_number == 3
 
 
 class TestParseLine:
-    """Test _parse_line() for single-line parsing logic.
+    """Test _parse_line() for single-line parsing logic."""
 
-    Tests:
-    - test_valid_user_message_returns_parsed_message
-      JSON with type="user", content="hello"
-      Verify: ParsedMessage(role="user", content="hello")
-    - test_valid_assistant_message_returns_parsed_message
-      JSON with type="assistant", content="hi"
-      Verify: ParsedMessage(role="assistant", content="hi")
-    - test_tool_use_type_returns_none
-      JSON with type="tool_use"
-      Verify: returns None
-    - test_missing_type_returns_none
-      JSON without "type" field
-      Verify: returns None
-    - test_invalid_json_raises_value_error
-      Malformed JSON string
-      Verify: raises ValueError
-    - test_empty_content_returns_none
-      JSON with type="user" but empty content
-      Verify: returns None (filtered out)
-    - test_metadata_fallback_fields
-      JSON with "created_at" instead of "timestamp", "session_id" instead of "sessionId"
-      Verify: metadata extracted from fallback fields
-    """
+    def test_valid_user_message_returns_parsed_message(self):
+        """JSON with type="user", message.content="hello"."""
+        line = json.dumps({"type": "user", "message": {"content": "hello"}})
+        result = _parse_line(line, 1)
+        assert result is not None
+        assert result.role == "user"
+        assert result.content == "hello"
 
-    # --- test_valid_user_message_returns_parsed_message ---
-    # line = json.dumps({"type": "user", "message": {"content": "hello"}})
-    # result = _parse_line(line, 1)
-    # assert result.role == "user"
-    # assert result.content == "hello"
+    def test_valid_assistant_message_returns_parsed_message(self):
+        """JSON with type="assistant"."""
+        line = json.dumps({"type": "assistant", "message": {"content": "hi"}})
+        result = _parse_line(line, 1)
+        assert result is not None
+        assert result.role == "assistant"
+        assert result.content == "hi"
 
-    # --- test_tool_use_type_returns_none ---
-    # --- test_invalid_json_raises_value_error ---
-    # --- test_empty_content_returns_none ---
-    # --- test_metadata_fallback_fields ---
+    def test_tool_use_type_returns_none(self):
+        """JSON with type="tool_use" returns None."""
+        line = json.dumps({"type": "tool_use"})
+        result = _parse_line(line, 1)
+        assert result is None
 
-    pass
+    def test_missing_type_returns_none(self):
+        """JSON without "type" field returns None."""
+        line = json.dumps({"content": "no type"})
+        result = _parse_line(line, 1)
+        assert result is None
+
+    def test_invalid_json_raises_value_error(self):
+        """Malformed JSON raises ValueError."""
+        with pytest.raises(ValueError):
+            _parse_line("not valid json {{{", 1)
+
+    def test_empty_content_returns_none(self):
+        """JSON with type="user" but empty content returns None."""
+        line = json.dumps({"type": "user", "message": {"content": ""}})
+        result = _parse_line(line, 1)
+        assert result is None
+
+    def test_metadata_fallback_fields(self):
+        """JSON with "created_at" instead of "timestamp", "session_id" instead of "sessionId"."""
+        line = json.dumps({
+            "type": "user",
+            "message": {"content": "hello"},
+            "created_at": "2024-01-01T00:00:00Z",
+            "session_id": "fallback-sess",
+        })
+        result = _parse_line(line, 1)
+        assert result is not None
+        assert result.timestamp == "2024-01-01T00:00:00Z"
+        assert result.session_id == "fallback-sess"
 
 
 class TestExtractContent:
-    """Test _extract_content() for different content formats.
+    """Test _extract_content() for different content formats."""
 
-    Tests:
-    - test_string_content
-      data = {"message": {"content": "hello world"}}
-      Verify: returns "hello world"
-    - test_content_blocks_text_only
-      data = {"message": {"content": [{"type": "text", "text": "part1"}, {"type": "text", "text": "part2"}]}}
-      Verify: returns "part1\\npart2"
-    - test_content_blocks_skips_non_text
-      data = {"message": {"content": [{"type": "text", "text": "yes"}, {"type": "image", "source": "..."}]}}
-      Verify: returns "yes" (image block skipped)
-    - test_fallback_to_direct_content_field
-      data = {"content": "fallback"}  (no "message" wrapper)
-      Verify: returns "fallback"
-    - test_no_content_returns_empty
-      data = {"type": "user"}  (no content at all)
-      Verify: returns ""
-    - test_whitespace_stripped
-      data = {"message": {"content": "  spaced  "}}
-      Verify: returns "spaced"
-    """
+    def test_string_content(self):
+        """data = {"message": {"content": "hello world"}}."""
+        assert _extract_content({"message": {"content": "hello world"}}) == "hello world"
 
-    # --- test_string_content ---
-    # assert _extract_content({"message": {"content": "hello"}}) == "hello"
+    def test_content_blocks_text_only(self):
+        """Array of text blocks joined with newlines."""
+        data = {
+            "message": {
+                "content": [
+                    {"type": "text", "text": "part1"},
+                    {"type": "text", "text": "part2"},
+                ]
+            }
+        }
+        result = _extract_content(data)
+        assert result == "part1\npart2"
 
-    # --- test_content_blocks_text_only ---
-    # --- test_content_blocks_skips_non_text ---
-    # --- test_fallback_to_direct_content_field ---
-    # --- test_no_content_returns_empty ---
-    # --- test_whitespace_stripped ---
+    def test_content_blocks_skips_non_text(self):
+        """Image blocks are skipped."""
+        data = {
+            "message": {
+                "content": [
+                    {"type": "text", "text": "yes"},
+                    {"type": "image", "source": "data:..."},
+                ]
+            }
+        }
+        result = _extract_content(data)
+        assert result == "yes"
 
-    pass
+    def test_fallback_to_direct_content_field(self):
+        """data = {"content": "fallback"} (no "message" wrapper)."""
+        result = _extract_content({"content": "fallback"})
+        assert result == "fallback"
+
+    def test_no_content_returns_empty(self):
+        """data = {"type": "user"} (no content at all)."""
+        result = _extract_content({"type": "user"})
+        assert result == ""
+
+    def test_whitespace_stripped(self):
+        """Leading/trailing whitespace is stripped from content."""
+        result = _extract_content({"message": {"content": "  spaced  "}})
+        assert result == "spaced"

@@ -23,9 +23,12 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, Optional, TextIO
 
 
@@ -70,7 +73,11 @@ def format_output(result: Result, output_format: str = "json") -> str:
        - Call _build_text_output(result)
     4. Return the formatted string
     """
-    pass
+    if output_format not in ("json", "text"):
+        output_format = "json"
+    if output_format == "text":
+        return _build_text_output(result)
+    return _build_json_envelope(result)
 
 
 # =============================================================================
@@ -96,7 +103,13 @@ def _build_json_envelope(result: Result) -> str:
     3. No ANSI codes ever in JSON output
     4. Return the JSON string
     """
-    pass
+    envelope = {
+        "status": result.status,
+        "data": result.data,
+        "error": result.error,
+        "meta": result.meta,
+    }
+    return json.dumps(envelope, indent=2, ensure_ascii=False, default=_json_serializer)
 
 
 # =============================================================================
@@ -125,7 +138,38 @@ def _build_text_output(result: Result) -> str:
        - Bold for headers, dim for meta
     7. Return assembled string
     """
-    pass
+    if result.status == "error":
+        return f"Error: {result.error}"
+
+    if result.status == "not_found":
+        if result.error:
+            return f"Not found: {result.error}"
+        return "Not found."
+
+    if result.data is None:
+        return "OK"
+
+    if isinstance(result.data, list):
+        if not result.data:
+            return "No results."
+        lines = []
+        for item in result.data:
+            if isinstance(item, dict):
+                lines.append("  ".join(f"{k}: {v}" for k, v in item.items()))
+            else:
+                lines.append(str(item))
+        if result.meta and "total" in result.meta:
+            offset = result.meta.get("offset", 0)
+            total = result.meta["total"]
+            count = len(result.data)
+            lines.append(f"(showing {offset + 1}-{offset + count} of {total})")
+        return "\n".join(lines)
+
+    if isinstance(result.data, dict):
+        lines = [f"{k}: {v}" for k, v in result.data.items()]
+        return "\n".join(lines)
+
+    return str(result.data)
 
 
 # =============================================================================
@@ -144,7 +188,12 @@ def write_output(formatted: str, stream: Optional[TextIO] = None) -> None:
     3. Ensure trailing newline
     4. Flush the stream (important for piped output)
     """
-    pass
+    if stream is None:
+        stream = sys.stdout
+    if not formatted.endswith("\n"):
+        formatted = formatted + "\n"
+    stream.write(formatted)
+    stream.flush()
 
 
 def write_error(message: str) -> None:
@@ -159,7 +208,11 @@ def write_error(message: str) -> None:
     3. Ensure trailing newline
     4. Flush stderr
     """
-    pass
+    line = f"memory: {message}"
+    if not line.endswith("\n"):
+        line = line + "\n"
+    sys.stderr.write(line)
+    sys.stderr.flush()
 
 
 # =============================================================================
@@ -175,7 +228,10 @@ def _is_tty() -> bool:
     1. Return sys.stdout.isatty()
     2. Wrapped in try/except for edge cases (detached stdout, etc.)
     """
-    pass
+    try:
+        return sys.stdout.isatty()
+    except Exception:
+        return False
 
 
 def _json_serializer(obj: Any) -> Any:
@@ -187,4 +243,10 @@ def _json_serializer(obj: Any) -> Any:
     3. If Path: return str(obj)
     4. Else: raise TypeError (let json.dumps report it)
     """
-    pass
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, bytes):
+        return base64.b64encode(obj).decode("ascii")
+    if isinstance(obj, Path):
+        return str(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")

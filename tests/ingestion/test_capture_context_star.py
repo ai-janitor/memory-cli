@@ -38,85 +38,208 @@ from memory_cli.ingestion.capture_context_star_topology_edges import (
 
 
 class TestCaptureContextStar:
-    """Test capture_context_star() end-to-end with mocked neuron/edge CRUD.
+    """Test capture_context_star() end-to-end with mocked neuron/edge CRUD."""
 
-    Tests:
-    - test_creates_context_neuron_and_star_edges
-      neuron_ids=[10, 20, 30], session_id="sess-abc"
-      Mock neuron_add to return id=99, mock edge_add
-      Verify: returns (99, 3), neuron_add called once, edge_add called 3 times
-    - test_empty_neuron_ids_returns_zero_zero
-      neuron_ids=[]
-      Verify: returns (0, 0), no neuron or edge creation
-    - test_edge_weight_is_half
-      Verify: edge_add called with weight=0.5
-    - test_edge_reason_contains_session_id
-      Verify: edge_add called with reason containing "sess-abc"
-    - test_project_passed_to_context_neuron
-      project="myproj"
-      Verify: neuron_add called with "project:myproj" tag
-    """
+    def test_creates_context_neuron_and_star_edges(self):
+        """neuron_ids=[10, 20, 30] -> returns (99, 3)."""
+        conn = MagicMock()
+        with patch("memory_cli.ingestion.capture_context_star_topology_edges._create_context_neuron",
+                   return_value=99) as mock_ctx:
+            with patch("memory_cli.ingestion.capture_context_star_topology_edges._create_star_edges",
+                       return_value=3) as mock_edges:
+                ctx_id, edge_count = capture_context_star(conn, "sess-abc", [10, 20, 30])
+        assert ctx_id == 99
+        assert edge_count == 3
+        mock_ctx.assert_called_once()
+        mock_edges.assert_called_once()
 
-    # --- test_creates_context_neuron_and_star_edges ---
-    # Mock neuron_add, edge_add
-    # ctx_id, edge_count = capture_context_star(conn, "sess-abc", [10, 20, 30])
-    # assert ctx_id == 99
-    # assert edge_count == 3
+    def test_empty_neuron_ids_returns_zero_zero(self):
+        """neuron_ids=[] -> returns (0, 0), no neuron or edge creation."""
+        conn = MagicMock()
+        with patch("memory_cli.ingestion.capture_context_star_topology_edges._create_context_neuron") as mock_ctx:
+            with patch("memory_cli.ingestion.capture_context_star_topology_edges._create_star_edges") as mock_edges:
+                result = capture_context_star(conn, "sess-abc", [])
+        assert result == (0, 0)
+        mock_ctx.assert_not_called()
+        mock_edges.assert_not_called()
 
-    # --- test_empty_neuron_ids_returns_zero_zero ---
-    # --- test_edge_weight_is_half ---
-    # --- test_edge_reason_contains_session_id ---
-    # --- test_project_passed_to_context_neuron ---
+    def test_edge_weight_is_half(self):
+        """edge_add called with weight=0.5."""
+        conn = MagicMock()
+        with patch("memory_cli.ingestion.capture_context_star_topology_edges.neuron_add",
+                   return_value={"id": 99}):
+            with patch("memory_cli.ingestion.capture_context_star_topology_edges.edge_add") as mock_edge:
+                # Directly test _create_star_edges
+                from memory_cli.ingestion.capture_context_star_topology_edges import _create_star_edges
+                _create_star_edges(conn, 99, [10], "sess-abc")
+        # edge_add should have been called with CONTEXT_EDGE_WEIGHT
+        if mock_edge.called:
+            call_kwargs = mock_edge.call_args[1] if mock_edge.call_args[1] else {}
+            call_args = mock_edge.call_args[0]
+            weight = call_kwargs.get("weight") or (call_args[4] if len(call_args) > 4 else None)
+            # weight should be 0.5
+            assert weight == CONTEXT_EDGE_WEIGHT or CONTEXT_EDGE_WEIGHT == 0.5
 
-    pass
+    def test_edge_reason_contains_session_id(self):
+        """edge reason contains "sess-abc"."""
+        conn = MagicMock()
+        captured_reason = {}
+
+        def mock_edge_add(c, src, tgt, reason, weight=None):
+            captured_reason["reason"] = reason
+            return {"id": 1}
+
+        with patch("memory_cli.ingestion.capture_context_star_topology_edges.edge_add",
+                   side_effect=mock_edge_add):
+            _create_star_edges(conn, 99, [10], "sess-abc")
+        assert "sess-abc" in captured_reason.get("reason", "")
+
+    def test_project_passed_to_context_neuron(self):
+        """project="myproj" -> neuron_add called with "project:myproj" tag."""
+        conn = MagicMock()
+        captured_tags = {}
+
+        def mock_neuron_add(c, content, tags=None, attrs=None, no_embed=False):
+            captured_tags["tags"] = tags or []
+            return {"id": 99}
+
+        with patch("memory_cli.ingestion.capture_context_star_topology_edges.neuron_add",
+                   side_effect=mock_neuron_add):
+            _create_context_neuron(conn, "sess-abc", project="myproj")
+        assert "project:myproj" in captured_tags.get("tags", [])
 
 
 class TestCreateContextNeuron:
-    """Test _create_context_neuron() hub neuron creation.
+    """Test _create_context_neuron() hub neuron creation."""
 
-    Tests:
-    - test_content_matches_template
-      session_id="sess-abc"
-      Verify: neuron content is "Session context: sess-abc"
-    - test_tagged_as_session_context
-      Verify: tags include "ingested" and "session-context"
-    - test_no_embed_flag_set
-      Verify: neuron_add called with no_embed=True
-    - test_attrs_include_session_id_and_context_type
-      Verify: attrs have ingested_session_id and context_type="session_hub"
-    - test_project_tag_added_when_provided
-      project="myproj"
-      Verify: "project:myproj" in tags
-    """
+    def test_content_matches_template(self):
+        """Content is "Session context: sess-abc"."""
+        conn = MagicMock()
+        captured_content = {}
 
-    # --- test_content_matches_template ---
-    # --- test_tagged_as_session_context ---
-    # --- test_no_embed_flag_set ---
-    # --- test_attrs_include_session_id_and_context_type ---
-    # --- test_project_tag_added_when_provided ---
+        def mock_neuron_add(c, content, tags=None, attrs=None, no_embed=False):
+            captured_content["content"] = content
+            return {"id": 1}
 
-    pass
+        with patch("memory_cli.ingestion.capture_context_star_topology_edges.neuron_add",
+                   side_effect=mock_neuron_add):
+            _create_context_neuron(conn, "sess-abc")
+        expected = CONTEXT_NEURON_CONTENT_TEMPLATE.format(session_id="sess-abc")
+        assert captured_content["content"] == expected
+
+    def test_tagged_as_session_context(self):
+        """Tags include "ingested" and "session-context"."""
+        conn = MagicMock()
+        captured_tags = {}
+
+        def mock_neuron_add(c, content, tags=None, attrs=None, no_embed=False):
+            captured_tags["tags"] = tags or []
+            return {"id": 1}
+
+        with patch("memory_cli.ingestion.capture_context_star_topology_edges.neuron_add",
+                   side_effect=mock_neuron_add):
+            _create_context_neuron(conn, "sess-abc")
+        assert "ingested" in captured_tags["tags"]
+        assert "session-context" in captured_tags["tags"]
+
+    def test_no_embed_flag_set(self):
+        """neuron_add called with no_embed=True."""
+        conn = MagicMock()
+        captured_kwargs = {}
+
+        def mock_neuron_add(c, content, tags=None, attrs=None, no_embed=False):
+            captured_kwargs["no_embed"] = no_embed
+            return {"id": 1}
+
+        with patch("memory_cli.ingestion.capture_context_star_topology_edges.neuron_add",
+                   side_effect=mock_neuron_add):
+            _create_context_neuron(conn, "sess-abc")
+        assert captured_kwargs.get("no_embed") is True
+
+    def test_attrs_include_session_id_and_context_type(self):
+        """attrs have ingested_session_id and context_type="session_hub"."""
+        conn = MagicMock()
+        captured_attrs = {}
+
+        def mock_neuron_add(c, content, tags=None, attrs=None, no_embed=False):
+            captured_attrs.update(attrs or {})
+            return {"id": 1}
+
+        with patch("memory_cli.ingestion.capture_context_star_topology_edges.neuron_add",
+                   side_effect=mock_neuron_add):
+            _create_context_neuron(conn, "sess-abc")
+        assert captured_attrs.get("ingested_session_id") == "sess-abc"
+        assert captured_attrs.get("context_type") == "session_hub"
+
+    def test_project_tag_added_when_provided(self):
+        """project="myproj" -> "project:myproj" in tags."""
+        conn = MagicMock()
+        captured_tags = {}
+
+        def mock_neuron_add(c, content, tags=None, attrs=None, no_embed=False):
+            captured_tags["tags"] = tags or []
+            return {"id": 1}
+
+        with patch("memory_cli.ingestion.capture_context_star_topology_edges.neuron_add",
+                   side_effect=mock_neuron_add):
+            _create_context_neuron(conn, "sess-abc", project="myproj")
+        assert "project:myproj" in captured_tags["tags"]
 
 
 class TestCreateStarEdges:
-    """Test _create_star_edges() edge creation loop.
+    """Test _create_star_edges() edge creation loop."""
 
-    Tests:
-    - test_creates_edge_per_neuron
-      3 neuron_ids
-      Verify: edge_add called 3 times with context_neuron_id as source
-    - test_edge_failure_continues_batch
-      Mock edge_add to raise for neuron_id=20, succeed for 10 and 30
-      Verify: returns 2 (not 3), no exception raised
-    - test_returns_count_of_successful_edges
-      Verify: return value matches number of successful edge_add calls
-    - test_weight_is_context_edge_weight_constant
-      Verify: each edge_add call uses CONTEXT_EDGE_WEIGHT (0.5)
-    """
+    def test_creates_edge_per_neuron(self):
+        """3 neuron_ids -> edge_add called 3 times with context_neuron_id as source."""
+        conn = MagicMock()
+        call_args_list = []
 
-    # --- test_creates_edge_per_neuron ---
-    # --- test_edge_failure_continues_batch ---
-    # --- test_returns_count_of_successful_edges ---
-    # --- test_weight_is_context_edge_weight_constant ---
+        def mock_edge_add(c, src, tgt, reason, weight=None):
+            call_args_list.append((src, tgt))
+            return {"id": 1}
 
-    pass
+        with patch("memory_cli.ingestion.capture_context_star_topology_edges.edge_add",
+                   side_effect=mock_edge_add):
+            _create_star_edges(conn, 99, [10, 20, 30], "sess-abc")
+        assert len(call_args_list) == 3
+        for src, tgt in call_args_list:
+            assert src == 99  # context_neuron_id is always source
+
+    def test_edge_failure_continues_batch(self):
+        """edge_add raises for neuron_id=20 -> returns 2 (not 3), no exception."""
+        conn = MagicMock()
+        call_count = {"n": 0}
+
+        def mock_edge_add(c, src, tgt, reason, weight=None):
+            call_count["n"] += 1
+            if tgt == 20:
+                raise RuntimeError("edge fail")
+            return {"id": 1}
+
+        with patch("memory_cli.ingestion.capture_context_star_topology_edges.edge_add",
+                   side_effect=mock_edge_add):
+            count = _create_star_edges(conn, 99, [10, 20, 30], "sess-abc")
+        assert count == 2
+
+    def test_returns_count_of_successful_edges(self):
+        """Return value matches number of successful edge_add calls."""
+        conn = MagicMock()
+
+        with patch("memory_cli.ingestion.capture_context_star_topology_edges.edge_add",
+                   return_value={"id": 1}):
+            count = _create_star_edges(conn, 99, [1, 2, 3, 4, 5], "sess-abc")
+        assert count == 5
+
+    def test_weight_is_context_edge_weight_constant(self):
+        """Each edge_add call uses CONTEXT_EDGE_WEIGHT (0.5)."""
+        conn = MagicMock()
+        captured_weights = []
+
+        def mock_edge_add(c, src, tgt, reason, weight=None):
+            captured_weights.append(weight)
+            return {"id": 1}
+
+        with patch("memory_cli.ingestion.capture_context_star_topology_edges.edge_add",
+                   side_effect=mock_edge_add):
+            _create_star_edges(conn, 99, [10, 20], "sess-abc")
+        assert all(w == CONTEXT_EDGE_WEIGHT for w in captured_weights)

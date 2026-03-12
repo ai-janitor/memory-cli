@@ -46,6 +46,8 @@ def open_connection(db_path: str | Path) -> sqlite3.Connection:
     # --- Step 1: Open the raw connection ---
     # sqlite3.connect with check_same_thread=False for potential multi-thread use
     # Row factory set to sqlite3.Row for dict-like access
+    conn = sqlite3.connect(str(db_path), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
 
     # --- Step 2: Set WAL journal mode ---
     # Execute: PRAGMA journal_mode = WAL
@@ -53,16 +55,34 @@ def open_connection(db_path: str | Path) -> sqlite3.Connection:
     # If result != "wal":
     #   Issue warnings.warn() with a descriptive message (non-fatal)
     #   Do NOT raise — WAL failure is degraded but functional
+    row = conn.execute("PRAGMA journal_mode = WAL").fetchone()
+    actual_mode = row[0] if row else None
+    if actual_mode != "wal":
+        warnings.warn(
+            f"PRAGMA journal_mode = WAL returned '{actual_mode}' instead of 'wal'. "
+            "Concurrent write performance may be degraded (e.g. read-only filesystem or in-memory DB).",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     # --- Step 3: Enable foreign key enforcement ---
     # Execute: PRAGMA foreign_keys = ON
     # Verify by reading: PRAGMA foreign_keys — should return 1
     # If not 1: raise sqlite3.OperationalError (this is fatal — schema depends on FK)
+    conn.execute("PRAGMA foreign_keys = ON")
+    fk_row = conn.execute("PRAGMA foreign_keys").fetchone()
+    if fk_row is None or fk_row[0] != 1:
+        raise sqlite3.OperationalError(
+            "PRAGMA foreign_keys = ON did not take effect. "
+            f"Got: {fk_row[0] if fk_row else None}. "
+            "Schema integrity depends on FK enforcement."
+        )
 
     # --- Step 4: Set busy timeout ---
     # Execute: PRAGMA busy_timeout = 5000
     # This prevents immediate SQLITE_BUSY when another connection holds a lock
     # 5000ms = 5 seconds of retry before giving up
+    conn.execute("PRAGMA busy_timeout = 5000")
 
     # --- Step 5: Return the configured connection ---
-    pass
+    return conn

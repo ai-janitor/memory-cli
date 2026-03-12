@@ -26,21 +26,42 @@
 # =============================================================================
 
 # --- Public API exports (to be populated during implementation) ---
-# from .model_loader_lazy_singleton import get_model
-# from .embed_single_and_batch import embed_single, embed_batch
-# from .vector_storage_vec0_write import write_vector, write_vectors_batch
-# from .stale_and_blank_vector_detection import get_blank_neuron_ids, get_stale_neuron_ids
-# from .batch_reembed_blank_and_stale import batch_reembed
-# from .embedding_input_content_plus_tags import build_embedding_input
+from .model_loader_lazy_singleton import get_model, reset_model
+from .embed_single_and_batch import embed_single, embed_batch
+from .vector_storage_vec0_write import write_vector, write_vectors_batch, delete_vector
+from .stale_and_blank_vector_detection import (
+    get_blank_neuron_ids,
+    get_stale_neuron_ids,
+    get_all_reembed_candidates,
+)
+from .batch_reembed_blank_and_stale import batch_reembed, ReembedProgress
+from .embedding_input_content_plus_tags import build_embedding_input
+from .dimension_enforcement_768 import validate_dimensions, validate_dimensions_batch
+from .task_prefix_search_document_query import (
+    INDEX_PREFIX,
+    QUERY_PREFIX,
+    OperationType,
+    prepend_prefix,
+)
 
 __all__: list[str] = [
-    # "get_model",
-    # "embed_single",
-    # "embed_batch",
-    # "write_vector",
-    # "write_vectors_batch",
-    # "get_blank_neuron_ids",
-    # "get_stale_neuron_ids",
-    # "batch_reembed",
-    # "build_embedding_input",
+    "get_model",
+    "reset_model",
+    "embed_single",
+    "embed_batch",
+    "write_vector",
+    "write_vectors_batch",
+    "delete_vector",
+    "get_blank_neuron_ids",
+    "get_stale_neuron_ids",
+    "get_all_reembed_candidates",
+    "batch_reembed",
+    "ReembedProgress",
+    "build_embedding_input",
+    "validate_dimensions",
+    "validate_dimensions_batch",
+    "INDEX_PREFIX",
+    "QUERY_PREFIX",
+    "OperationType",
+    "prepend_prefix",
 ]

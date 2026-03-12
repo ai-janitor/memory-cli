@@ -91,23 +91,29 @@ def timeline_walk(
     # --- Step 1: Validate reference neuron exists ---
     # ref_row = _validate_reference(conn, neuron_id)
     # If None -> raise LookupError(f"Neuron {neuron_id} not found")
+    ref_row = _validate_reference(conn, neuron_id)
+    if ref_row is None:
+        raise LookupError(f"Neuron {neuron_id} not found")
 
     # --- Step 2: Extract reference created_at ---
     # ref_created_at = ref_row["created_at"]
+    ref_created_at = ref_row["created_at"]
 
     # --- Step 3: Count total pre-pagination ---
     # total = _count_timeline(conn, neuron_id, ref_created_at, direction)
+    total = _count_timeline(conn, neuron_id, ref_created_at, direction)
 
     # --- Step 4: Fetch paginated rows ---
     # rows = _build_timeline_query(conn, neuron_id, ref_created_at, direction, limit, offset)
+    rows = _build_timeline_query(conn, neuron_id, ref_created_at, direction, limit, offset)
 
     # --- Step 5: Hydrate results ---
     # results = _hydrate_timeline_results(conn, rows)
+    results = _hydrate_timeline_results(conn, rows)
 
     # --- Step 6: Build envelope ---
     # return _build_envelope(neuron_id, direction, results, total, limit, offset)
-
-    pass
+    return _build_envelope(neuron_id, direction, results, total, limit, offset)
 
 
 def _validate_reference(conn: sqlite3.Connection, neuron_id: int) -> Optional[sqlite3.Row]:
@@ -124,7 +130,12 @@ def _validate_reference(conn: sqlite3.Connection, neuron_id: int) -> Optional[sq
     Returns:
         Row with id and created_at, or None if not found.
     """
-    pass
+    # SELECT id, created_at FROM neurons WHERE id = ?
+    # Return row or None
+    return conn.execute(
+        "SELECT id, created_at FROM neurons WHERE id = ?",
+        (neuron_id,),
+    ).fetchone()
 
 
 def _build_timeline_query(
@@ -167,7 +178,29 @@ def _build_timeline_query(
     Returns:
         List of rows matching the timeline query.
     """
-    pass
+    # Determine comparison operator and sort order from direction:
+    # forward: WHERE (created_at > ?) OR (created_at = ? AND id > ?)
+    #          ORDER BY created_at ASC, id ASC
+    # backward: WHERE (created_at < ?) OR (created_at = ? AND id < ?)
+    #            ORDER BY created_at DESC, id ASC
+    if direction == "forward":
+        where_clause = "(created_at > ? OR (created_at = ? AND id > ?))"
+        order_clause = "ORDER BY created_at ASC, id ASC"
+    else:
+        where_clause = "(created_at < ? OR (created_at = ? AND id < ?))"
+        order_clause = "ORDER BY created_at DESC, id ASC"
+
+    sql = f"""
+        SELECT id, content, created_at, project, source
+        FROM neurons
+        WHERE {where_clause}
+        {order_clause}
+        LIMIT ? OFFSET ?
+    """
+    return conn.execute(
+        sql,
+        (ref_created_at, ref_created_at, ref_id, limit, offset),
+    ).fetchall()
 
 
 def _count_timeline(
@@ -193,7 +226,17 @@ def _count_timeline(
     Returns:
         Total count of matching neurons.
     """
-    pass
+    # Same WHERE clause as _build_timeline_query but SELECT COUNT(*)
+    # forward: COUNT WHERE (created_at > ?) OR (created_at = ? AND id > ?)
+    # backward: COUNT WHERE (created_at < ?) OR (created_at = ? AND id < ?)
+    if direction == "forward":
+        where_clause = "(created_at > ? OR (created_at = ? AND id > ?))"
+    else:
+        where_clause = "(created_at < ? OR (created_at = ? AND id < ?))"
+
+    sql = f"SELECT COUNT(*) FROM neurons WHERE {where_clause}"
+    row = conn.execute(sql, (ref_created_at, ref_created_at, ref_id)).fetchone()
+    return row[0] if row else 0
 
 
 def _hydrate_timeline_results(conn: sqlite3.Connection, rows: List[sqlite3.Row]) -> List[Dict[str, Any]]:
@@ -221,7 +264,36 @@ def _hydrate_timeline_results(conn: sqlite3.Connection, rows: List[sqlite3.Row])
     Returns:
         List of hydrated neuron dicts.
     """
-    pass
+    # For each row:
+    #   a. Build base dict: {id, content, created_at, project, source}
+    #   b. Hydrate tags from neuron_tags junction + tags table
+    #      SELECT t.name FROM neuron_tags nt
+    #      JOIN tags t ON nt.tag_id = t.id
+    #      WHERE nt.neuron_id = ?
+    #      ORDER BY t.name ASC
+    #   c. Add "tags" key as list of tag name strings
+    results = []
+    for row in rows:
+        neuron = {
+            "id": row["id"],
+            "content": row["content"],
+            "created_at": row["created_at"],
+            "project": row["project"],
+            "source": row["source"],
+        }
+        tag_rows = conn.execute(
+            """
+            SELECT t.name
+            FROM neuron_tags nt
+            JOIN tags t ON nt.tag_id = t.id
+            WHERE nt.neuron_id = ?
+            ORDER BY t.name ASC
+            """,
+            (row["id"],),
+        ).fetchall()
+        neuron["tags"] = [tr["name"] for tr in tag_rows]
+        results.append(neuron)
+    return results
 
 
 def _build_envelope(
@@ -255,4 +327,13 @@ def _build_envelope(
     Returns:
         JSON-serializable envelope dict.
     """
-    pass
+    # Return dict with: command, reference_id, direction, results, total, limit, offset
+    return {
+        "command": "timeline",
+        "reference_id": reference_id,
+        "direction": direction,
+        "results": results,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }

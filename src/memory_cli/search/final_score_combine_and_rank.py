@@ -52,13 +52,19 @@ def compute_final_scores(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any
     #         candidate["final_score"] = _score_direct_match(candidate)
     #     else:
     #         candidate["final_score"] = _score_fan_out(candidate)
+    for candidate in candidates:
+        match_type = candidate.get("match_type", "direct_match")
+        if match_type == "direct_match":
+            candidate["final_score"] = _score_direct_match(candidate)
+        else:
+            candidate["final_score"] = _score_fan_out(candidate)
 
     # --- Sort descending by final_score, tiebreak by neuron_id ascending ---
     # candidates.sort(key=lambda c: (-c["final_score"], c["neuron_id"]))
+    candidates.sort(key=lambda c: (-c["final_score"], c["neuron_id"]))
 
     # return candidates
-
-    pass
+    return candidates
 
 
 def _score_direct_match(candidate: Dict[str, Any]) -> float:
@@ -81,8 +87,9 @@ def _score_direct_match(candidate: Dict[str, Any]) -> float:
     # rrf_score = candidate.get("rrf_score", 0.0)
     # temporal_weight = candidate.get("temporal_weight", 1.0)
     # return rrf_score * temporal_weight
-
-    pass
+    rrf_score = candidate.get("rrf_score", 0.0)
+    temporal_weight = candidate.get("temporal_weight", 1.0)
+    return rrf_score * temporal_weight
 
 
 def _score_fan_out(candidate: Dict[str, Any]) -> float:
@@ -105,5 +112,6 @@ def _score_fan_out(candidate: Dict[str, Any]) -> float:
     # activation_score = candidate.get("activation_score", 0.0)
     # temporal_weight = candidate.get("temporal_weight", 1.0)
     # return activation_score * temporal_weight
-
-    pass
+    activation_score = candidate.get("activation_score", 0.0)
+    temporal_weight = candidate.get("temporal_weight", 1.0)
+    return activation_score * temporal_weight

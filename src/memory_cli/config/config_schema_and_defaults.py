@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
@@ -46,6 +47,29 @@ from typing import Any, Dict, Optional
 # set relative to the store dir during init. The defaults here are None/empty
 # to signal "must be set by init or user".
 
+CONFIG_DEFAULTS: Dict[str, Any] = {
+    "db_path": None,
+    "embedding": {
+        "model_path": None,
+        "n_ctx": 2048,
+        "n_batch": 512,
+        "dimensions": 768,
+    },
+    "search": {
+        "default_limit": 10,
+        "fan_out_depth": 1,
+        "decay_rate": 0.25,
+        "temporal_decay_enabled": True,
+    },
+    "haiku": {
+        "api_key_env_var": "ANTHROPIC_API_KEY",
+        "model": "claude-haiku-4-5-20251001",
+    },
+    "output": {
+        "default_format": "json",
+    },
+}
+
 
 # -----------------------------------------------------------------------------
 # VALIDATION_RULES — Per-field validation constraints.
@@ -62,6 +86,105 @@ from typing import Any, Dict, Optional
 #   - Range checks: min/max for ints, exclusive bounds for decay_rate
 # -----------------------------------------------------------------------------
 # VALIDATION_RULES: Dict[str, Dict[str, Any]] = { ... }
+
+VALIDATION_RULES: Dict[str, Dict[str, Any]] = {
+    "db_path": {
+        "type": str,
+        "required": True,
+        "absolute_path": True,
+    },
+    "embedding.model_path": {
+        "type": str,
+        "required": True,
+        "absolute_path": True,
+    },
+    "embedding.n_ctx": {
+        "type": int,
+        "min": 512,
+    },
+    "embedding.n_batch": {
+        "type": int,
+        "min": 1,
+    },
+    "embedding.dimensions": {
+        "type": int,
+        "min_exclusive": 0,
+    },
+    "search.default_limit": {
+        "type": int,
+        "min": 1,
+    },
+    "search.fan_out_depth": {
+        "type": int,
+        "min": 0,
+        "max": 10,
+    },
+    "search.decay_rate": {
+        "type": float,
+        "min_exclusive": 0.0,
+        "max_exclusive": 1.0,
+    },
+    "search.temporal_decay_enabled": {
+        "type": bool,
+    },
+    "haiku.api_key_env_var": {
+        "type": str,
+        "non_empty": True,
+    },
+    "output.default_format": {
+        "type": str,
+        "enum": ["json", "text"],
+    },
+}
+
+
+@dataclass
+class EmbeddingConfig:
+    """Typed representation of the embedding section of config."""
+
+    # model_path: str
+    # n_ctx: int
+    # n_batch: int
+    # dimensions: int
+
+    model_path: str
+    n_ctx: int
+    n_batch: int
+    dimensions: int
+
+
+@dataclass
+class SearchConfig:
+    """Typed representation of the search section of config."""
+
+    # default_limit: int
+    # fan_out_depth: int
+    # decay_rate: float
+    # temporal_decay_enabled: bool
+
+    default_limit: int
+    fan_out_depth: int
+    decay_rate: float
+    temporal_decay_enabled: bool
+
+
+@dataclass
+class HaikuConfig:
+    """Typed representation of the haiku section of config."""
+
+    # api_key_env_var: str
+
+    api_key_env_var: str
+    model: str
+
+
+@dataclass
+class OutputConfig:
+    """Typed representation of the output section of config."""
+
+    # default_format: str
+
+    default_format: str
 
 
 @dataclass
@@ -97,49 +220,21 @@ class ConfigSchema:
     # --- Output section ---
     # default_format: str — "json" or "text" (default "json")
 
-    pass
+    db_path: str
+    embedding: EmbeddingConfig
+    search: SearchConfig
+    haiku: HaikuConfig
+    output: OutputConfig
 
 
-@dataclass
-class EmbeddingConfig:
-    """Typed representation of the embedding section of config."""
-
-    # model_path: str
-    # n_ctx: int
-    # n_batch: int
-    # dimensions: int
-
-    pass
-
-
-@dataclass
-class SearchConfig:
-    """Typed representation of the search section of config."""
-
-    # default_limit: int
-    # fan_out_depth: int
-    # decay_rate: float
-    # temporal_decay_enabled: bool
-
-    pass
-
-
-@dataclass
-class HaikuConfig:
-    """Typed representation of the haiku section of config."""
-
-    # api_key_env_var: str
-
-    pass
-
-
-@dataclass
-class OutputConfig:
-    """Typed representation of the output section of config."""
-
-    # default_format: str
-
-    pass
+def _get_nested(config: Dict[str, Any], dotted_path: str) -> Any:
+    keys = dotted_path.split(".")
+    current = config
+    for key in keys:
+        if not isinstance(current, dict) or key not in current:
+            return None
+        current = current[key]
+    return current
 
 
 def build_config_with_defaults(user_config: Dict[str, Any]) -> Dict[str, Any]:
@@ -157,7 +252,23 @@ def build_config_with_defaults(user_config: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Complete config dict with all defaults filled in.
     """
-    pass
+    # 1. Deep copy CONFIG_DEFAULTS
+    merged = copy.deepcopy(CONFIG_DEFAULTS)
+
+    # 2. Recursively merge user_config over merged defaults
+    def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+        for key, value in override.items():
+            if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+                _deep_merge(base[key], value)
+            else:
+                base[key] = value
+        return base
+
+    # 3. Unknown keys in user_config are preserved (forward compat)
+    _deep_merge(merged, user_config)
+
+    # 4. Return merged dict
+    return merged
 
 
 def validate_config(config: Dict[str, Any]) -> list[str]:
@@ -196,7 +307,57 @@ def validate_config(config: Dict[str, Any]) -> list[str]:
     Returns:
         List of validation error strings. Empty list means valid.
     """
-    pass
+    errors = []
+
+    # 1. For each rule in VALIDATION_RULES
+    for dotted_path, rule in VALIDATION_RULES.items():
+        value = _get_nested(config, dotted_path)
+
+        # a. Check required / None case
+        if value is None:
+            if rule.get("required"):
+                errors.append(f"{dotted_path}: required but is None or missing")
+            continue
+
+        expected_type = rule.get("type")
+
+        # b. Check type matches expected
+        # Special case: bool is subclass of int in Python — must check bool first
+        if expected_type is not None:
+            if expected_type is float and isinstance(value, int) and not isinstance(value, bool):
+                # Allow int where float is expected (JSON parses 1 as int not float)
+                value = float(value)
+            if not isinstance(value, expected_type):
+                errors.append(
+                    f"{dotted_path}: expected {expected_type.__name__}, got {type(value).__name__}"
+                )
+                continue
+
+        # c. Check range/enum constraints
+        if "min" in rule and value < rule["min"]:
+            errors.append(f"{dotted_path}: must be >= {rule['min']}, got {value}")
+
+        if "max" in rule and value > rule["max"]:
+            errors.append(f"{dotted_path}: must be <= {rule['max']}, got {value}")
+
+        if "min_exclusive" in rule and value <= rule["min_exclusive"]:
+            errors.append(f"{dotted_path}: must be > {rule['min_exclusive']}, got {value}")
+
+        if "max_exclusive" in rule and value >= rule["max_exclusive"]:
+            errors.append(f"{dotted_path}: must be < {rule['max_exclusive']}, got {value}")
+
+        if "enum" in rule and value not in rule["enum"]:
+            errors.append(f"{dotted_path}: must be one of {rule['enum']}, got {value!r}")
+
+        if rule.get("non_empty") and not value:
+            errors.append(f"{dotted_path}: must be non-empty string")
+
+        # d. Check absolute path requirement for path fields
+        if rule.get("absolute_path") and not value.startswith("/"):
+            errors.append(f"{dotted_path}: must be an absolute path (starts with /), got {value!r}")
+
+    # 2. Return list of error strings (empty = valid)
+    return errors
 
 
 def dict_to_config_schema(config: Dict[str, Any]) -> ConfigSchema:
@@ -214,4 +375,39 @@ def dict_to_config_schema(config: Dict[str, Any]) -> ConfigSchema:
     Returns:
         ConfigSchema instance.
     """
-    pass
+    # 1. Extract each nested section into its typed dataclass
+    emb = config["embedding"]
+    embedding = EmbeddingConfig(
+        model_path=emb["model_path"],
+        n_ctx=emb["n_ctx"],
+        n_batch=emb["n_batch"],
+        dimensions=emb["dimensions"],
+    )
+
+    srch = config["search"]
+    search = SearchConfig(
+        default_limit=srch["default_limit"],
+        fan_out_depth=srch["fan_out_depth"],
+        decay_rate=float(srch["decay_rate"]),
+        temporal_decay_enabled=srch["temporal_decay_enabled"],
+    )
+
+    haiku_sec = config["haiku"]
+    haiku = HaikuConfig(
+        api_key_env_var=haiku_sec["api_key_env_var"],
+        model=haiku_sec.get("model", "claude-haiku-4-5-20251001"),
+    )
+
+    out = config["output"]
+    output = OutputConfig(
+        default_format=out["default_format"],
+    )
+
+    # 2. Construct and return ConfigSchema with all sections populated
+    return ConfigSchema(
+        db_path=config["db_path"],
+        embedding=embedding,
+        search=search,
+        haiku=haiku,
+        output=output,
+    )

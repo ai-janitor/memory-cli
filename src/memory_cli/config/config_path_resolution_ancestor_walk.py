@@ -31,6 +31,9 @@ from typing import Optional
 # MEMORY_DIR_NAME = ".memory"
 # CONFIG_FILE_NAME = "config.json"
 
+MEMORY_DIR_NAME = ".memory"
+CONFIG_FILE_NAME = "config.json"
+
 
 def resolve_config_path(
     config_override: Optional[str] = None,
@@ -73,7 +76,37 @@ def resolve_config_path(
     Raises:
         FileNotFoundError: If no config file can be found.
     """
-    pass
+    # 1. --config flag: highest priority
+    if config_override is not None:
+        # EC-13: resolve relative path to absolute before checking
+        config_path = Path(config_override)
+        if not config_path.is_absolute():
+            base = cwd if cwd is not None else Path.cwd()
+            config_path = (base / config_path).resolve()
+        # EC-1: must exist and be a file
+        if not config_path.is_file():
+            raise FileNotFoundError(
+                f"Config file not found: {config_path}"
+            )
+        return config_path
+
+    # Default cwd
+    start_dir = cwd if cwd is not None else Path.cwd()
+
+    # 2. Ancestor walk: find .memory/config.json starting from cwd
+    found = _walk_ancestors(start_dir)
+    if found is not None:
+        return found
+
+    # 3. Global fallback: ~/.memory/config.json
+    global_path = _global_config_path()
+    if global_path.is_file():
+        return global_path
+
+    # 4. EC-2: no config anywhere
+    raise FileNotFoundError(
+        "No memory config found. Run `memory init` to create a new memory store."
+    )
 
 
 def _walk_ancestors(start_dir: Path) -> Optional[Path]:
@@ -94,7 +127,24 @@ def _walk_ancestors(start_dir: Path) -> Optional[Path]:
     Returns:
         Path to .memory/config.json if found, else None.
     """
-    pass
+    current = start_dir
+
+    # 2. Walk upward until we reach the filesystem root
+    while True:
+        # a. Check current / .memory / config.json exists
+        candidate = current / MEMORY_DIR_NAME / CONFIG_FILE_NAME
+        if candidate.is_file():
+            return candidate
+
+        # b. Stop if we've reached the root
+        parent = current.parent
+        if parent == current:
+            # 3. Also check root itself — already checked above in the loop
+            break
+        current = parent
+
+    # 4. Return None if nothing found
+    return None
 
 
 def _global_config_path() -> Path:
@@ -105,4 +155,4 @@ def _global_config_path() -> Path:
     Returns:
         Path to ~/.memory/config.json (may or may not exist).
     """
-    pass
+    return Path.home() / MEMORY_DIR_NAME / CONFIG_FILE_NAME

@@ -40,6 +40,7 @@ def load_sqlite_vec(conn: sqlite3.Connection) -> None:
     # --- Step 1: Enable extension loading ---
     # conn.enable_load_extension(True)
     # This is required before any loadable extension can be used
+    conn.enable_load_extension(True)
 
     # --- Step 2: Import sqlite_vec and call its load() helper ---
     # try:
@@ -49,17 +50,41 @@ def load_sqlite_vec(conn: sqlite3.Connection) -> None:
     #   raise RuntimeError with message about installing sqlite-vec package
     # except sqlite3.OperationalError as e:
     #   raise RuntimeError wrapping the original error with context
+    try:
+        import sqlite_vec
+        sqlite_vec.load(conn)
+    except ImportError as exc:
+        conn.enable_load_extension(False)
+        raise RuntimeError(
+            "sqlite-vec package is not installed. "
+            "Install it with: pip install sqlite-vec"
+        ) from exc
+    except sqlite3.OperationalError as exc:
+        conn.enable_load_extension(False)
+        raise RuntimeError(
+            f"Failed to load sqlite-vec extension: {exc}. "
+            "Ensure the sqlite-vec package is properly installed for your platform."
+        ) from exc
 
     # --- Step 3: Disable extension loading (security hardening) ---
     # conn.enable_load_extension(False)
     # Extensions are loaded once at startup; no reason to leave this open
+    conn.enable_load_extension(False)
 
     # --- Step 4: Verify vec0 is usable ---
     # Execute a trivial operation to confirm vec0 works:
     #   CREATE VIRTUAL TABLE IF NOT EXISTS _vec_test USING vec0(test_col float[2])
     #   DROP TABLE _vec_test
     # If this fails, the extension did not load correctly
-    pass
+    try:
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS _vec_test USING vec0(test_col float[2])"
+        )
+        conn.execute("DROP TABLE _vec_test")
+    except sqlite3.OperationalError as exc:
+        raise RuntimeError(
+            f"sqlite-vec extension loaded but vec0 virtual tables are not functional: {exc}"
+        ) from exc
 
 
 def verify_fts5(conn: sqlite3.Connection) -> None:
@@ -83,7 +108,17 @@ def verify_fts5(conn: sqlite3.Connection) -> None:
 
     # --- Note: FTS5 is NOT an extension — it's a compile-time option ---
     # No extension loading needed for FTS5
-    pass
+    try:
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_test USING fts5(test_col)"
+        )
+        conn.execute("DROP TABLE _fts5_test")
+    except sqlite3.OperationalError as exc:
+        raise RuntimeError(
+            "FTS5 is not available in this SQLite build. "
+            "memory-cli requires FTS5 for full-text search on neuron content. "
+            f"Original error: {exc}"
+        ) from exc
 
 
 def load_and_verify_extensions(conn: sqlite3.Connection) -> None:
@@ -98,7 +133,8 @@ def load_and_verify_extensions(conn: sqlite3.Connection) -> None:
     """
     # --- Step 1: Load sqlite-vec (must happen before schema init) ---
     # load_sqlite_vec(conn)
+    load_sqlite_vec(conn)
 
     # --- Step 2: Verify FTS5 (must be available for neurons_fts table) ---
     # verify_fts5(conn)
-    pass
+    verify_fts5(conn)

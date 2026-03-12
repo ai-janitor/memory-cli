@@ -117,6 +117,7 @@ def link_flag_atomic_create(
     """
     # --- Step 1: Validate all inputs before any writes ---
     # _validate_link_inputs(conn, content, link_target_id, link_reason, link_weight)
+    _validate_link_inputs(conn, content, link_target_id, link_reason, link_weight)
 
     # --- Step 2: Create neuron and edge atomically ---
     # neuron_dict, edge_dict = _create_neuron_and_edge(
@@ -124,11 +125,15 @@ def link_flag_atomic_create(
     #     tags=tags, source=source, attrs=attrs,
     #     link_weight=link_weight if link_weight is not None else DEFAULT_LINK_WEIGHT,
     # )
+    neuron_dict, edge_dict = _create_neuron_and_edge(
+        conn, content, link_target_id, link_reason,
+        tags=tags, source=source, attrs=attrs,
+        link_weight=link_weight if link_weight is not None else DEFAULT_LINK_WEIGHT,
+    )
 
     # --- Step 3: Return both records ---
     # return (neuron_dict, edge_dict)
-
-    pass
+    return (neuron_dict, edge_dict)
 
 
 def _validate_link_inputs(
@@ -165,7 +170,19 @@ def _validate_link_inputs(
     Raises:
         LinkAtomicError: On any validation failure.
     """
-    pass
+    if not content.strip():
+        raise LinkAtomicError("Content cannot be empty", exit_code=2, step="validate")
+    if not link_reason.strip():
+        raise LinkAtomicError("Link reason cannot be empty", exit_code=2, step="validate")
+    row = conn.execute("SELECT id FROM neurons WHERE id = ?", (link_target_id,)).fetchone()
+    if row is None:
+        raise LinkAtomicError(
+            f"Link target {link_target_id} not found", exit_code=1, step="validate"
+        )
+    if link_weight is not None and link_weight <= 0.0:
+        raise LinkAtomicError(
+            f"Link weight must be > 0.0, got {link_weight}", exit_code=2, step="validate"
+        )
 
 
 def _create_neuron_and_edge(
@@ -220,4 +237,90 @@ def _create_neuron_and_edge(
     Raises:
         LinkAtomicError: On any DB failure (transaction rolled back).
     """
-    pass
+    from memory_cli.neuron.project_detection_git_or_cwd import detect_project
+    from memory_cli.registries.tag_registry_crud_normalize_autocreate import tag_autocreate
+    from memory_cli.registries.attr_registry_crud_normalize_autocreate import attr_autocreate
+
+    clean_content = content.strip()
+    clean_reason = link_reason.strip()
+
+    try:
+        # 1. Generate timestamps
+        created_at = int(time.time() * 1000)
+        updated_at = created_at
+
+        # 2. Detect project name
+        project = detect_project()
+
+        # 3. INSERT neuron
+        cursor = conn.execute(
+            "INSERT INTO neurons (content, created_at, updated_at, project, source, status) "
+            "VALUES (?, ?, ?, ?, ?, 'active')",
+            (clean_content, created_at, updated_at, project, source),
+        )
+        neuron_id = cursor.lastrowid
+
+        # 4. Tags: resolve via tag_autocreate, insert neuron_tags junction rows
+        tag_names: List[str] = []
+        for tag_name in (tags or []):
+            tag_id = tag_autocreate(conn, tag_name)
+            conn.execute(
+                "INSERT INTO neuron_tags (neuron_id, tag_id) VALUES (?, ?)",
+                (neuron_id, tag_id),
+            )
+            tag_names.append(tag_name)
+
+        # 5. Attrs: resolve via attr_autocreate, insert neuron_attrs rows
+        attr_dict: Dict[str, str] = {}
+        for key, value in (attrs or {}).items():
+            attr_key_id = attr_autocreate(conn, key)
+            conn.execute(
+                "INSERT INTO neuron_attrs (neuron_id, attr_key_id, value) VALUES (?, ?, ?)",
+                (neuron_id, attr_key_id, value),
+            )
+            attr_dict[key] = value
+
+        # 6. INSERT edge (source=new neuron, target=existing linked neuron)
+        edge_created_at = int(time.time() * 1000)
+        conn.execute(
+            "INSERT INTO edges (source_id, target_id, reason, weight, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (neuron_id, link_target_id, clean_reason, link_weight, edge_created_at),
+        )
+
+        # 7. COMMIT — sqlite3 with isolation_level=None would require explicit commit,
+        #    but with default isolation_level conn auto-manages. Use conn.commit() to be safe.
+        conn.commit()
+
+        # 8. Build return dicts
+        neuron_dict: Dict[str, Any] = {
+            "id": neuron_id,
+            "content": clean_content,
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "project": project,
+            "source": source,
+            "status": "active",
+            "embedding_updated_at": None,
+            "tags": tag_names,
+            "attrs": attr_dict,
+        }
+        edge_dict: Dict[str, Any] = {
+            "source_id": neuron_id,
+            "target_id": link_target_id,
+            "reason": clean_reason,
+            "weight": link_weight,
+            "created_at": edge_created_at,
+        }
+
+        return (neuron_dict, edge_dict)
+
+    except Exception as exc:
+        conn.rollback()
+        if isinstance(exc, LinkAtomicError):
+            raise
+        raise LinkAtomicError(
+            f"Atomic neuron+edge creation failed: {exc}",
+            exit_code=2,
+            step="neuron_write" if "edges" not in str(exc) else "edge_write",
+        ) from exc

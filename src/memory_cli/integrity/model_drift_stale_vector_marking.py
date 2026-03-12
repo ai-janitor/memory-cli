@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import sqlite3
 import sys
-# from datetime import datetime, timezone
+from datetime import datetime, timezone
 
 
 def handle_model_drift(
@@ -55,27 +55,29 @@ def handle_model_drift(
           based on whether the current operation is vector-dependent
     """
     # --- Step 1: Emit warning to stderr ---
-    # Format a multi-line warning:
-    #   "WARNING: Embedding model changed"
-    #   "  Previous: {old_model_name}"
-    #   "  Current:  {new_model_name}"
-    #   "  All existing vectors are now marked stale."
-    #   "  Run `memory batch reembed` to re-embed with the new model."
-    #   "  Vector search is blocked until re-embedding is complete."
-    # Use sys.stderr.write() — not print() — for CLI stderr convention
+    # Format a multi-line warning and write to stderr
+    warning = _format_drift_warning(old_model_name, new_model_name)
+    sys.stderr.write(warning)
 
     # --- Step 2: Mark all vectors as stale ---
     # Set vectors_marked_stale_at = current UTC time in ISO 8601 format
     # Use _upsert_meta(conn, "vectors_marked_stale_at", now_iso)
-    # This is idempotent — if already stale, we update the timestamp
+    # Only set if not already set (preserve original stale timestamp)
+    existing_stale = conn.execute(
+        "SELECT value FROM meta WHERE key = 'vectors_marked_stale_at'"
+    ).fetchone()
+    if existing_stale is None:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        _upsert_meta(conn, "vectors_marked_stale_at", now_iso)
 
     # --- Step 3: Update DB metadata to new config values ---
-    # _upsert_meta(conn, "embedding_model_name", new_model_name)
-    # _upsert_meta(conn, "embedding_dimensions", str(new_dimensions))
+    # Update embedding_model and embedding_dimensions to reflect current config
+    _upsert_meta(conn, "embedding_model", new_model_name)
+    _upsert_meta(conn, "embedding_dimensions", str(new_dimensions))
 
     # --- Step 4: Commit the transaction ---
     # conn.commit() to persist the meta changes
-    pass
+    conn.commit()
 
 
 def is_vector_dependent_operation(noun: str, verb: str) -> bool:
@@ -99,7 +101,10 @@ def is_vector_dependent_operation(noun: str, verb: str) -> bool:
     #
     # Special case: "batch reembed" should NOT be blocked — it's the fix
     # Return True for search/find operations, False for everything else
-    pass
+    if noun == "neuron" and verb in ("search", "find"):
+        return True
+    # All other operations (add, get, list, update, tag, edge, meta, batch reembed) are safe
+    return False
 
 
 def _upsert_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
@@ -112,7 +117,7 @@ def _upsert_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
     """
     # INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)
     # This handles both first-time insert and update cases
-    pass
+    conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
 
 
 def _format_drift_warning(old_model: str, new_model: str) -> str:
@@ -128,4 +133,11 @@ def _format_drift_warning(old_model: str, new_model: str) -> str:
     # Build the warning message with clear instructions
     # Include both model names for debugging
     # Include the remediation command: `memory batch reembed`
-    pass
+    return (
+        f"WARNING: Embedding model changed\n"
+        f"  Previous: {old_model}\n"
+        f"  Current:  {new_model}\n"
+        f"  All existing vectors are now marked stale.\n"
+        f"  Run `memory batch reembed` to re-embed with the new model.\n"
+        f"  Vector search is blocked until re-embedding is complete.\n"
+    )

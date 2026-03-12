@@ -22,7 +22,60 @@
 # --- Public API exports ---
 # These will be the primary entry points consumed by CLI commands and other packages.
 
-# from .tag_registry_crud_normalize_autocreate import tag_add, tag_list, tag_remove
-# from .attr_registry_crud_normalize_autocreate import attr_add, attr_list, attr_remove
-# from .registry_lookup_by_name_or_id import lookup_by_name, lookup_by_id
-# from .tag_filter_and_or_primitives import filter_tags_and, filter_tags_or
+from .tag_registry_crud_normalize_autocreate import (
+    tag_add,
+    tag_list,
+    tag_remove,
+    tag_autocreate,
+    normalize_tag_name,
+    TagRegistryError,
+)
+from .attr_registry_crud_normalize_autocreate import (
+    attr_add,
+    attr_list,
+    attr_remove,
+    attr_autocreate,
+    normalize_attr_name,
+    AttrRegistryError,
+)
+from .registry_lookup_by_name_or_id import (
+    lookup_by_name,
+    lookup_by_id,
+    resolve_name_or_id,
+    RegistryLookupError,
+)
+from .tag_filter_and_or_primitives import (
+    resolve_tag_specifiers,
+    build_and_filter,
+    build_or_filter,
+    apply_tag_filter,
+    TagFilterError,
+)
+
+__all__ = [
+    # Tag registry
+    "tag_add",
+    "tag_list",
+    "tag_remove",
+    "tag_autocreate",
+    "normalize_tag_name",
+    "TagRegistryError",
+    # Attr registry
+    "attr_add",
+    "attr_list",
+    "attr_remove",
+    "attr_autocreate",
+    "normalize_attr_name",
+    "AttrRegistryError",
+    # Shared lookup
+    "lookup_by_name",
+    "lookup_by_id",
+    "resolve_name_or_id",
+    "RegistryLookupError",
+    # Tag filters
+    "resolve_tag_specifiers",
+    "build_and_filter",
+    "build_or_filter",
+    "apply_tag_filter",
+    "TagFilterError",
+]

@@ -24,37 +24,58 @@
 
 from __future__ import annotations
 
-# import pytest
-# from unittest.mock import patch, MagicMock
-# from memory_cli.cli.entrypoint_and_argv_dispatch import main, _dispatch, register_noun
+import sys
+import pytest
+from io import StringIO
+from contextlib import contextmanager
+from unittest.mock import patch, MagicMock
+
+import memory_cli.cli.entrypoint_and_argv_dispatch as _ep_module
+from memory_cli.cli.entrypoint_and_argv_dispatch import main, _dispatch
+from memory_cli.cli.output_envelope_json_and_text import Result
 
 
-# =============================================================================
-# FIXTURES
-# =============================================================================
-# @pytest.fixture
-# def mock_registry():
-#     """Set up a mock noun registry with test handlers.
-#
-#     Pseudo-logic:
-#     1. Create mock verb handlers that return known Result objects
-#     2. Register test nouns: "testnoun" with verbs "testverb", "otherverb"
-#     3. Yield registry
-#     4. Teardown: clear registry
-#     """
-#     pass
+def _make_mock_registry(handler=None, raise_exc=None):
+    if handler is None and raise_exc is None:
+        def handler(args, gflags):
+            return Result(status="ok", data={"args": args})
+    elif raise_exc is not None:
+        def handler(args, gflags):
+            raise raise_exc
+    return {
+        "testnoun": {
+            "description": "Test noun for unit tests",
+            "verb_map": {
+                "testverb": handler,
+                "otherverb": lambda a, g: Result(status="ok", data="other"),
+            },
+            "verb_descriptions": {
+                "testverb": "Test verb",
+                "otherverb": "Other verb",
+            },
+            "flag_defs": {"testverb": [], "otherverb": []},
+        },
+    }
 
 
-# @pytest.fixture
-# def capture_output():
-#     """Capture stdout and stderr for assertion.
-#
-#     Pseudo-logic:
-#     1. Patch sys.stdout and sys.stderr with StringIO
-#     2. Yield (stdout_capture, stderr_capture)
-#     3. Restore originals
-#     """
-#     pass
+@contextmanager
+def _patched_registry(registry):
+    original = dict(_ep_module._registry)
+    _ep_module._registry.clear()
+    _ep_module._registry.update(registry)
+    try:
+        yield
+    finally:
+        _ep_module._registry.clear()
+        _ep_module._registry.update(original)
+
+
+@contextmanager
+def _capture_streams():
+    out = StringIO()
+    err = StringIO()
+    with patch("sys.stdout", out), patch("sys.stderr", err):
+        yield out, err
 
 
 # =============================================================================
@@ -71,7 +92,19 @@ class TestNounResolution:
         2. Call main(["testnoun", "testverb", "arg1"])
         3. Assert mock handler was called with (["arg1"], global_flags)
         """
-        pass
+        called_with = {}
+
+        def handler(args, gflags):
+            called_with["args"] = args
+            called_with["flags"] = gflags
+            return Result(status="ok", data={})
+
+        registry = _make_mock_registry(handler=handler)
+        with _patched_registry(registry), _capture_streams():
+            with pytest.raises(SystemExit) as exc:
+                main(["testnoun", "testverb", "arg1"])
+        assert exc.value.code == 0
+        assert called_with["args"] == ["arg1"]
 
     def test_unknown_noun_exits_2_with_error(self) -> None:
         """Unknown noun -> error message + exit 2.
@@ -81,7 +114,11 @@ class TestNounResolution:
         2. Assert SystemExit with code 2
         3. Assert stderr contains "Unknown noun: nonexistent"
         """
-        pass
+        with _patched_registry({}), _capture_streams() as (out, err):
+            with pytest.raises(SystemExit) as exc:
+                main(["nonexistent", "verb"])
+        assert exc.value.code == 2
+        assert "Unknown noun" in err.getvalue() or "nonexistent" in err.getvalue()
 
     def test_noun_is_case_sensitive(self) -> None:
         """Noun lookup is case-sensitive: "Neuron" != "neuron".
@@ -91,7 +128,10 @@ class TestNounResolution:
         2. Call main(["Neuron", "add"])
         3. Assert exits 2 (unknown noun)
         """
-        pass
+        with _patched_registry(_make_mock_registry()), _capture_streams():
+            with pytest.raises(SystemExit) as exc:
+                main(["Testnoun", "testverb"])
+        assert exc.value.code == 2
 
 
 # =============================================================================
@@ -108,7 +148,29 @@ class TestVerbResolution:
         2. Call main(["testnoun", "testverb"])
         3. Assert testverb handler was called, not otherverb handler
         """
-        pass
+        called = {"testverb": False, "otherverb": False}
+
+        def testverb_handler(args, gflags):
+            called["testverb"] = True
+            return Result(status="ok")
+
+        def otherverb_handler(args, gflags):
+            called["otherverb"] = True
+            return Result(status="ok")
+
+        registry = {
+            "testnoun": {
+                "description": "test",
+                "verb_map": {"testverb": testverb_handler, "otherverb": otherverb_handler},
+                "verb_descriptions": {"testverb": "tv", "otherverb": "ov"},
+                "flag_defs": {"testverb": [], "otherverb": []},
+            }
+        }
+        with _patched_registry(registry), _capture_streams():
+            with pytest.raises(SystemExit):
+                main(["testnoun", "testverb"])
+        assert called["testverb"] is True
+        assert called["otherverb"] is False
 
     def test_unknown_verb_exits_2_with_available_verbs(self) -> None:
         """Unknown verb -> error listing available verbs + exit 2.
@@ -119,7 +181,11 @@ class TestVerbResolution:
         3. Assert SystemExit with code 2
         4. Assert error output lists available verbs for "testnoun"
         """
-        pass
+        with _patched_registry(_make_mock_registry()), _capture_streams() as (out, err):
+            with pytest.raises(SystemExit) as exc:
+                main(["testnoun", "badverb"])
+        assert exc.value.code == 2
+        assert "testverb" in err.getvalue() or "badverb" in err.getvalue()
 
     def test_noun_with_no_verb_shows_noun_help(self) -> None:
         """Noun with no verb -> show noun-level help + exit 0.
@@ -130,7 +196,11 @@ class TestVerbResolution:
         3. Assert exit 0
         4. Assert output is noun help text
         """
-        pass
+        with _patched_registry(_make_mock_registry()), _capture_streams() as (out, err):
+            with pytest.raises(SystemExit) as exc:
+                main(["testnoun"])
+        assert exc.value.code == 0
+        assert "testnoun" in out.getvalue()
 
 
 # =============================================================================
@@ -148,7 +218,16 @@ class TestSpecialCases:
         3. Assert handle_init was called
         4. Assert noun resolution was NOT attempted
         """
-        pass
+        mock_result = Result(status="ok", data={"database": "/tmp/x.db", "config": "/tmp/c.toml", "created": True})
+        with patch(
+            "memory_cli.cli.entrypoint_and_argv_dispatch.handle_init",
+            return_value=mock_result,
+        ) as mock_init:
+            with _capture_streams():
+                with pytest.raises(SystemExit) as exc:
+                    main(["init"])
+        assert mock_init.called
+        assert exc.value.code == 0
 
     def test_no_args_shows_top_level_help(self) -> None:
         """No arguments -> show top-level help + exit 0.
@@ -158,7 +237,11 @@ class TestSpecialCases:
         2. Assert exit 0
         3. Assert output contains usage line and noun list
         """
-        pass
+        with _capture_streams() as (out, err):
+            with pytest.raises(SystemExit) as exc:
+                main([])
+        assert exc.value.code == 0
+        assert "Usage" in out.getvalue() or "memory" in out.getvalue()
 
     def test_help_flag_anywhere_triggers_help(self) -> None:
         """--help anywhere in tokens -> appropriate help level + exit 0.
@@ -169,7 +252,20 @@ class TestSpecialCases:
         3. Call main(["neuron", "add", "--help"]) -> verb-level help
         4. All exit 0
         """
-        pass
+        with _capture_streams():
+            with pytest.raises(SystemExit) as exc:
+                main(["--help"])
+        assert exc.value.code == 0
+
+        with _capture_streams():
+            with pytest.raises(SystemExit) as exc:
+                main(["neuron", "--help"])
+        assert exc.value.code == 0
+
+        with _capture_streams():
+            with pytest.raises(SystemExit) as exc:
+                main(["neuron", "add", "--help"])
+        assert exc.value.code == 0
 
     def test_help_output_is_always_plain_text(self) -> None:
         """Help output ignores --format json, always plain text.
@@ -179,7 +275,12 @@ class TestSpecialCases:
         2. Assert output is NOT JSON
         3. Assert output is plain text help
         """
-        pass
+        with _capture_streams() as (out, err):
+            with pytest.raises(SystemExit) as exc:
+                main(["--format", "json", "--help"])
+        assert exc.value.code == 0
+        output = out.getvalue()
+        assert not output.strip().startswith("{")
 
 
 # =============================================================================
@@ -197,7 +298,13 @@ class TestErrorHandling:
         3. Assert exit 2
         4. Assert output has error envelope with exception message
         """
-        pass
+        registry = _make_mock_registry(raise_exc=RuntimeError("handler blew up"))
+        with _patched_registry(registry), _capture_streams() as (out, err):
+            with pytest.raises(SystemExit) as exc:
+                main(["testnoun", "testverb"])
+        assert exc.value.code == 2
+        combined = out.getvalue() + err.getvalue()
+        assert "handler blew up" in combined or "error" in combined.lower()
 
     def test_format_failure_falls_back_to_stderr_text(self) -> None:
         """If formatting itself fails, fall back to plain text on stderr.
@@ -207,7 +314,16 @@ class TestErrorHandling:
         2. Trigger an error path
         3. Assert stderr has plain text error message
         """
-        pass
+        registry = _make_mock_registry(raise_exc=RuntimeError("trigger error"))
+        with _patched_registry(registry), _capture_streams() as (out, err):
+            with patch(
+                "memory_cli.cli.entrypoint_and_argv_dispatch.format_output",
+                side_effect=Exception("format failed"),
+            ):
+                with pytest.raises(SystemExit) as exc:
+                    main(["testnoun", "testverb"])
+        assert exc.value.code == 2
+        assert err.getvalue() != ""
 
 
 # =============================================================================
@@ -224,9 +340,16 @@ class TestEdgeCases:
         2. Call main(["testnoun", "testverb"])
         3. Assert exit 0 (not 1)
         """
-        pass
+        def handler(args, gflags):
+            return Result(status="ok", data=[])
 
-    def test_e2_init_when_already_initialized(self) -> None:
+        registry = _make_mock_registry(handler=handler)
+        with _patched_registry(registry), _capture_streams():
+            with pytest.raises(SystemExit) as exc:
+                main(["testnoun", "testverb"])
+        assert exc.value.code == 0
+
+    def test_e2_init_when_already_initialized(self, tmp_path) -> None:
         """E-2: `memory init` when DB exists -> error unless --force.
 
         Pseudo-logic:
@@ -236,7 +359,17 @@ class TestEdgeCases:
         4. Call main(["init", "--force"])
         5. Assert exit 0
         """
-        pass
+        db_path = tmp_path / "mem.db"
+        db_path.touch()
+        with _capture_streams():
+            with pytest.raises(SystemExit) as exc:
+                main(["--db", str(db_path), "init"])
+        assert exc.value.code == 2
+
+        with _capture_streams():
+            with pytest.raises(SystemExit) as exc:
+                main(["--db", str(db_path), "init", "--force"])
+        assert exc.value.code == 0
 
     def test_e3_global_flags_before_noun(self) -> None:
         """E-3: Global flags before noun still route correctly.
@@ -245,7 +378,24 @@ class TestEdgeCases:
         1. Call main(["--format", "text", "neuron", "list"])
         2. Assert handler called with global_flags.format == "text"
         """
-        pass
+        captured_flags = {}
+
+        def handler(args, gflags):
+            captured_flags["format"] = gflags.format
+            return Result(status="ok", data=[])
+
+        registry = {
+            "testnoun": {
+                "description": "test",
+                "verb_map": {"testverb": handler},
+                "verb_descriptions": {"testverb": "tv"},
+                "flag_defs": {"testverb": []},
+            }
+        }
+        with _patched_registry(registry), _capture_streams():
+            with pytest.raises(SystemExit):
+                main(["--format", "text", "testnoun", "testverb"])
+        assert captured_flags.get("format") == "text"
 
     def test_e4_global_flags_after_verb(self) -> None:
         """E-4: Global flags after verb still parsed correctly.
@@ -254,4 +404,21 @@ class TestEdgeCases:
         1. Call main(["neuron", "list", "--format", "text"])
         2. Assert handler called with global_flags.format == "text"
         """
-        pass
+        captured_flags = {}
+
+        def handler(args, gflags):
+            captured_flags["format"] = gflags.format
+            return Result(status="ok", data=[])
+
+        registry = {
+            "testnoun": {
+                "description": "test",
+                "verb_map": {"testverb": handler},
+                "verb_descriptions": {"testverb": "tv"},
+                "flag_defs": {"testverb": []},
+            }
+        }
+        with _patched_registry(registry), _capture_streams():
+            with pytest.raises(SystemExit):
+                main(["testnoun", "testverb", "--format", "text"])
+        assert captured_flags.get("format") == "text"

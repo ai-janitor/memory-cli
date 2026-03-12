@@ -29,6 +29,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List, Set
 
 
@@ -107,7 +108,11 @@ def haiku_rerank(
         HaikuNetworkError: On timeout, connection error, 429.
         HaikuMalformedResponse: If response cannot be parsed into ID list.
     """
-    pass
+    system_prompt = _build_rerank_system_prompt()
+    user_message = _build_rerank_user_message(query, candidates)
+    response_text = _call_haiku_api(api_key, model, system_prompt, user_message)
+    haiku_ids = _parse_rerank_response(response_text)
+    return _apply_defensive_reorder(haiku_ids, candidates)
 
 
 def _build_rerank_system_prompt() -> str:
@@ -124,7 +129,13 @@ def _build_rerank_system_prompt() -> str:
     Returns:
         System prompt string.
     """
-    pass
+    return (
+        "You are a relevance ranker. Given a query and a list of candidate items with IDs, "
+        "re-rank them from most to least relevant to the query.\n\n"
+        "Return ONLY a JSON array of integer IDs in order of relevance, most relevant first. "
+        "Include ALL provided IDs. No explanation, no commentary, no wrapping.\n\n"
+        "Example output: [42, 17, 3, 88]"
+    )
 
 
 def _build_rerank_user_message(
@@ -156,7 +167,16 @@ def _build_rerank_user_message(
     Returns:
         Formatted user message string.
     """
-    pass
+    lines = [f"Query: {query}", "", "Candidates:"]
+    for candidate in candidates:
+        cid = candidate.get("id", "")
+        content = candidate.get("content", "")
+        if len(content) > MAX_CONTENT_PREVIEW:
+            content = content[:MAX_CONTENT_PREVIEW] + "..."
+        lines.append(f"ID: {cid}")
+        lines.append(f"Content: {content}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
 
 
 def _call_haiku_api(
@@ -203,7 +223,43 @@ def _call_haiku_api(
         HaikuAuthError: On 401/403.
         HaikuNetworkError: On timeout, connection error, 429, 5xx.
     """
-    pass
+    import httpx
+
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+    body = {
+        "model": model,
+        "max_tokens": 1024,
+        "temperature": 0,
+        "system": system_prompt,
+        "messages": [{"role": "user", "content": user_message}],
+    }
+    try:
+        response = httpx.post(
+            "https://api.anthropic.com/v1/messages",
+            headers=headers,
+            json=body,
+            timeout=30.0,
+        )
+    except httpx.TimeoutException as e:
+        raise HaikuNetworkError(f"Request timed out: {e}") from e
+    except httpx.ConnectError as e:
+        raise HaikuNetworkError(f"Connection error: {e}") from e
+    except httpx.RequestError as e:
+        raise HaikuNetworkError(f"Request error: {e}") from e
+
+    if response.status_code in (401, 403):
+        raise HaikuAuthError(f"Authentication failed: HTTP {response.status_code}")
+    if response.status_code == 429:
+        raise HaikuNetworkError(f"Rate limited: HTTP 429")
+    if response.status_code >= 500:
+        raise HaikuNetworkError(f"Server error: HTTP {response.status_code}")
+
+    data = response.json()
+    return data["content"][0]["text"]
 
 
 def _parse_rerank_response(response_text: str) -> List[int]:
@@ -228,7 +284,31 @@ def _parse_rerank_response(response_text: str) -> List[int]:
     Raises:
         HaikuMalformedResponse: If parsing fails at any step.
     """
-    pass
+    text = response_text.strip()
+    # Strip markdown code fences if present
+    if text.startswith("```"):
+        lines = text.split("\n")
+        # Remove first line (```json or ```) and last line (```)
+        inner = lines[1:-1] if lines[-1].strip() == "```" else lines[1:]
+        text = "\n".join(inner).strip()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise HaikuMalformedResponse(f"Failed to parse JSON: {e}") from e
+    if not isinstance(parsed, list):
+        raise HaikuMalformedResponse(f"Expected a JSON array, got {type(parsed).__name__}")
+    result = []
+    for item in parsed:
+        if isinstance(item, int):
+            result.append(item)
+        elif isinstance(item, str):
+            try:
+                result.append(int(item))
+            except ValueError:
+                raise HaikuMalformedResponse(f"Non-integer element in ID list: {item!r}")
+        else:
+            raise HaikuMalformedResponse(f"Non-integer element in ID list: {item!r}")
+    return result
 
 
 def _apply_defensive_reorder(
@@ -260,4 +340,26 @@ def _apply_defensive_reorder(
     Returns:
         Fully reconciled ordered list of neuron IDs.
     """
-    pass
+    # Build set of valid candidate IDs
+    valid_ids = {c["id"] for c in candidates}
+    candidate_order = [c["id"] for c in candidates]
+
+    result: List[int] = []
+    seen: Set[int] = set()
+
+    # Walk haiku_ids: skip unknown and duplicates
+    for hid in haiku_ids:
+        if hid not in valid_ids:
+            continue
+        if hid in seen:
+            continue
+        result.append(hid)
+        seen.add(hid)
+
+    # Append any candidates missing from Haiku's list in original order
+    for cid in candidate_order:
+        if cid not in seen:
+            result.append(cid)
+            seen.add(cid)
+
+    return result

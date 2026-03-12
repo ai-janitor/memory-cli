@@ -31,6 +31,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+# These are imported here so tests can patch them at the module level
+# using patch("memory_cli.ingestion.ingest_orchestrator.<func>")
+from .jsonl_parser_claude_code_sessions import parse_jsonl_session
+from .session_dedup_guard_by_session_id import check_session_already_ingested
+from .message_assembler_transcript import assemble_transcript_chunks
+from .haiku_extraction_entities_facts_rels import haiku_extract, ExtractionResult
+from .neuron_and_edge_creator_from_extraction import create_neurons_and_edges
+from .capture_context_star_topology_edges import capture_context_star
+
 
 @dataclass
 class IngestResult:
@@ -64,7 +73,10 @@ class IngestError(Exception):
         details: Human-readable failure description.
     """
 
-    pass
+    def __init__(self, step: str, details: str):
+        self.step = step
+        self.details = details
+        super().__init__(f"[{step}] {details}")
 
 
 def ingest_session(
@@ -127,6 +139,27 @@ def ingest_session(
     # messages = parse_jsonl_session(jsonl_path)
     # if not messages: raise IngestError("parse", "No valid messages found")
     # session_id = messages[0].session_id or derive from filename
+    try:
+        parse_result = parse_jsonl_session(jsonl_path)
+    except FileNotFoundError as e:
+        raise IngestError("parse", f"File not found: {jsonl_path}") from e
+    except PermissionError as e:
+        raise IngestError("parse", f"Permission denied: {jsonl_path}") from e
+
+    messages = parse_result.messages
+    if not messages:
+        raise IngestError("parse", f"No valid messages found in {jsonl_path}")
+
+    # Extract session_id from first message or derive from filename
+    session_id = None
+    for msg in messages:
+        if msg.session_id:
+            session_id = msg.session_id
+            break
+    if not session_id:
+        session_id = jsonl_path.stem  # use filename stem as fallback
+
+    result = IngestResult(session_id=session_id)
 
     # --- Step 2: Session dedup guard ---
     # already_ingested = check_session_already_ingested(conn, session_id)
@@ -134,40 +167,19 @@ def ingest_session(
     #     return IngestResult(skipped=True, session_id=session_id)
     # if already_ingested and force:
     #     result.warnings.append(f"Re-ingesting session {session_id} (--force)")
+    dedup = check_session_already_ingested(conn, session_id)
+    if dedup.already_ingested and not force:
+        return IngestResult(skipped=True, session_id=session_id)
+    if dedup.already_ingested and force:
+        result.warnings.append(f"Re-ingesting session {session_id} (--force)")
 
-    # --- Step 3: Assemble transcript chunks ---
-    # chunks = assemble_transcript_chunks(messages)
-
-    # --- Step 4: Haiku extraction on each chunk ---
-    # all_extractions = []
-    # for chunk in chunks:
-    #     extraction = haiku_extract(chunk)
-    #     all_extractions.append(extraction)
-    # merged = merge_extractions(all_extractions)
-
-    # --- Step 5: Create neurons and edges ---
-    # if not dry_run:
-    #     created = create_neurons_and_edges(
-    #         conn, merged, source=str(jsonl_path),
-    #         project=project, tags=tags, session_id=session_id
-    #     )
-    #     result.neurons_created = created.neuron_count
-    #     result.edges_created = created.edge_count
-    #     result.warnings.extend(created.warnings)
-
-    # --- Step 6: Star topology context links ---
-    # if not dry_run and created.neuron_ids:
-    #     ctx_neuron_id, star_edge_count = capture_context_star(
-    #         conn, session_id, created.neuron_ids
-    #     )
-    #     result.context_neuron_id = ctx_neuron_id
-    #     result.edges_created += star_edge_count
-
-    # --- Step 7: Return result ---
-    # result.session_id = session_id
-    # return result
-
-    pass
+    # --- Step 3-7: Delegate to _run_pipeline ---
+    pipeline_result = _run_pipeline(
+        conn, messages, session_id, project, tags, str(jsonl_path), dry_run
+    )
+    pipeline_result.session_id = session_id
+    pipeline_result.warnings = result.warnings + pipeline_result.warnings
+    return pipeline_result
 
 
 def _run_pipeline(
@@ -205,4 +217,57 @@ def _run_pipeline(
     Returns:
         IngestResult with pipeline outcomes.
     """
-    pass
+    result = IngestResult(session_id=session_id)
+
+    # --- Step 1: Assemble transcript chunks ---
+    # chunks = assemble_transcript_chunks(messages)
+    chunks = assemble_transcript_chunks(messages)
+
+    # --- Step 2: Haiku extraction on each chunk ---
+    # all_extractions = []
+    # for chunk in chunks:
+    #     extraction = haiku_extract(chunk)
+    #     all_extractions.append(extraction)
+    all_entities: List[Any] = []
+    all_facts: List[Any] = []
+    all_relationships: List[Any] = []
+    for chunk in chunks:
+        try:
+            extraction = haiku_extract(chunk)
+            all_entities.extend(extraction.entities)
+            all_facts.extend(extraction.facts)
+            all_relationships.extend(extraction.relationships)
+        except Exception as e:
+            raise IngestError("extract", f"Haiku extraction failed: {e}") from e
+
+    # Merge extraction results into single ExtractionResult
+    merged = ExtractionResult(
+        entities=all_entities,
+        facts=all_facts,
+        relationships=all_relationships,
+    )
+
+    # --- Step 3: Create neurons and edges (or simulate for dry_run) ---
+    if dry_run:
+        # Report what would be created without writing
+        result.neurons_created = len(all_entities) + len(all_facts)
+        result.edges_created = len(all_relationships)
+        return result
+
+    created = create_neurons_and_edges(
+        conn, merged, source=source,
+        project=project, tags=tags, session_id=session_id
+    )
+    result.neurons_created = created.neuron_count
+    result.edges_created = created.edge_count
+    result.warnings.extend(created.warnings)
+
+    # --- Step 4: Star topology context links ---
+    if created.neuron_ids:
+        ctx_neuron_id, star_edge_count = capture_context_star(
+            conn, session_id, created.neuron_ids, project=project
+        )
+        result.context_neuron_id = ctx_neuron_id
+        result.edges_created += star_edge_count
+
+    return result

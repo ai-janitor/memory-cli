@@ -85,9 +85,12 @@ def fuse_rrf(
     # --- Handle empty inputs ---
     # if not bm25_candidates and not vector_candidates:
     #     return []
+    if not bm25_candidates and not vector_candidates:
+        return []
 
     # --- Accumulate RRF scores ---
     # fused: Dict[int, Dict[str, Any]] = {}
+    fused: Dict[int, Dict[str, Any]] = {}
 
     # --- Process BM25 candidates ---
     # for candidate in bm25_candidates:
@@ -104,6 +107,20 @@ def fuse_rrf(
     #     fused[nid]["bm25_raw"] = candidate["bm25_raw"]
     #     fused[nid]["bm25_normalized"] = candidate["bm25_normalized"]
     #     fused[nid]["bm25_rank"] = candidate["bm25_rank"]
+    for candidate in bm25_candidates:
+        nid = candidate["neuron_id"]
+        rrf_contrib = _rrf_score_for_rank(candidate["bm25_rank"])
+        if nid not in fused:
+            fused[nid] = {
+                "neuron_id": nid,
+                "rrf_score": 0.0,
+                "bm25_raw": None, "bm25_normalized": None, "bm25_rank": None,
+                "vector_distance": None, "vector_rank": None,
+            }
+        fused[nid]["rrf_score"] += rrf_contrib
+        fused[nid]["bm25_raw"] = candidate["bm25_raw"]
+        fused[nid]["bm25_normalized"] = candidate["bm25_normalized"]
+        fused[nid]["bm25_rank"] = candidate["bm25_rank"]
 
     # --- Process vector candidates ---
     # for candidate in vector_candidates:
@@ -119,6 +136,19 @@ def fuse_rrf(
     #     fused[nid]["rrf_score"] += rrf_contrib
     #     fused[nid]["vector_distance"] = candidate["vector_distance"]
     #     fused[nid]["vector_rank"] = candidate["vector_rank"]
+    for candidate in vector_candidates:
+        nid = candidate["neuron_id"]
+        rrf_contrib = _rrf_score_for_rank(candidate["vector_rank"])
+        if nid not in fused:
+            fused[nid] = {
+                "neuron_id": nid,
+                "rrf_score": 0.0,
+                "bm25_raw": None, "bm25_normalized": None, "bm25_rank": None,
+                "vector_distance": None, "vector_rank": None,
+            }
+        fused[nid]["rrf_score"] += rrf_contrib
+        fused[nid]["vector_distance"] = candidate["vector_distance"]
+        fused[nid]["vector_rank"] = candidate["vector_rank"]
 
     # --- Determine match_source ---
     # for nid, entry in fused.items():
@@ -130,12 +160,21 @@ def fuse_rrf(
     #         entry["match_source"] = "bm25_only"
     #     else:
     #         entry["match_source"] = "vector_only"
+    for nid, entry in fused.items():
+        has_bm25 = entry["bm25_rank"] is not None
+        has_vector = entry["vector_rank"] is not None
+        if has_bm25 and has_vector:
+            entry["match_source"] = "both"
+        elif has_bm25:
+            entry["match_source"] = "bm25_only"
+        else:
+            entry["match_source"] = "vector_only"
 
     # --- Sort by rrf_score descending ---
     # result = sorted(fused.values(), key=lambda x: x["rrf_score"], reverse=True)
     # return result
-
-    pass
+    result = sorted(fused.values(), key=lambda x: x["rrf_score"], reverse=True)
+    return result
 
 
 def _rrf_score_for_rank(rank: int) -> float:
@@ -156,5 +195,4 @@ def _rrf_score_for_rank(rank: int) -> float:
         RRF score contribution (always positive, always < 1/k).
     """
     # return 1.0 / (RRF_K + rank + 1)
-
-    pass
+    return 1.0 / (RRF_K + rank + 1)

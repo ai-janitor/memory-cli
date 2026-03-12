@@ -19,12 +19,12 @@
 # =============================================================================
 
 # --- Public API exports (to be populated during implementation) ---
-# from .connection_setup_wal_fk_busy import open_connection
-# from .schema_version_reader import read_schema_version
-# from .migration_runner_single_transaction import run_pending_migrations
+from .connection_setup_wal_fk_busy import open_connection
+from .schema_version_reader import read_schema_version
+from .migration_runner_single_transaction import run_pending_migrations
 
 __all__: list[str] = [
-    # "open_connection",
-    # "read_schema_version",
-    # "run_pending_migrations",
+    "open_connection",
+    "read_schema_version",
+    "run_pending_migrations",
 ]

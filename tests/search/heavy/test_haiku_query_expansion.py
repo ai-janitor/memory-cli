@@ -28,15 +28,20 @@
 
 from __future__ import annotations
 
+import json
 import pytest
 from typing import List
 from unittest.mock import MagicMock, patch
 
-
-# -----------------------------------------------------------------------------
-# Fixtures
-# -----------------------------------------------------------------------------
-# No complex fixtures needed — expansion is stateless.
+from memory_cli.search.heavy.haiku_query_expansion_terms import (
+    MAX_EXPANSION_TERMS,
+    MIN_EXPANSION_TERMS,
+    _build_expansion_system_prompt,
+    _build_expansion_user_message,
+    _parse_expansion_response,
+    haiku_expand_query,
+)
+from memory_cli.search.heavy.haiku_rerank_by_neuron_ids import HaikuMalformedResponse
 
 
 # -----------------------------------------------------------------------------
@@ -48,23 +53,29 @@ class TestExpansionPromptConstruction:
 
     def test_system_prompt_requests_json_array(self):
         """System prompt should instruct Haiku to return JSON array of strings."""
-        pass
+        prompt = _build_expansion_system_prompt()
+        assert "JSON" in prompt or "json" in prompt.lower()
+        assert "array" in prompt.lower() or "[" in prompt
 
     def test_system_prompt_specifies_term_count(self):
         """System prompt should request 3-8 related terms."""
-        pass
+        prompt = _build_expansion_system_prompt()
+        assert "3" in prompt and "8" in prompt
 
     def test_system_prompt_requests_short_terms(self):
         """System prompt should request short terms (1-4 words)."""
-        pass
+        prompt = _build_expansion_system_prompt()
+        assert "4" in prompt or "short" in prompt.lower()
 
     def test_user_message_contains_query(self):
         """User message should contain the original query text."""
-        pass
+        msg = _build_expansion_user_message("my search query")
+        assert "my search query" in msg
 
     def test_user_message_format(self):
         """User message should follow "Query: <query>" format."""
-        pass
+        msg = _build_expansion_user_message("test query")
+        assert msg == "Query: test query"
 
 
 # -----------------------------------------------------------------------------
@@ -76,15 +87,19 @@ class TestExpansionResponseParsing:
 
     def test_parse_valid_json_array(self):
         """Parse '["term1", "term2", "term3"]' into list of 3 strings."""
-        pass
+        result = _parse_expansion_response('["term1", "term2", "term3"]')
+        assert result == ["term1", "term2", "term3"]
 
     def test_parse_strips_markdown_fences(self):
         """Parse response with ```json fences — strip and parse."""
-        pass
+        response = '```json\n["term1", "term2", "term3"]\n```'
+        result = _parse_expansion_response(response)
+        assert result == ["term1", "term2", "term3"]
 
     def test_parse_strips_term_whitespace(self):
-        """Parse '["  term1  ", " term2 "]' — strip each term."""
-        pass
+        """Parse '["  term1  ", " term2 ", "term3"]' — strip each term."""
+        result = _parse_expansion_response('["  term1  ", " term2 ", "term3"]')
+        assert result == ["term1", "term2", "term3"]
 
     def test_parse_filters_empty_strings(self):
         """Parse '["term1", "", "term2", "  ", "term3"]' — filter empties.
@@ -92,15 +107,20 @@ class TestExpansionResponseParsing:
         After stripping, "" and "  " become empty and are filtered out.
         Result: ["term1", "term2", "term3"].
         """
-        pass
+        result = _parse_expansion_response('["term1", "", "term2", "  ", "term3"]')
+        assert result == ["term1", "term2", "term3"]
 
     def test_parse_five_terms(self):
         """Parse 5 terms — within range, all returned."""
-        pass
+        terms = ["a", "b", "c", "d", "e"]
+        result = _parse_expansion_response(json.dumps(terms))
+        assert result == terms
 
     def test_parse_eight_terms(self):
         """Parse 8 terms — at max, all returned."""
-        pass
+        terms = ["a", "b", "c", "d", "e", "f", "g", "h"]
+        result = _parse_expansion_response(json.dumps(terms))
+        assert result == terms
 
 
 # -----------------------------------------------------------------------------
@@ -112,26 +132,33 @@ class TestExpansionTermCount:
 
     def test_truncate_to_max_terms(self):
         """When Haiku returns more than 8 terms, truncate to first 8."""
-        pass
+        terms = [f"term{i}" for i in range(12)]
+        result = _parse_expansion_response(json.dumps(terms))
+        assert len(result) == MAX_EXPANSION_TERMS
+        assert result == terms[:MAX_EXPANSION_TERMS]
 
     def test_exactly_three_terms_valid(self):
         """3 terms is the minimum — should be accepted."""
-        pass
+        result = _parse_expansion_response('["a", "b", "c"]')
+        assert result == ["a", "b", "c"]
 
     def test_two_terms_raises(self):
         """Fewer than 3 valid terms — raise HaikuMalformedResponse.
 
         Not enough useful terms to justify the expansion cost.
         """
-        pass
+        with pytest.raises(HaikuMalformedResponse):
+            _parse_expansion_response('["a", "b"]')
 
     def test_one_term_raises(self):
         """Single term — raise HaikuMalformedResponse."""
-        pass
+        with pytest.raises(HaikuMalformedResponse):
+            _parse_expansion_response('["single"]')
 
     def test_zero_terms_after_filter_raises(self):
         """All terms are empty after stripping — raise HaikuMalformedResponse."""
-        pass
+        with pytest.raises(HaikuMalformedResponse):
+            _parse_expansion_response('["", "  ", "   "]')
 
 
 # -----------------------------------------------------------------------------
@@ -143,27 +170,33 @@ class TestExpansionMalformedResponse:
 
     def test_empty_response_raises(self):
         """Empty string response — raise HaikuMalformedResponse."""
-        pass
+        with pytest.raises(HaikuMalformedResponse):
+            _parse_expansion_response("")
 
     def test_non_json_raises(self):
         """Non-JSON text — raise HaikuMalformedResponse."""
-        pass
+        with pytest.raises(HaikuMalformedResponse):
+            _parse_expansion_response("not json at all")
 
     def test_json_object_raises(self):
         """JSON object instead of array — raise HaikuMalformedResponse."""
-        pass
+        with pytest.raises(HaikuMalformedResponse):
+            _parse_expansion_response('{"terms": ["a", "b", "c"]}')
 
     def test_json_array_of_numbers_raises(self):
         """Array of numbers instead of strings — raise HaikuMalformedResponse."""
-        pass
+        with pytest.raises(HaikuMalformedResponse):
+            _parse_expansion_response("[1, 2, 3, 4, 5]")
 
     def test_null_response_raises(self):
         """JSON null — raise HaikuMalformedResponse."""
-        pass
+        with pytest.raises(HaikuMalformedResponse):
+            _parse_expansion_response("null")
 
     def test_nested_arrays_raises(self):
         """Nested arrays — raise HaikuMalformedResponse.
 
         '[["term1", "term2"]]' is not a flat list of strings.
         """
-        pass
+        with pytest.raises(HaikuMalformedResponse):
+            _parse_expansion_response('[["term1", "term2"], ["term3"]]')

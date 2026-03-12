@@ -78,7 +78,10 @@ def normalize_attr_name(raw_name: str) -> str:
     # 2. Lowercase the entire string
     # 3. Check length > 0; if empty, raise AttrRegistryError
     # 4. Return normalized string
-    pass
+    normalized = raw_name.strip().lower()
+    if not normalized:
+        raise AttrRegistryError(f"Attr key name cannot be empty (got: {raw_name!r})")
+    return normalized
 
 
 def attr_add(conn: sqlite3.Connection, name: str) -> Dict[str, Any]:
@@ -115,7 +118,25 @@ def attr_add(conn: sqlite3.Connection, name: str) -> Dict[str, Any]:
     Raises:
         AttrRegistryError: If name is empty or DB error occurs.
     """
-    pass
+    # 1. Normalize name — raises AttrRegistryError if empty
+    name = normalize_attr_name(name)
+    # 2. INSERT OR IGNORE to handle UNIQUE constraint atomically
+    now = __import__("time").time()
+    created_at = int(now * 1000)
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO attr_keys (name, created_at) VALUES (?, ?)",
+            (name, created_at),
+        )
+    except Exception as exc:
+        raise AttrRegistryError(f"Failed to insert attr key {name!r}: {exc}") from exc
+    # 3. SELECT the row (exists whether newly inserted or pre-existing)
+    row = conn.execute(
+        "SELECT id, name, created_at FROM attr_keys WHERE name = ?", (name,)
+    ).fetchone()
+    if row is None:
+        raise AttrRegistryError(f"Attr key {name!r} not found after insert — unexpected state")
+    return {"id": row[0], "name": row[1], "created_at": row[2]}
 
 
 def attr_list(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
@@ -138,7 +159,12 @@ def attr_list(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
     Returns:
         List of dicts, each with id, name, created_at. Empty list if no attr keys.
     """
-    pass
+    # 1. SELECT all attr keys ordered by id ASC
+    rows = conn.execute(
+        "SELECT id, name, created_at FROM attr_keys ORDER BY id ASC"
+    ).fetchall()
+    # 2. Convert each row to dict and return
+    return [{"id": row[0], "name": row[1], "created_at": row[2]} for row in rows]
 
 
 def attr_remove(conn: sqlite3.Connection, name_or_id: Union[str, int]) -> bool:
@@ -177,7 +203,40 @@ def attr_remove(conn: sqlite3.Connection, name_or_id: Union[str, int]) -> bool:
     Raises:
         AttrRegistryError: If attr key is in use by neurons (with ref count).
     """
-    pass
+    # 1. Determine lookup mode: int ID or string name
+    attr_row = None
+    try:
+        attr_id = int(name_or_id)
+        # 2a. ID-based lookup
+        row = conn.execute(
+            "SELECT id, name FROM attr_keys WHERE id = ?", (attr_id,)
+        ).fetchone()
+        if row:
+            attr_row = {"id": row[0], "name": row[1]}
+    except (ValueError, TypeError):
+        # 2b. Name-based lookup — normalize first
+        normalized = normalize_attr_name(str(name_or_id))
+        row = conn.execute(
+            "SELECT id, name FROM attr_keys WHERE name = ?", (normalized,)
+        ).fetchone()
+        if row:
+            attr_row = {"id": row[0], "name": row[1]}
+
+    # 3. Not found → return False
+    if attr_row is None:
+        return False
+
+    # 4. Check referential integrity — block if in use
+    ref_count = _count_attr_references(conn, attr_row["id"])
+    if ref_count > 0:
+        raise AttrRegistryError(
+            f"Cannot remove attr key {attr_row['name']!r} (id={attr_row['id']}): "
+            f"referenced by {ref_count} neuron(s). Remove attrs from neurons first."
+        )
+
+    # 5. DELETE and return True
+    conn.execute("DELETE FROM attr_keys WHERE id = ?", (attr_row["id"],))
+    return True
 
 
 def attr_autocreate(conn: sqlite3.Connection, name: str) -> int:
@@ -208,7 +267,18 @@ def attr_autocreate(conn: sqlite3.Connection, name: str) -> int:
     Raises:
         AttrRegistryError: If name is empty after normalization.
     """
-    pass
+    # 1. Normalize — raises AttrRegistryError if empty
+    name = normalize_attr_name(name)
+    # 2. INSERT OR IGNORE — atomic create-if-not-exists
+    now = __import__("time").time()
+    created_at = int(now * 1000)
+    conn.execute(
+        "INSERT OR IGNORE INTO attr_keys (name, created_at) VALUES (?, ?)",
+        (name, created_at),
+    )
+    # 3. SELECT the ID — always present after step 2
+    row = conn.execute("SELECT id FROM attr_keys WHERE name = ?", (name,)).fetchone()
+    return row[0]
 
 
 def _count_attr_references(conn: sqlite3.Connection, attr_id: int) -> int:
@@ -229,4 +299,8 @@ def _count_attr_references(conn: sqlite3.Connection, attr_id: int) -> int:
     Returns:
         Number of neurons referencing this attr key.
     """
-    pass
+    # 1. COUNT(*) FROM neuron_attrs WHERE attr_key_id = ?
+    row = conn.execute(
+        "SELECT COUNT(*) FROM neuron_attrs WHERE attr_key_id = ?", (attr_id,)
+    ).fetchone()
+    return row[0]

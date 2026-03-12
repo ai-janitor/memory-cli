@@ -20,17 +20,17 @@
 
 from __future__ import annotations
 
-# import pytest
-# import sqlite3
-# import warnings
-# from pathlib import Path
-# from memory_cli.db.connection_setup_wal_fk_busy import open_connection
+import pytest
+import sqlite3
+import warnings
+from pathlib import Path
+from memory_cli.db.connection_setup_wal_fk_busy import open_connection
 
 
 class TestWALPragma:
     """Tests for WAL journal mode configuration."""
 
-    def test_wal_enabled_on_file_db(self) -> None:
+    def test_wal_enabled_on_file_db(self, tmp_path: Path) -> None:
         """WAL should be active when using a file-based database.
 
         # --- Arrange ---
@@ -42,7 +42,16 @@ class TestWALPragma:
         # --- Assert ---
         # PRAGMA journal_mode should return 'wal'
         """
-        pass
+        # --- Arrange ---
+        db_path = tmp_path / "test.db"
+
+        # --- Act ---
+        conn = open_connection(db_path)
+
+        # --- Assert ---
+        row = conn.execute("PRAGMA journal_mode").fetchone()
+        assert row[0] == "wal"
+        conn.close()
 
     def test_wal_warning_on_memory_db(self) -> None:
         """WAL may not apply to :memory: DBs — should warn, not crash.
@@ -58,7 +67,20 @@ class TestWALPragma:
         # Check that a warning was issued (WAL returns 'memory' not 'wal')
         # Connection should still be usable
         """
-        pass
+        # --- Act ---
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            conn = open_connection(":memory:")
+
+        # --- Assert ---
+        # At least one RuntimeWarning about WAL should be issued
+        runtime_warnings = [w for w in caught if issubclass(w.category, RuntimeWarning)]
+        assert len(runtime_warnings) >= 1
+        assert any("wal" in str(w.message).lower() or "WAL" in str(w.message) for w in runtime_warnings)
+        # Connection should still be usable
+        assert conn is not None
+        conn.execute("SELECT 1").fetchone()
+        conn.close()
 
 
 class TestForeignKeysPragma:
@@ -76,7 +98,15 @@ class TestForeignKeysPragma:
         # --- Assert ---
         # result[0] should be 1
         """
-        pass
+        # --- Arrange ---
+        conn = open_connection(":memory:")
+
+        # --- Act ---
+        result = conn.execute("PRAGMA foreign_keys").fetchone()
+
+        # --- Assert ---
+        assert result[0] == 1
+        conn.close()
 
     def test_foreign_keys_actually_enforced(self) -> None:
         """FK violations should raise IntegrityError, not silently pass.
@@ -89,7 +119,17 @@ class TestForeignKeysPragma:
         # Insert a child row referencing a non-existent parent
         # Should raise sqlite3.IntegrityError
         """
-        pass
+        # --- Arrange ---
+        conn = open_connection(":memory:")
+        conn.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)")
+        conn.execute(
+            "CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER NOT NULL REFERENCES parent(id))"
+        )
+
+        # --- Act / Assert ---
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute("INSERT INTO child (id, parent_id) VALUES (1, 999)")
+        conn.close()
 
 
 class TestBusyTimeoutPragma:
@@ -107,7 +147,15 @@ class TestBusyTimeoutPragma:
         # --- Assert ---
         # result[0] should be 5000
         """
-        pass
+        # --- Arrange ---
+        conn = open_connection(":memory:")
+
+        # --- Act ---
+        result = conn.execute("PRAGMA busy_timeout").fetchone()
+
+        # --- Assert ---
+        assert result[0] == 5000
+        conn.close()
 
 
 class TestConnectionUsability:
@@ -122,7 +170,12 @@ class TestConnectionUsability:
         # --- Assert ---
         # isinstance(conn, sqlite3.Connection) should be True
         """
-        pass
+        # --- Act ---
+        conn = open_connection(":memory:")
+
+        # --- Assert ---
+        assert isinstance(conn, sqlite3.Connection)
+        conn.close()
 
     def test_row_factory_set(self) -> None:
         """Connection should have Row factory for dict-like access.
@@ -138,4 +191,14 @@ class TestConnectionUsability:
         # --- Assert ---
         # row['a'] should equal 'hello' (dict-like access via Row factory)
         """
-        pass
+        # --- Arrange ---
+        conn = open_connection(":memory:")
+
+        # --- Act ---
+        conn.execute("CREATE TABLE t (a TEXT)")
+        conn.execute("INSERT INTO t VALUES ('hello')")
+        row = conn.execute("SELECT a FROM t").fetchone()
+
+        # --- Assert ---
+        assert row["a"] == "hello"
+        conn.close()

@@ -21,8 +21,8 @@
 
 from __future__ import annotations
 
-# import pytest
-# from memory_cli.cli.global_flags_format_config_db import parse_global_flags, GlobalFlags
+import pytest
+from memory_cli.cli.global_flags_format_config_db import parse_global_flags, GlobalFlags
 
 
 # =============================================================================
@@ -39,7 +39,9 @@ class TestFormatFlag:
         2. Assert flags.format == "json"
         3. Assert remaining == ["neuron", "list"]
         """
-        pass
+        flags, remaining = parse_global_flags(["--format", "json", "neuron", "list"])
+        assert flags.format == "json"
+        assert remaining == ["neuron", "list"]
 
     def test_format_text_explicit(self) -> None:
         """--format text sets format to text.
@@ -48,7 +50,8 @@ class TestFormatFlag:
         1. flags, remaining = parse_global_flags(["--format", "text", "neuron", "list"])
         2. Assert flags.format == "text"
         """
-        pass
+        flags, remaining = parse_global_flags(["--format", "text", "neuron", "list"])
+        assert flags.format == "text"
 
     def test_format_default_is_json(self) -> None:
         """No --format -> default to json.
@@ -57,7 +60,8 @@ class TestFormatFlag:
         1. flags, remaining = parse_global_flags(["neuron", "list"])
         2. Assert flags.format == "json"
         """
-        pass
+        flags, remaining = parse_global_flags(["neuron", "list"])
+        assert flags.format == "json"
 
     def test_format_invalid_value_raises_error(self) -> None:
         """--format xml -> error (only json and text allowed).
@@ -66,7 +70,8 @@ class TestFormatFlag:
         1. pytest.raises(ValueError/SystemExit)
         2. Call parse_global_flags(["--format", "xml", "neuron", "list"])
         """
-        pass
+        with pytest.raises(ValueError):
+            parse_global_flags(["--format", "xml", "neuron", "list"])
 
     def test_format_equals_syntax(self) -> None:
         """--format=json works same as --format json.
@@ -76,7 +81,9 @@ class TestFormatFlag:
         2. Assert flags.format == "json"
         3. Assert remaining == ["neuron", "list"]
         """
-        pass
+        flags, remaining = parse_global_flags(["--format=json", "neuron", "list"])
+        assert flags.format == "json"
+        assert remaining == ["neuron", "list"]
 
 
 # =============================================================================
@@ -92,7 +99,8 @@ class TestConfigFlag:
         1. flags, _ = parse_global_flags(["--config", "/tmp/config.toml", "neuron", "list"])
         2. Assert flags.config == "/tmp/config.toml"
         """
-        pass
+        flags, _ = parse_global_flags(["--config", "/tmp/config.toml", "neuron", "list"])
+        assert flags.config == "/tmp/config.toml"
 
     def test_config_default_is_none(self) -> None:
         """No --config -> None.
@@ -101,7 +109,8 @@ class TestConfigFlag:
         1. flags, _ = parse_global_flags(["neuron", "list"])
         2. Assert flags.config is None
         """
-        pass
+        flags, _ = parse_global_flags(["neuron", "list"])
+        assert flags.config is None
 
 
 # =============================================================================
@@ -117,7 +126,8 @@ class TestDbFlag:
         1. flags, _ = parse_global_flags(["--db", "/tmp/memory.db", "neuron", "list"])
         2. Assert flags.db == "/tmp/memory.db"
         """
-        pass
+        flags, _ = parse_global_flags(["--db", "/tmp/memory.db", "neuron", "list"])
+        assert flags.db == "/tmp/memory.db"
 
     def test_db_default_is_none(self) -> None:
         """No --db -> None.
@@ -126,7 +136,8 @@ class TestDbFlag:
         1. flags, _ = parse_global_flags(["neuron", "list"])
         2. Assert flags.db is None
         """
-        pass
+        flags, _ = parse_global_flags(["neuron", "list"])
+        assert flags.db is None
 
 
 # =============================================================================
@@ -142,7 +153,8 @@ class TestFlagStripping:
         1. _, remaining = parse_global_flags(["--format", "text", "--db", "/tmp/x", "neuron", "list"])
         2. Assert remaining == ["neuron", "list"]
         """
-        pass
+        _, remaining = parse_global_flags(["--format", "text", "--db", "/tmp/x", "neuron", "list"])
+        assert remaining == ["neuron", "list"]
 
     def test_flags_at_end_stripped(self) -> None:
         """Flags after verb are stripped from remaining tokens.
@@ -151,7 +163,8 @@ class TestFlagStripping:
         1. _, remaining = parse_global_flags(["neuron", "list", "--format", "text"])
         2. Assert remaining == ["neuron", "list"]
         """
-        pass
+        _, remaining = parse_global_flags(["neuron", "list", "--format", "text"])
+        assert remaining == ["neuron", "list"]
 
     def test_flags_interleaved_stripped(self) -> None:
         """Flags mixed between noun/verb/args are all stripped.
@@ -160,7 +173,10 @@ class TestFlagStripping:
         1. _, remaining = parse_global_flags(["--format", "json", "neuron", "--db", "/x", "list", "--config", "/y"])
         2. Assert remaining == ["neuron", "list"]
         """
-        pass
+        _, remaining = parse_global_flags(
+            ["--format", "json", "neuron", "--db", "/x", "list", "--config", "/y"]
+        )
+        assert remaining == ["neuron", "list"]
 
 
 # =============================================================================
@@ -176,7 +192,8 @@ class TestFlagEdgeCases:
         1. pytest.raises(ValueError/SystemExit)
         2. Call parse_global_flags(["neuron", "list", "--format"])
         """
-        pass
+        with pytest.raises(ValueError):
+            parse_global_flags(["neuron", "list", "--format"])
 
     def test_format_value_looks_like_flag(self) -> None:
         """--format --db (value looks like another flag) -> error.
@@ -185,7 +202,8 @@ class TestFlagEdgeCases:
         1. pytest.raises(ValueError/SystemExit)
         2. Call parse_global_flags(["--format", "--db", "neuron", "list"])
         """
-        pass
+        with pytest.raises(ValueError):
+            parse_global_flags(["--format", "--db", "neuron", "list"])
 
     def test_multiple_same_flags(self) -> None:
         """--format json --format text -> last wins or error (spec TBD).
@@ -194,4 +212,10 @@ class TestFlagEdgeCases:
         1. flags, _ = parse_global_flags(["--format", "json", "--format", "text", "neuron", "list"])
         2. Assert flags.format is either "text" (last wins) or raises error
         """
-        pass
+        try:
+            flags, _ = parse_global_flags(
+                ["--format", "json", "--format", "text", "neuron", "list"]
+            )
+            assert flags.format in ("json", "text")
+        except ValueError:
+            pass

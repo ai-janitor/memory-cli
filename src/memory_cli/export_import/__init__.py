@@ -26,7 +26,7 @@
 # --- Public API exports ---
 # These will be the primary entry points consumed by CLI commands.
 
-# from .export_neurons_tags_edges_to_json import export_neurons
-# from .import_validate_structure_refs_dims import validate_import_file
-# from .import_write_transactional import import_neurons
-# from .conflict_handler_skip_overwrite_error import ConflictHandler
+from .export_neurons_tags_edges_to_json import export_neurons
+from .import_validate_structure_refs_dims import validate_import_file
+from .import_write_transactional import import_neurons
+from .conflict_handler_skip_overwrite_error import ConflictHandler

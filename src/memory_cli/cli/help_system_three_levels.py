@@ -42,7 +42,7 @@ def has_help_flag(tokens: List[str]) -> bool:
     2. Return True if found, False otherwise
     Note: --help is checked BEFORE noun/verb resolution, so it takes priority
     """
-    pass
+    return "--help" in tokens or "-h" in tokens
 
 
 # =============================================================================
@@ -72,7 +72,36 @@ def show_top_level_help(registry: Dict[str, Any]) -> str:
        - --help                Show help
     6. Return assembled string
     """
-    pass
+    lines = [
+        "memory — graph-based memory CLI for AI agents",
+        "",
+        "Usage: memory <noun> <verb> [args] [flags]",
+        "",
+    ]
+    special_section = _format_section(
+        "Special commands:",
+        [("memory init", "Initialize a new memory database")],
+    )
+    lines.append(special_section)
+    lines.append("")
+    noun_items = [
+        (noun, entry.get("description", ""))
+        for noun, entry in sorted(registry.items())
+    ]
+    nouns_section = _format_section("Nouns:", noun_items)
+    lines.append(nouns_section)
+    lines.append("")
+    flags_section = _format_section(
+        "Global flags:",
+        [
+            ("--format <json|text>", "Output format (default: json)"),
+            ("--config <path>", "Config file path"),
+            ("--db <path>", "Database file path"),
+            ("--help", "Show help"),
+        ],
+    )
+    lines.append(flags_section)
+    return "\n".join(lines)
 
 
 # =============================================================================
@@ -97,7 +126,24 @@ def show_noun_help(noun_name: str, noun_entry: Dict[str, Any]) -> str:
     4. Build "Run `memory {noun_name} <verb> --help` for verb-specific help"
     5. Return assembled string
     """
-    pass
+    description = noun_entry.get("description", "")
+    verb_descriptions = noun_entry.get("verb_descriptions", {})
+    verb_map = noun_entry.get("verb_map", {})
+    lines = [
+        f"memory {noun_name} — {description}",
+        "",
+        f"Usage: memory {noun_name} <verb> [args] [flags]",
+        "",
+    ]
+    verb_items = [
+        (verb, verb_descriptions.get(verb, ""))
+        for verb in sorted(verb_map.keys())
+    ]
+    verbs_section = _format_section("Verbs:", verb_items)
+    lines.append(verbs_section)
+    lines.append("")
+    lines.append(f"Run `memory {noun_name} <verb> --help` for verb-specific help.")
+    return "\n".join(lines)
 
 
 # =============================================================================
@@ -125,7 +171,32 @@ def show_verb_help(noun_name: str, verb_name: str, noun_entry: Dict[str, Any]) -
     7. Build examples section if verb has examples in metadata
     8. Return assembled string
     """
-    pass
+    verb_descriptions = noun_entry.get("verb_descriptions", {})
+    flag_defs = noun_entry.get("flag_defs", {})
+    description = verb_descriptions.get(verb_name, "")
+    verb_flags = flag_defs.get(verb_name, [])
+    lines = [
+        f"memory {noun_name} {verb_name}",
+        "",
+    ]
+    if description:
+        lines.append(description)
+        lines.append("")
+    lines.append(f"Usage: memory {noun_name} {verb_name} [args] [flags]")
+    if verb_flags:
+        lines.append("")
+        flag_items = []
+        for fd in verb_flags:
+            flag_type = fd.get("type", "str")
+            flag_name = fd.get("name", "")
+            flag_desc = fd.get("desc", "")
+            default = fd.get("default")
+            if default is not None:
+                flag_desc = f"{flag_desc} (default: {default})"
+            flag_items.append((f"{flag_name} <{flag_type}>", flag_desc))
+        flags_section = _format_section("Flags:", flag_items)
+        lines.append(flags_section)
+    return "\n".join(lines)
 
 
 # =============================================================================
@@ -148,4 +219,10 @@ def _format_section(title: str, items: List[tuple]) -> str:
     4. Prepend title line
     5. Return joined string
     """
-    pass
+    if not items:
+        return title
+    col_width = max(len(name) for name, _ in items)
+    lines = [title]
+    for name, desc in items:
+        lines.append(f"  {name:<{col_width}}  {desc}")
+    return "\n".join(lines)

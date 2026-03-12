@@ -27,15 +27,15 @@ import sqlite3
 
 import pytest
 
-# from memory_cli.registries.registry_lookup_by_name_or_id import (
-#     RegistryLookupError,
-#     lookup_by_id,
-#     lookup_by_name,
-#     resolve_name_or_id,
-# )
-# from memory_cli.registries.tag_registry_crud_normalize_autocreate import (
-#     normalize_tag_name,
-# )
+from memory_cli.registries.registry_lookup_by_name_or_id import (
+    RegistryLookupError,
+    lookup_by_id,
+    lookup_by_name,
+    resolve_name_or_id,
+)
+from memory_cli.registries.tag_registry_crud_normalize_autocreate import (
+    normalize_tag_name,
+)
 
 
 # -----------------------------------------------------------------------------
@@ -60,7 +60,19 @@ def conn():
     # 3. INSERT seed rows: "project", "urgent", "meeting notes"
     # 4. Yield connection
     # 5. Close in teardown
-    pass
+    c = sqlite3.connect(":memory:")
+    c.execute("""
+        CREATE TABLE tags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            created_at INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    c.execute("INSERT INTO tags (name, created_at) VALUES ('project', 1000)")
+    c.execute("INSERT INTO tags (name, created_at) VALUES ('urgent', 1000)")
+    c.execute("INSERT INTO tags (name, created_at) VALUES ('meeting notes', 1000)")
+    yield c
+    c.close()
 
 
 # =============================================================================
@@ -74,13 +86,16 @@ class TestLookupByName:
         # 1. lookup_by_name(conn, "tags", "project", normalize_tag_name)
         # 2. Assert result["name"] == "project"
         # 3. Assert result["id"] == 1
-        pass
+        result = lookup_by_name(conn, "tags", "project", normalize_tag_name)
+        assert result["name"] == "project"
+        assert result["id"] == 1
 
     def test_lookup_name_with_normalization(self, conn):
         """Looking up "  URGENT  " finds "urgent" via normalization."""
         # 1. lookup_by_name(conn, "tags", "  URGENT  ", normalize_tag_name)
         # 2. Assert result["name"] == "urgent"
-        pass
+        result = lookup_by_name(conn, "tags", "  URGENT  ", normalize_tag_name)
+        assert result["name"] == "urgent"
 
     def test_lookup_missing_name_with_autocreate(self, conn):
         """Looking up a non-existent name with autocreate=True creates it."""
@@ -88,19 +103,25 @@ class TestLookupByName:
         # 2. Assert result["name"] == "newtag"
         # 3. Assert result["id"] is an int > 0
         # 4. Verify it now exists in the table
-        pass
+        result = lookup_by_name(conn, "tags", "newtag", normalize_tag_name, autocreate=True)
+        assert result["name"] == "newtag"
+        assert isinstance(result["id"], int) and result["id"] > 0
+        row = conn.execute("SELECT id FROM tags WHERE name = 'newtag'").fetchone()
+        assert row is not None
 
     def test_lookup_missing_name_without_autocreate_raises(self, conn):
         """Looking up a non-existent name with autocreate=False raises error."""
         # 1. lookup_by_name(conn, "tags", "ghost", normalize_tag_name, autocreate=False)
         # 2. Expect RegistryLookupError
-        pass
+        with pytest.raises(RegistryLookupError):
+            lookup_by_name(conn, "tags", "ghost", normalize_tag_name, autocreate=False)
 
     def test_lookup_autocreate_is_idempotent(self, conn):
         """Auto-creating an existing name returns the existing entry."""
         # 1. lookup_by_name(conn, "tags", "project", normalize_tag_name, autocreate=True)
         # 2. Assert result["id"] == 1 (pre-existing, not a new entry)
-        pass
+        result = lookup_by_name(conn, "tags", "project", normalize_tag_name, autocreate=True)
+        assert result["id"] == 1
 
 
 # =============================================================================
@@ -113,18 +134,23 @@ class TestLookupById:
         """Looking up an existing ID returns the correct row."""
         # 1. lookup_by_id(conn, "tags", 1)
         # 2. Assert result["name"] == "project"
-        pass
+        result = lookup_by_id(conn, "tags", 1)
+        assert result["name"] == "project"
 
     def test_lookup_missing_id_raises(self, conn):
         """Looking up a non-existent ID raises RegistryLookupError."""
         # 1. lookup_by_id(conn, "tags", 9999) -> expect RegistryLookupError
-        pass
+        with pytest.raises(RegistryLookupError):
+            lookup_by_id(conn, "tags", 9999)
 
     def test_lookup_id_never_autocreates(self, conn):
         """ID lookup for non-existent ID raises, never creates an entry."""
         # 1. lookup_by_id(conn, "tags", 100) -> expect RegistryLookupError
         # 2. Verify no new row was created (SELECT COUNT(*) = 3)
-        pass
+        with pytest.raises(RegistryLookupError):
+            lookup_by_id(conn, "tags", 100)
+        count = conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0]
+        assert count == 3
 
 
 # =============================================================================
@@ -137,35 +163,43 @@ class TestResolveNameOrId:
         """Passing "1" resolves via ID lookup (finds "project")."""
         # 1. resolve_name_or_id(conn, "tags", "1", normalize_tag_name)
         # 2. Assert result["name"] == "project"
-        pass
+        result = resolve_name_or_id(conn, "tags", "1", normalize_tag_name)
+        assert result["name"] == "project"
 
     def test_resolve_name_string(self, conn):
         """Passing "urgent" resolves via name lookup."""
         # 1. resolve_name_or_id(conn, "tags", "urgent", normalize_tag_name)
         # 2. Assert result["name"] == "urgent"
-        pass
+        result = resolve_name_or_id(conn, "tags", "urgent", normalize_tag_name)
+        assert result["name"] == "urgent"
 
     def test_resolve_mixed_string_as_name(self, conn):
         """Passing "42abc" is NOT an int, resolved as name."""
         # 1. resolve_name_or_id(conn, "tags", "42abc", normalize_tag_name, autocreate=False)
         # 2. Expect RegistryLookupError (no tag named "42abc")
-        pass
+        with pytest.raises(RegistryLookupError):
+            resolve_name_or_id(conn, "tags", "42abc", normalize_tag_name, autocreate=False)
 
     def test_resolve_negative_id_string(self, conn):
         """Passing "-1" is parsed as int, looked up by ID (not found)."""
         # 1. resolve_name_or_id(conn, "tags", "-1", normalize_tag_name)
         # 2. Expect RegistryLookupError
-        pass
+        with pytest.raises(RegistryLookupError):
+            resolve_name_or_id(conn, "tags", "-1", normalize_tag_name)
 
     def test_resolve_name_with_autocreate(self, conn):
         """Passing a new name with autocreate=True creates the entry."""
         # 1. resolve_name_or_id(conn, "tags", "brandnew", normalize_tag_name, autocreate=True)
         # 2. Assert result["name"] == "brandnew"
         # 3. Verify entry exists in table
-        pass
+        result = resolve_name_or_id(conn, "tags", "brandnew", normalize_tag_name, autocreate=True)
+        assert result["name"] == "brandnew"
+        row = conn.execute("SELECT id FROM tags WHERE name = 'brandnew'").fetchone()
+        assert row is not None
 
     def test_resolve_id_ignores_autocreate(self, conn):
         """ID lookup never auto-creates, even if autocreate=True."""
         # 1. resolve_name_or_id(conn, "tags", "9999", normalize_tag_name, autocreate=True)
         # 2. Expect RegistryLookupError (ID 9999 doesn't exist, not auto-created)
-        pass
+        with pytest.raises(RegistryLookupError):
+            resolve_name_or_id(conn, "tags", "9999", normalize_tag_name, autocreate=True)

@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import List
 
 # Avoid circular import — use TYPE_CHECKING for type hints only
@@ -81,31 +82,38 @@ def assemble_transcript_chunks(messages: List["ParsedMessage"]) -> List[str]:
     """
     # --- Sort messages by timestamp ---
     # sorted_msgs = _sort_messages_by_timestamp(messages)
+    if not messages:
+        return []
+    sorted_msgs = _sort_messages_by_timestamp(messages)
 
     # --- Format and accumulate into chunks ---
     # chunks = []
     # current_turns = []
     # current_tokens = 0
-    #
-    # for msg in sorted_msgs:
-    #     turn = _format_turn(msg)
-    #     turn_tokens = _estimate_tokens(turn)
-    #
-    #     if current_tokens + turn_tokens > TRANSCRIPT_CHUNK_BUDGET and current_turns:
-    #         chunks.append("\n\n".join(current_turns))
-    #         current_turns = []
-    #         current_tokens = 0
-    #
-    #     current_turns.append(turn)
-    #     current_tokens += turn_tokens
+    chunks: List[str] = []
+    current_turns: List[str] = []
+    current_tokens = 0
+
+    for msg in sorted_msgs:
+        turn = _format_turn(msg)
+        turn_tokens = _estimate_tokens(turn)
+
+        if current_tokens + turn_tokens > TRANSCRIPT_CHUNK_BUDGET and current_turns:
+            chunks.append("\n\n".join(current_turns))
+            current_turns = []
+            current_tokens = 0
+
+        current_turns.append(turn)
+        current_tokens += turn_tokens
 
     # --- Finalize last chunk ---
     # if current_turns:
     #     chunks.append("\n\n".join(current_turns))
+    if current_turns:
+        chunks.append("\n\n".join(current_turns))
 
     # return chunks
-
-    pass
+    return chunks
 
 
 def _format_turn(message: "ParsedMessage") -> str:
@@ -126,8 +134,8 @@ def _format_turn(message: "ParsedMessage") -> str:
     # --- Map role to prefix ---
     # prefix = "Human" if message.role == "user" else "Assistant"
     # return f"{prefix}: {message.content}"
-
-    pass
+    prefix = "Human" if message.role == "user" else "Assistant"
+    return f"{prefix}: {message.content}"
 
 
 def _estimate_tokens(text: str) -> int:
@@ -145,8 +153,7 @@ def _estimate_tokens(text: str) -> int:
     """
     # --- Simple character-based estimation ---
     # return max(1, -(-len(text) // CHARS_PER_TOKEN_ESTIMATE))  # ceiling division
-
-    pass
+    return max(1, math.ceil(len(text) / CHARS_PER_TOKEN_ESTIMATE))
 
 
 def _sort_messages_by_timestamp(messages: List["ParsedMessage"]) -> List["ParsedMessage"]:
@@ -174,5 +181,8 @@ def _sort_messages_by_timestamp(messages: List["ParsedMessage"]) -> List["Parsed
     #     messages,
     #     key=lambda m: (m.timestamp or sentinel, m.line_number)
     # )
-
-    pass
+    sentinel = "9999-99-99T99:99:99"  # sorts after any real ISO timestamp
+    return sorted(
+        messages,
+        key=lambda m: (m.timestamp or sentinel, m.line_number)
+    )

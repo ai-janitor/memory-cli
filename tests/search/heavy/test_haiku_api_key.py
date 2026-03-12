@@ -29,19 +29,30 @@ import os
 import pytest
 from unittest.mock import MagicMock, patch
 
+from memory_cli.search.heavy.haiku_api_key_resolution import (
+    HaikuApiKeyError,
+    resolve_haiku_api_key,
+)
+
 
 # -----------------------------------------------------------------------------
 # Fixtures
 # -----------------------------------------------------------------------------
-# @pytest.fixture
-# def mock_config():
-#     """ConfigSchema-like object with haiku.api_key_env_var = "ANTHROPIC_API_KEY"."""
-#     pass
 
-# @pytest.fixture
-# def env_with_key(monkeypatch):
-#     """Set ANTHROPIC_API_KEY in environment for testing."""
-#     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-key-12345")
+@pytest.fixture
+def mock_config():
+    """ConfigSchema-like object with haiku.api_key_env_var = "ANTHROPIC_API_KEY"."""
+    config = MagicMock()
+    config.haiku.api_key_env_var = "ANTHROPIC_API_KEY"
+    return config
+
+
+@pytest.fixture
+def custom_config():
+    """ConfigSchema-like object with haiku.api_key_env_var = "CUSTOM_KEY_VAR"."""
+    config = MagicMock()
+    config.haiku.api_key_env_var = "CUSTOM_KEY_VAR"
+    return config
 
 
 # -----------------------------------------------------------------------------
@@ -51,28 +62,37 @@ from unittest.mock import MagicMock, patch
 class TestApiKeyResolutionHappyPath:
     """Test successful API key resolution."""
 
-    def test_resolves_key_from_env(self):
+    def test_resolves_key_from_env(self, mock_config):
         """When env var is set to a valid key, return it.
 
         Set ANTHROPIC_API_KEY="sk-ant-test-key", expect that value returned.
         """
-        pass
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-ant-test-key"}):
+            key = resolve_haiku_api_key(mock_config)
+        assert key == "sk-ant-test-key"
 
-    def test_strips_whitespace_from_key(self):
+    def test_strips_whitespace_from_key(self, mock_config):
         """When env var has leading/trailing whitespace, strip it.
 
         Set ANTHROPIC_API_KEY="  sk-ant-test-key  ", expect "sk-ant-test-key".
         """
-        pass
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "  sk-ant-test-key  "}):
+            key = resolve_haiku_api_key(mock_config)
+        assert key == "sk-ant-test-key"
 
-    def test_uses_config_env_var_name(self):
+    def test_uses_config_env_var_name(self, custom_config):
         """Verify the env var name comes from config, not hardcoded.
 
         Set config.haiku.api_key_env_var = "CUSTOM_KEY_VAR"
         Set CUSTOM_KEY_VAR="my-key" in env
         Expect "my-key" returned.
         """
-        pass
+        with patch.dict(os.environ, {"CUSTOM_KEY_VAR": "my-key"}, clear=False):
+            # Remove ANTHROPIC_API_KEY if present to ensure we're using CUSTOM_KEY_VAR
+            env = {**os.environ, "CUSTOM_KEY_VAR": "my-key"}
+            with patch.dict(os.environ, env):
+                key = resolve_haiku_api_key(custom_config)
+        assert key == "my-key"
 
 
 # -----------------------------------------------------------------------------
@@ -82,26 +102,36 @@ class TestApiKeyResolutionHappyPath:
 class TestApiKeyMissing:
     """Test behavior when the env var is not set."""
 
-    def test_missing_env_var_raises(self):
+    def test_missing_env_var_raises(self, mock_config, monkeypatch):
         """When env var is not set at all, raise HaikuApiKeyError.
 
         Unset ANTHROPIC_API_KEY from env, expect HaikuApiKeyError.
         """
-        pass
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        with pytest.raises(HaikuApiKeyError):
+            resolve_haiku_api_key(mock_config)
 
-    def test_error_includes_env_var_name(self):
+    def test_error_includes_env_var_name(self, mock_config, monkeypatch):
         """Error message should include the env var name (safe to log).
 
         The user needs to know WHICH env var to set.
         """
-        pass
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        with pytest.raises(HaikuApiKeyError) as exc_info:
+            resolve_haiku_api_key(mock_config)
+        assert "ANTHROPIC_API_KEY" in str(exc_info.value)
 
-    def test_error_does_not_include_key_value(self):
+    def test_error_does_not_include_key_value(self, mock_config):
         """Error message must never contain the actual key value.
 
         Even on a different error path, verify no key leakage.
         """
-        pass
+        # This test verifies that on missing key, the error doesn't leak anything sensitive
+        with patch.dict(os.environ, {}, clear=True):
+            with pytest.raises(HaikuApiKeyError) as exc_info:
+                resolve_haiku_api_key(mock_config)
+            # No actual key value in error (it doesn't exist anyway, but defensive check)
+            assert "sk-ant" not in str(exc_info.value)
 
 
 # -----------------------------------------------------------------------------
@@ -111,19 +141,23 @@ class TestApiKeyMissing:
 class TestApiKeyEmpty:
     """Test behavior when env var is set but empty or whitespace."""
 
-    def test_empty_string_raises(self):
+    def test_empty_string_raises(self, mock_config):
         """When env var is set to "", raise HaikuApiKeyError.
 
         An empty key is useless and should fail fast.
         """
-        pass
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": ""}):
+            with pytest.raises(HaikuApiKeyError):
+                resolve_haiku_api_key(mock_config)
 
-    def test_whitespace_only_raises(self):
+    def test_whitespace_only_raises(self, mock_config):
         """When env var is "   " (whitespace only), raise HaikuApiKeyError.
 
         After stripping, it's empty — same as not set.
         """
-        pass
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "   "}):
+            with pytest.raises(HaikuApiKeyError):
+                resolve_haiku_api_key(mock_config)
 
 
 # -----------------------------------------------------------------------------
@@ -138,11 +172,26 @@ class TestApiKeyConfigMissing:
 
         Config might be from an older version without haiku support.
         """
-        pass
+        config = MagicMock()
+        del config.haiku  # Remove haiku attribute
+        config.haiku = MagicMock(side_effect=AttributeError("haiku"))
+        # Use object that throws on attribute access
+        class BadConfig:
+            @property
+            def haiku(self):
+                raise AttributeError("no haiku")
+            def get(self, key, default=None):
+                return default
 
-    def test_empty_env_var_name_in_config_raises(self):
+        with pytest.raises(HaikuApiKeyError):
+            resolve_haiku_api_key(BadConfig())
+
+    def test_empty_env_var_name_in_config_raises(self, monkeypatch):
         """When config.haiku.api_key_env_var is "", raise HaikuApiKeyError.
 
         Empty env var name means misconfigured — fail fast.
         """
-        pass
+        config = MagicMock()
+        config.haiku.api_key_env_var = ""
+        with pytest.raises(HaikuApiKeyError):
+            resolve_haiku_api_key(config)

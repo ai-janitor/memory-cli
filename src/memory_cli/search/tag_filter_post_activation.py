@@ -65,16 +65,24 @@ def filter_by_tags(
     # --- Guard: no tags → no filtering ---
     # if not required_tags:
     #     return candidates
+    if not required_tags:
+        return candidates
 
     # --- Normalize ---
     # tag_mode = tag_mode.upper()
     # if tag_mode not in ("AND", "OR"):
     #     tag_mode = "AND"
     # required_set = {t.lower() for t in required_tags}
+    tag_mode = tag_mode.upper()
+    if tag_mode not in ("AND", "OR"):
+        tag_mode = "AND"
+    required_set = {t.lower() for t in required_tags}
 
     # --- Batch fetch tags ---
     # neuron_ids = [c["neuron_id"] for c in candidates]
     # tags_map = _fetch_neuron_tags_batch(conn, neuron_ids)
+    neuron_ids = [c["neuron_id"] for c in candidates]
+    tags_map = _fetch_neuron_tags_batch(conn, neuron_ids)
 
     # --- Filter ---
     # filtered = []
@@ -89,8 +97,18 @@ def filter_by_tags(
     #             filtered.append(candidate)
 
     # return filtered
+    filtered = []
+    for candidate in candidates:
+        nid = candidate["neuron_id"]
+        neuron_tags = tags_map.get(nid, set())
+        if tag_mode == "AND":
+            if _matches_and_filter(neuron_tags, required_set):
+                filtered.append(candidate)
+        else:  # OR
+            if _matches_or_filter(neuron_tags, required_set):
+                filtered.append(candidate)
 
-    pass
+    return filtered
 
 
 def _fetch_neuron_tags_batch(
@@ -118,6 +136,8 @@ def _fetch_neuron_tags_batch(
     """
     # if not neuron_ids:
     #     return {}
+    if not neuron_ids:
+        return {}
 
     # placeholders = ",".join("?" * len(neuron_ids))
     # rows = conn.execute(
@@ -126,14 +146,24 @@ def _fetch_neuron_tags_batch(
     #     f"WHERE nt.neuron_id IN ({placeholders})",
     #     neuron_ids,
     # ).fetchall()
+    placeholders = ",".join("?" * len(neuron_ids))
+    rows = conn.execute(
+        f"SELECT nt.neuron_id, t.name FROM neuron_tags nt "
+        f"JOIN tags t ON nt.tag_id = t.id "
+        f"WHERE nt.neuron_id IN ({placeholders})",
+        neuron_ids,
+    ).fetchall()
 
     # tags_map: Dict[int, Set[str]] = {}
     # for neuron_id, tag_name in rows:
     #     tags_map.setdefault(neuron_id, set()).add(tag_name.lower())
 
     # return tags_map
+    tags_map: Dict[int, Set[str]] = {}
+    for neuron_id, tag_name in rows:
+        tags_map.setdefault(neuron_id, set()).add(tag_name.lower())
 
-    pass
+    return tags_map
 
 
 def _matches_and_filter(neuron_tags: Set[str], required_tags: Set[str]) -> bool:
@@ -149,8 +179,7 @@ def _matches_and_filter(neuron_tags: Set[str], required_tags: Set[str]) -> bool:
         True if required_tags is a subset of neuron_tags.
     """
     # return required_tags.issubset(neuron_tags)
-
-    pass
+    return required_tags.issubset(neuron_tags)
 
 
 def _matches_or_filter(neuron_tags: Set[str], required_tags: Set[str]) -> bool:
@@ -166,5 +195,4 @@ def _matches_or_filter(neuron_tags: Set[str], required_tags: Set[str]) -> bool:
         True if neuron_tags intersects with required_tags.
     """
     # return bool(neuron_tags & required_tags)
-
-    pass
+    return bool(neuron_tags & required_tags)

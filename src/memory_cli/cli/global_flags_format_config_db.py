@@ -70,7 +70,16 @@ def parse_global_flags(argv: List[str]) -> Tuple[GlobalFlags, List[str]]:
     - Flag values that look like nouns (e.g., --format neuron) are consumed
       as the flag value — user error, but we parse greedily
     """
-    pass
+    tokens = list(argv)
+    format_value, tokens = _consume_flag(tokens, "--format")
+    if format_value is not None and format_value not in ("json", "text"):
+        raise ValueError(f"Invalid --format value: {format_value}")
+    if format_value is None:
+        format_value = "json"
+    config_value, tokens = _consume_flag(tokens, "--config")
+    db_value, tokens = _consume_flag(tokens, "--db")
+    flags = GlobalFlags(format=format_value, config=config_value, db=db_value)
+    return flags, tokens
 
 
 # =============================================================================
@@ -100,4 +109,20 @@ def _consume_flag(tokens: List[str], flag_name: str) -> Tuple[Optional[str], Lis
        b. Remove that single token from list
        c. Return (value, modified tokens)
     """
-    pass
+    result = list(tokens)
+    prefix = flag_name + "="
+    for i, token in enumerate(result):
+        if token == flag_name:
+            if i + 1 >= len(result):
+                raise ValueError(f"Flag {flag_name} requires a value")
+            value = result[i + 1]
+            if value.startswith("--"):
+                raise ValueError(f"Flag {flag_name} requires a value, got another flag: {value}")
+            result.pop(i + 1)
+            result.pop(i)
+            return value, result
+        if token.startswith(prefix):
+            value = token[len(prefix):]
+            result.pop(i)
+            return value, result
+    return None, result

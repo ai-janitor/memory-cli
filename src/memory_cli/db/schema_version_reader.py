@@ -56,16 +56,31 @@ def read_schema_version(conn: sqlite3.Connection) -> int:
     # --- Step 1: Check if the meta table exists ---
     # Query sqlite_master for table name 'meta'
     # If not found: return 0 (no schema has ever been applied)
+    meta_check = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='meta'"
+    ).fetchone()
+    if meta_check is None:
+        return 0
 
     # --- Step 2: Read the schema_version key ---
     # SELECT value FROM meta WHERE key = 'schema_version'
     # If no row: return 0 (meta table exists but no version — shouldn't happen,
     #   but handle defensively)
+    row = conn.execute(
+        "SELECT value FROM meta WHERE key = 'schema_version'"
+    ).fetchone()
+    if row is None:
+        return 0
 
     # --- Step 3: Parse and return ---
     # Cast value to int
     # If cast fails: raise ValueError with descriptive message
-    pass
+    try:
+        return int(row[0])
+    except (ValueError, TypeError) as exc:
+        raise ValueError(
+            f"schema_version in meta table is not a valid integer: {row[0]!r}"
+        ) from exc
 
 
 def compare_schema_version(
@@ -83,10 +98,16 @@ def compare_schema_version(
     """
     # --- Step 1: Read current version ---
     # current = read_schema_version(conn)
+    current = read_schema_version(conn)
 
     # --- Step 2: Compare ---
     # if current == expected: return SchemaAction.PROCEED
     # if current < expected: return SchemaAction.MIGRATE
     # if current > expected: return SchemaAction.ABORT
     #   (DB was written by a newer CLI — cannot safely downgrade)
-    pass
+    if current == expected:
+        return SchemaAction.PROCEED
+    if current < expected:
+        return SchemaAction.MIGRATE
+    # current > expected: DB is from a newer CLI
+    return SchemaAction.ABORT

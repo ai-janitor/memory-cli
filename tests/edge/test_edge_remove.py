@@ -23,37 +23,54 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from typing import Any, Dict
+
+# --- Module-level guard: all tests in this file require sqlite_vec ---
+sqlite_vec = pytest.importorskip(
+    "sqlite_vec",
+    reason="sqlite_vec required for full schema (vec0 table)"
+)
 
 
 # -----------------------------------------------------------------------------
 # Fixtures
 # -----------------------------------------------------------------------------
-# @pytest.fixture
-# def db_conn_with_edges():
-#     """Create an in-memory SQLite database with neurons and edges.
-#
-#     Sets up:
-#     - neurons table with seed neurons (IDs 1, 2, 3)
-#     - edges table with seed edges:
-#       - Edge 1->2 (reason="test-link-1-to-2", weight=1.0)
-#       - Edge 2->3 (reason="test-link-2-to-3", weight=1.5)
-#       - Edge 3->3 (self-loop, reason="self-ref", weight=1.0)
-#     Yields the connection, closes on teardown.
-#     """
-#     pass
 
-# @pytest.fixture
-# def db_conn_with_circular():
-#     """Create DB with circular edges: A->B and B->A.
-#
-#     Sets up:
-#     - Neurons 1, 2
-#     - Edge 1->2 and Edge 2->1
-#     Yields the connection.
-#     """
-#     pass
+@pytest.fixture
+def migrated_conn():
+    """In-memory SQLite with full migrated schema including neurons_vec."""
+    from memory_cli.db.connection_setup_wal_fk_busy import open_connection
+    from memory_cli.db.extension_loader_sqlite_vec import load_and_verify_extensions
+    from memory_cli.db.migrations.v001_baseline_all_tables_indexes_triggers import apply
+
+    conn = open_connection(":memory:")
+    load_and_verify_extensions(conn)
+    conn.execute("BEGIN")
+    apply(conn)
+    conn.execute("COMMIT")
+    yield conn
+    conn.close()
+
+
+def _create_test_neuron(conn, content="test content", project="test-project"):
+    now_ms = int(time.time() * 1000)
+    conn.execute(
+        "INSERT INTO neurons (content, created_at, updated_at, project, status) VALUES (?, ?, ?, ?, 'active')",
+        (content, now_ms, now_ms, project)
+    )
+    return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+
+def _create_test_edge(conn, source_id, target_id, reason="test-link", weight=1.0, created_at=None):
+    if created_at is None:
+        created_at = int(time.time() * 1000)
+    conn.execute(
+        "INSERT INTO edges (source_id, target_id, reason, weight, created_at) VALUES (?, ?, ?, ?, ?)",
+        (source_id, target_id, reason, weight, created_at)
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -63,7 +80,7 @@ from typing import Any, Dict
 class TestEdgeRemoveHappyPath:
     """Test successful edge removal."""
 
-    def test_remove_existing_edge(self):
+    def test_remove_existing_edge(self, migrated_conn):
         """Remove an edge that exists in the database.
 
         Expects:
@@ -71,24 +88,64 @@ class TestEdgeRemoveHappyPath:
         - Returned dict has the deleted edge's source_id, target_id, reason, weight
         - Edge no longer exists in DB (SELECT returns no row)
         """
-        pass
+        from memory_cli.edge.edge_remove_by_source_target import edge_remove
 
-    def test_remove_returns_deleted_edge_info(self):
+        src = _create_test_neuron(migrated_conn, "source neuron")
+        tgt = _create_test_neuron(migrated_conn, "target neuron")
+        _create_test_edge(migrated_conn, src, tgt, "link reason")
+
+        result = edge_remove(migrated_conn, src, tgt)
+
+        assert result["source_id"] == src
+        assert result["target_id"] == tgt
+        assert result["reason"] == "link reason"
+
+        # Verify no longer in DB
+        row = migrated_conn.execute(
+            "SELECT * FROM edges WHERE source_id=? AND target_id=?", (src, tgt)
+        ).fetchone()
+        assert row is None
+
+    def test_remove_returns_deleted_edge_info(self, migrated_conn):
         """Verify the returned dict contains correct edge data.
 
         The returned dict should match the edge that was deleted, allowing
         the CLI to display "Removed edge from X to Y (reason: ...)".
         """
-        pass
+        from memory_cli.edge.edge_remove_by_source_target import edge_remove
 
-    def test_remove_self_loop_edge(self):
+        src = _create_test_neuron(migrated_conn, "src")
+        tgt = _create_test_neuron(migrated_conn, "tgt")
+        _create_test_edge(migrated_conn, src, tgt, "the reason", weight=2.0)
+
+        result = edge_remove(migrated_conn, src, tgt)
+
+        assert result["source_id"] == src
+        assert result["target_id"] == tgt
+        assert result["reason"] == "the reason"
+        assert result["weight"] == 2.0
+        assert "created_at" in result
+
+    def test_remove_self_loop_edge(self, migrated_conn):
         """Remove a self-loop edge (source == target).
 
         Expects:
         - Edge removed successfully
         - Neuron still exists (self-loops don't imply self-deletion)
         """
-        pass
+        from memory_cli.edge.edge_remove_by_source_target import edge_remove
+
+        a = _create_test_neuron(migrated_conn, "self-ref")
+        _create_test_edge(migrated_conn, a, a, "self reference")
+
+        result = edge_remove(migrated_conn, a, a)
+
+        assert result["source_id"] == a
+        assert result["target_id"] == a
+
+        # Neuron still exists
+        row = migrated_conn.execute("SELECT id FROM neurons WHERE id=?", (a,)).fetchone()
+        assert row is not None
 
 
 # -----------------------------------------------------------------------------
@@ -98,7 +155,7 @@ class TestEdgeRemoveHappyPath:
 class TestEdgeRemoveNotFound:
     """Test edge not-found error paths."""
 
-    def test_edge_not_found_exit_1(self):
+    def test_edge_not_found_exit_1(self, migrated_conn):
         """Remove an edge that doesn't exist.
 
         Expects:
@@ -106,25 +163,61 @@ class TestEdgeRemoveNotFound:
         - exit_code == 1
         - Message mentions the source and target IDs
         """
-        pass
+        from memory_cli.edge.edge_remove_by_source_target import edge_remove, EdgeRemoveError
 
-    def test_wrong_direction_not_found(self):
+        src = _create_test_neuron(migrated_conn)
+        tgt = _create_test_neuron(migrated_conn, "another")
+
+        with pytest.raises(EdgeRemoveError) as exc_info:
+            edge_remove(migrated_conn, src, tgt)
+
+        assert exc_info.value.exit_code == 1
+        assert str(src) in str(exc_info.value)
+        assert str(tgt) in str(exc_info.value)
+
+    def test_wrong_direction_not_found(self, migrated_conn):
         """Edge exists A->B but trying to remove B->A (which doesn't exist).
 
         Expects:
         - EdgeRemoveError raised with exit_code == 1
         - The A->B edge is unaffected
         """
-        pass
+        from memory_cli.edge.edge_remove_by_source_target import edge_remove, EdgeRemoveError
 
-    def test_remove_already_removed_edge(self):
+        a = _create_test_neuron(migrated_conn, "neuron a")
+        b = _create_test_neuron(migrated_conn, "neuron b")
+        _create_test_edge(migrated_conn, a, b, "a to b")
+
+        with pytest.raises(EdgeRemoveError) as exc_info:
+            edge_remove(migrated_conn, b, a)  # B->A doesn't exist
+
+        assert exc_info.value.exit_code == 1
+
+        # A->B still exists
+        row = migrated_conn.execute(
+            "SELECT * FROM edges WHERE source_id=? AND target_id=?", (a, b)
+        ).fetchone()
+        assert row is not None
+
+    def test_remove_already_removed_edge(self, migrated_conn):
         """Remove an edge, then try to remove it again.
 
         Expects:
         - First remove succeeds
         - Second remove raises EdgeRemoveError(exit_code=1)
         """
-        pass
+        from memory_cli.edge.edge_remove_by_source_target import edge_remove, EdgeRemoveError
+
+        src = _create_test_neuron(migrated_conn)
+        tgt = _create_test_neuron(migrated_conn, "another")
+        _create_test_edge(migrated_conn, src, tgt, "once only")
+
+        edge_remove(migrated_conn, src, tgt)
+
+        with pytest.raises(EdgeRemoveError) as exc_info:
+            edge_remove(migrated_conn, src, tgt)
+
+        assert exc_info.value.exit_code == 1
 
 
 # -----------------------------------------------------------------------------
@@ -134,30 +227,71 @@ class TestEdgeRemoveNotFound:
 class TestEdgeRemoveNeuronsUnaffected:
     """Verify that neurons are completely unaffected by edge removal."""
 
-    def test_source_neuron_still_exists(self):
+    def test_source_neuron_still_exists(self, migrated_conn):
         """After removing edge A->B, neuron A still exists with all data.
 
         Query neuron A directly — it should have the same content, tags,
         attrs, status as before the edge removal.
         """
-        pass
+        from memory_cli.edge.edge_remove_by_source_target import edge_remove
 
-    def test_target_neuron_still_exists(self):
+        src = _create_test_neuron(migrated_conn, "source content")
+        tgt = _create_test_neuron(migrated_conn, "target content")
+        _create_test_edge(migrated_conn, src, tgt)
+
+        edge_remove(migrated_conn, src, tgt)
+
+        row = migrated_conn.execute(
+            "SELECT id, content, status FROM neurons WHERE id=?", (src,)
+        ).fetchone()
+        assert row is not None
+        assert row["content"] == "source content"
+        assert row["status"] == "active"
+
+    def test_target_neuron_still_exists(self, migrated_conn):
         """After removing edge A->B, neuron B still exists with all data.
 
         Query neuron B directly — it should be completely unmodified.
         """
-        pass
+        from memory_cli.edge.edge_remove_by_source_target import edge_remove
 
-    def test_other_edges_unaffected(self):
+        src = _create_test_neuron(migrated_conn, "source content")
+        tgt = _create_test_neuron(migrated_conn, "target content")
+        _create_test_edge(migrated_conn, src, tgt)
+
+        edge_remove(migrated_conn, src, tgt)
+
+        row = migrated_conn.execute(
+            "SELECT id, content, status FROM neurons WHERE id=?", (tgt,)
+        ).fetchone()
+        assert row is not None
+        assert row["content"] == "target content"
+        assert row["status"] == "active"
+
+    def test_other_edges_unaffected(self, migrated_conn):
         """Removing one edge doesn't affect other edges from/to the same neurons.
 
         Setup: edges A->B, A->C. Remove A->B.
         Expects: A->C still exists and is unmodified.
         """
-        pass
+        from memory_cli.edge.edge_remove_by_source_target import edge_remove
 
-    def test_circular_remove_one_direction(self):
+        a = _create_test_neuron(migrated_conn, "neuron a")
+        b = _create_test_neuron(migrated_conn, "neuron b")
+        c = _create_test_neuron(migrated_conn, "neuron c")
+        _create_test_edge(migrated_conn, a, b, "a to b")
+        _create_test_edge(migrated_conn, a, c, "a to c")
+
+        edge_remove(migrated_conn, a, b)
+
+        # A->C still exists
+        row = migrated_conn.execute(
+            "SELECT reason FROM edges WHERE source_id=? AND target_id=?", (a, c)
+        ).fetchone()
+        assert row is not None
+        assert row["reason"] == "a to c"
+
+    def test_circular_remove_one_direction(self, migrated_conn):
         """Remove A->B from circular pair (A->B, B->A).
 
         Expects:
@@ -165,4 +299,31 @@ class TestEdgeRemoveNeuronsUnaffected:
         - B->A still exists and is unmodified
         - Both neurons still exist
         """
-        pass
+        from memory_cli.edge.edge_remove_by_source_target import edge_remove
+
+        a = _create_test_neuron(migrated_conn, "neuron a")
+        b = _create_test_neuron(migrated_conn, "neuron b")
+        _create_test_edge(migrated_conn, a, b, "a to b")
+        _create_test_edge(migrated_conn, b, a, "b to a")
+
+        edge_remove(migrated_conn, a, b)
+
+        # A->B removed
+        row_ab = migrated_conn.execute(
+            "SELECT * FROM edges WHERE source_id=? AND target_id=?", (a, b)
+        ).fetchone()
+        assert row_ab is None
+
+        # B->A still exists
+        row_ba = migrated_conn.execute(
+            "SELECT reason FROM edges WHERE source_id=? AND target_id=?", (b, a)
+        ).fetchone()
+        assert row_ba is not None
+        assert row_ba["reason"] == "b to a"
+
+        # Both neurons exist
+        for neuron_id in (a, b):
+            row = migrated_conn.execute(
+                "SELECT id FROM neurons WHERE id=?", (neuron_id,)
+            ).fetchone()
+            assert row is not None

@@ -21,14 +21,11 @@
 
 from __future__ import annotations
 
-# import pytest
-# import sys
-# from io import StringIO
-# from unittest.mock import patch
-# from memory_cli.integrity.dimension_drift_hard_block import (
-#     handle_dimension_drift,
-#     _format_dimension_error,
-# )
+import pytest
+from memory_cli.integrity.dimension_drift_hard_block import (
+    handle_dimension_drift,
+    _format_dimension_error,
+)
 
 
 class TestHardBlock:
@@ -42,7 +39,9 @@ class TestHardBlock:
         #     handle_dimension_drift(768, 384)
         # exc_info.value.code == 2
         """
-        pass
+        with pytest.raises(SystemExit) as exc_info:
+            handle_dimension_drift(768, 384)
+        assert exc_info.value.code == 2
 
     def test_exits_with_string_inputs(self) -> None:
         """Dimensions may come from meta table as strings — should still exit.
@@ -52,7 +51,9 @@ class TestHardBlock:
         #     handle_dimension_drift("768", "384")
         # exc_info.value.code == 2
         """
-        pass
+        with pytest.raises(SystemExit) as exc_info:
+            handle_dimension_drift("768", "384")
+        assert exc_info.value.code == 2
 
     def test_exits_with_mixed_types(self) -> None:
         """One string, one int — should handle gracefully and still exit.
@@ -62,7 +63,9 @@ class TestHardBlock:
         #     handle_dimension_drift("768", 384)
         # exc_info.value.code == 2
         """
-        pass
+        with pytest.raises(SystemExit) as exc_info:
+            handle_dimension_drift("768", 384)
+        assert exc_info.value.code == 2
 
     def test_never_returns(self) -> None:
         """After calling handle_dimension_drift, no subsequent code runs.
@@ -80,13 +83,19 @@ class TestHardBlock:
         # --- Assert ---
         # flag == False
         """
-        pass
+        flag = False
+        try:
+            handle_dimension_drift(768, 384)
+            flag = True  # This line should never execute
+        except SystemExit:
+            pass
+        assert flag is False
 
 
 class TestErrorMessage:
     """Tests for the error message content."""
 
-    def test_error_written_to_stderr(self) -> None:
+    def test_error_written_to_stderr(self, capsys) -> None:
         """Error message should go to stderr, not stdout.
 
         # --- Arrange ---
@@ -102,9 +111,15 @@ class TestErrorMessage:
         # stderr has content
         # stdout is empty
         """
-        pass
+        try:
+            handle_dimension_drift(768, 384)
+        except SystemExit:
+            pass
+        captured = capsys.readouterr()
+        assert len(captured.err) > 0
+        assert captured.out == ""
 
-    def test_error_includes_both_dimensions(self) -> None:
+    def test_error_includes_both_dimensions(self, capsys) -> None:
         """Error message should show DB dims and config dims.
 
         # --- Arrange ---
@@ -120,9 +135,15 @@ class TestErrorMessage:
         # stderr contains "768"
         # stderr contains "384"
         """
-        pass
+        try:
+            handle_dimension_drift(768, 384)
+        except SystemExit:
+            pass
+        captured = capsys.readouterr()
+        assert "768" in captured.err
+        assert "384" in captured.err
 
-    def test_error_includes_remediation(self) -> None:
+    def test_error_includes_remediation(self, capsys) -> None:
         """Error message should explain how to fix the problem.
 
         # --- Arrange ---
@@ -137,9 +158,14 @@ class TestErrorMessage:
         # --- Assert ---
         # stderr contains remediation guidance (change config or re-embed)
         """
-        pass
+        try:
+            handle_dimension_drift(768, 384)
+        except SystemExit:
+            pass
+        captured = capsys.readouterr()
+        assert "reembed" in captured.err or "re-embed" in captured.err
 
-    def test_error_mentions_blocked(self) -> None:
+    def test_error_mentions_blocked(self, capsys) -> None:
         """Error should clearly state that operations are blocked.
 
         # --- Arrange ---
@@ -154,7 +180,12 @@ class TestErrorMessage:
         # --- Assert ---
         # stderr contains "blocked" or "cannot"
         """
-        pass
+        try:
+            handle_dimension_drift(768, 384)
+        except SystemExit:
+            pass
+        captured = capsys.readouterr()
+        assert "blocked" in captured.err.lower() or "cannot" in captured.err.lower()
 
 
 class TestFormatDimensionError:
@@ -169,7 +200,8 @@ class TestFormatDimensionError:
         # --- Assert ---
         # "768" in msg
         """
-        pass
+        msg = _format_dimension_error(768, 384)
+        assert "768" in msg
 
     def test_format_includes_config_dims(self) -> None:
         """Formatted error should include the config dimension count.
@@ -180,7 +212,8 @@ class TestFormatDimensionError:
         # --- Assert ---
         # "384" in msg
         """
-        pass
+        msg = _format_dimension_error(768, 384)
+        assert "384" in msg
 
     def test_format_returns_string(self) -> None:
         """Helper should return a string, not write directly.
@@ -192,4 +225,6 @@ class TestFormatDimensionError:
         # isinstance(msg, str)
         # len(msg) > 0
         """
-        pass
+        msg = _format_dimension_error(768, 384)
+        assert isinstance(msg, str)
+        assert len(msg) > 0

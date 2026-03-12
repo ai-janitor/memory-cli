@@ -33,6 +33,8 @@
 from __future__ import annotations
 
 import sqlite3
+import struct
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 
 
@@ -76,7 +78,62 @@ def export_neurons(
     - DB query failure -> propagate sqlite3 error
     - Zero neurons matched -> valid result (empty lists), not an error
     """
-    pass
+    # 1. Validate that tags_and and tags_any are not both provided
+    if tags_and and tags_any:
+        raise ValueError("tags_and and tags_any are mutually exclusive — provide at most one")
+
+    # 2. Call _query_neurons_with_tag_filter() to get raw neuron rows
+    neuron_rows = _query_neurons_with_tag_filter(db_conn, tags_and=tags_and, tags_any=tags_any)
+
+    # 3. For each neuron row, resolve tags, attrs, optional vector
+    serialized_neurons: List[Dict[str, Any]] = []
+    for row in neuron_rows:
+        tags = _resolve_neuron_tags(db_conn, row["id"])
+        attrs = _resolve_neuron_attrs(db_conn, row["id"])
+        vector: Optional[List[float]] = None
+        vector_model: Optional[str] = None
+        if include_vectors:
+            vector = _fetch_neuron_vector(db_conn, row["id"])
+            if vector is not None:
+                # Read vector model from meta
+                meta_row = db_conn.execute(
+                    "SELECT value FROM meta WHERE key = 'vector_model'",
+                ).fetchone()
+                vector_model = meta_row["value"] if meta_row else None
+        serialized_neurons.append(
+            _serialize_neuron(row, tags, attrs, vector=vector, vector_model=vector_model)
+        )
+
+    # 4. Collect all exported neuron IDs into a set
+    exported_neuron_ids: Set[int] = {row["id"] for row in neuron_rows}
+
+    # 5. Call _filter_edges_to_export_set() with that ID set
+    edge_rows = _filter_edges_to_export_set(db_conn, exported_neuron_ids)
+
+    # 6. Serialize each edge
+    serialized_edges = [_serialize_edge(e) for e in edge_rows]
+
+    # 7. Determine vector_model and vector_dimensions from DB config if vectors included
+    db_vector_model: Optional[str] = None
+    db_vector_dims: Optional[int] = None
+    if include_vectors:
+        meta_model = db_conn.execute(
+            "SELECT value FROM meta WHERE key = 'vector_model'",
+        ).fetchone()
+        meta_dims = db_conn.execute(
+            "SELECT value FROM meta WHERE key = 'vector_dimensions'",
+        ).fetchone()
+        db_vector_model = meta_model["value"] if meta_model else None
+        db_vector_dims = int(meta_dims["value"]) if meta_dims else None
+
+    # 8. Return the assembled dict
+    return {
+        "neurons": serialized_neurons,
+        "edges": serialized_edges,
+        "vectors_included": include_vectors,
+        "vector_model": db_vector_model,
+        "vector_dimensions": db_vector_dims,
+    }
 
 
 def _query_neurons_with_tag_filter(
@@ -110,7 +167,54 @@ def _query_neurons_with_tag_filter(
        e. ORDER BY created_at ASC
     4. All queries order by created_at ASC for deterministic output
     """
-    pass
+    db_conn.row_factory = sqlite3.Row
+    # 1. No filters: SELECT all active neurons ORDER BY created_at ASC
+    if not tags_and and not tags_any:
+        return db_conn.execute(
+            "SELECT * FROM neurons WHERE status = 'active' ORDER BY created_at ASC"
+        ).fetchall()
+
+    # 2. tags_and: neuron must have ALL these tags (HAVING COUNT match)
+    if tags_and:
+        # Resolve tag names to IDs; skip unknown tags (no neurons can match)
+        tag_ids = []
+        for name in tags_and:
+            row = db_conn.execute("SELECT id FROM tags WHERE name = ?", (name,)).fetchone()
+            if row is None:
+                return []  # tag doesn't exist, no neurons can match ALL
+            tag_ids.append(row["id"])
+        placeholders = ",".join("?" * len(tag_ids))
+        query = f"""
+            SELECT n.*
+            FROM neurons n
+            JOIN neuron_tags nt ON nt.neuron_id = n.id
+            WHERE n.status = 'active' AND nt.tag_id IN ({placeholders})
+            GROUP BY n.id
+            HAVING COUNT(DISTINCT nt.tag_id) = {len(tag_ids)}
+            ORDER BY n.created_at ASC
+        """
+        return db_conn.execute(query, tag_ids).fetchall()
+
+    # 3. tags_any: neuron must have at least ONE of these tags
+    if tags_any:
+        tag_ids = []
+        for name in tags_any:
+            row = db_conn.execute("SELECT id FROM tags WHERE name = ?", (name,)).fetchone()
+            if row is not None:
+                tag_ids.append(row["id"])
+        if not tag_ids:
+            return []  # none of the tags exist
+        placeholders = ",".join("?" * len(tag_ids))
+        query = f"""
+            SELECT DISTINCT n.*
+            FROM neurons n
+            JOIN neuron_tags nt ON nt.neuron_id = n.id
+            WHERE n.status = 'active' AND nt.tag_id IN ({placeholders})
+            ORDER BY n.created_at ASC
+        """
+        return db_conn.execute(query, tag_ids).fetchall()
+
+    return []
 
 
 def _resolve_neuron_tags(
@@ -124,7 +228,18 @@ def _resolve_neuron_tags(
     2. JOIN with tags table to get tag names
     3. Return sorted list of tag name strings (sorted for determinism)
     """
-    pass
+    # 1. Query neuron_tags JOIN tags to get tag names
+    rows = db_conn.execute(
+        """
+        SELECT t.name
+        FROM neuron_tags nt
+        JOIN tags t ON nt.tag_id = t.id
+        WHERE nt.neuron_id = ?
+        ORDER BY t.name ASC
+        """,
+        (neuron_id,),
+    ).fetchall()
+    return [row[0] for row in rows]
 
 
 def _resolve_neuron_attrs(
@@ -138,7 +253,17 @@ def _resolve_neuron_attrs(
     2. JOIN with attr_keys table to get attr key names
     3. Return dict of {attr_key_name: attr_value}
     """
-    pass
+    # 1. Query neuron_attrs JOIN attr_keys to get key names and values
+    rows = db_conn.execute(
+        """
+        SELECT ak.name, na.value
+        FROM neuron_attrs na
+        JOIN attr_keys ak ON na.attr_key_id = ak.id
+        WHERE na.neuron_id = ?
+        """,
+        (neuron_id,),
+    ).fetchall()
+    return {row[0]: row[1] for row in rows}
 
 
 def _fetch_neuron_vector(
@@ -155,7 +280,18 @@ def _fetch_neuron_vector(
     Note: Vector storage format is sqlite-vec's native blob format.
     Deserialization must match the serialization used in the embedding module.
     """
-    pass
+    # 1. Query the neurons_vec table for this neuron_id
+    row = db_conn.execute(
+        "SELECT embedding FROM neurons_vec WHERE neuron_id = ?",
+        (neuron_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    # 2. Deserialize the stored blob into a list of floats
+    # sqlite-vec stores vectors as packed 32-bit little-endian floats
+    blob = row[0]
+    num_floats = len(blob) // 4
+    return list(struct.unpack(f"<{num_floats}f", blob))
 
 
 def _serialize_neuron(
@@ -187,7 +323,31 @@ def _serialize_neuron(
     4. If vector is not None, attach vector list and vector_model string
     5. Return the assembled dict
     """
-    pass
+    # 1. Extract core fields from neuron_row
+    # created_at and updated_at are stored as epoch ms integers — convert to ISO 8601
+    created_ms = neuron_row["created_at"]
+    updated_ms = neuron_row["updated_at"]
+    created_at_iso = datetime.fromtimestamp(created_ms / 1000, tz=timezone.utc).isoformat()
+    updated_at_iso = datetime.fromtimestamp(updated_ms / 1000, tz=timezone.utc).isoformat()
+
+    # 2. Build neuron dict with core fields, tags, attrs
+    neuron_dict: Dict[str, Any] = {
+        "id": neuron_row["id"],
+        "content": neuron_row["content"],
+        "created_at": created_at_iso,
+        "updated_at": updated_at_iso,
+        "project": neuron_row["project"],
+        "source": neuron_row["source"],
+        "tags": tags,
+        "attributes": attrs,
+    }
+
+    # 3. If vector is not None, attach vector list and vector_model string
+    if vector is not None:
+        neuron_dict["vector"] = vector
+        neuron_dict["vector_model"] = vector_model
+
+    return neuron_dict
 
 
 def _filter_edges_to_export_set(
@@ -208,7 +368,20 @@ def _filter_edges_to_export_set(
     This is intentional — partial edges would break referential integrity
     on import.
     """
-    pass
+    if not exported_neuron_ids:
+        return []
+    # Use SQL IN clause with the exported ID set for efficiency
+    id_list = list(exported_neuron_ids)
+    placeholders = ",".join("?" * len(id_list))
+    query = f"""
+        SELECT *
+        FROM edges
+        WHERE source_id IN ({placeholders})
+          AND target_id IN ({placeholders})
+        ORDER BY created_at ASC
+    """
+    # Pass the list twice (once for source_id, once for target_id)
+    return db_conn.execute(query, id_list + id_list).fetchall()
 
 
 def _serialize_edge(edge_row: sqlite3.Row) -> Dict[str, Any]:
@@ -225,4 +398,13 @@ def _serialize_edge(edge_row: sqlite3.Row) -> Dict[str, Any]:
     1. Extract fields from edge_row
     2. Return dict with string representations
     """
-    pass
+    # created_at is stored as epoch ms integer — convert to ISO 8601
+    created_ms = edge_row["created_at"]
+    created_at_iso = datetime.fromtimestamp(created_ms / 1000, tz=timezone.utc).isoformat()
+    return {
+        "source_id": edge_row["source_id"],
+        "target_id": edge_row["target_id"],
+        "reason": edge_row["reason"],
+        "weight": edge_row["weight"],
+        "created_at": created_at_iso,
+    }

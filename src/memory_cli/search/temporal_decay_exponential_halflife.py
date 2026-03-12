@@ -80,9 +80,11 @@ def apply_temporal_decay(
     """
     # --- Compute lambda ---
     # decay_lambda = math.log(2) / half_life_days
+    decay_lambda = math.log(2) / half_life_days
 
     # --- Current time ---
     # now_ts = now if now is not None else time.time()
+    now_ts = now if now is not None else time.time()
 
     # --- Batch-fetch created_at timestamps ---
     # neuron_ids = [c["neuron_id"] for c in candidates]
@@ -94,6 +96,15 @@ def apply_temporal_decay(
     #     neuron_ids,
     # ).fetchall()
     # timestamp_map = {row[0]: row[1] for row in rows}
+    neuron_ids = [c["neuron_id"] for c in candidates]
+    if not neuron_ids:
+        return candidates
+    placeholders = ",".join("?" * len(neuron_ids))
+    rows = conn.execute(
+        f"SELECT id, created_at FROM neurons WHERE id IN ({placeholders})",
+        neuron_ids,
+    ).fetchall()
+    timestamp_map = {row[0]: row[1] for row in rows}
 
     # --- Apply decay to each candidate ---
     # for candidate in candidates:
@@ -109,8 +120,19 @@ def apply_temporal_decay(
     #         candidate["temporal_weight"] = 1.0
 
     # return candidates
+    for candidate in candidates:
+        nid = candidate["neuron_id"]
+        created_at = timestamp_map.get(nid)
+        if created_at is not None:
+            age_days = _neuron_age_days(created_at, now_ts)
+            candidate["temporal_weight"] = _compute_temporal_weight(
+                age_days, decay_lambda
+            )
+        else:
+            # Unknown timestamp — no penalty (weight = 1.0)
+            candidate["temporal_weight"] = 1.0
 
-    pass
+    return candidates
 
 
 def _compute_temporal_weight(age_days: float, decay_lambda: float) -> float:
@@ -132,8 +154,7 @@ def _compute_temporal_weight(age_days: float, decay_lambda: float) -> float:
         Temporal weight in (0, 1] range.
     """
     # return math.exp(-decay_lambda * age_days)
-
-    pass
+    return math.exp(-decay_lambda * age_days)
 
 
 def _neuron_age_days(created_at_ms: int, now_seconds: float) -> float:
@@ -158,5 +179,6 @@ def _neuron_age_days(created_at_ms: int, now_seconds: float) -> float:
     # created_at_s = created_at_ms / 1000.0
     # age_seconds = max(0.0, now_seconds - created_at_s)
     # return age_seconds / 86400.0
-
-    pass
+    created_at_s = created_at_ms / 1000.0
+    age_seconds = max(0.0, now_seconds - created_at_s)
+    return age_seconds / 86400.0

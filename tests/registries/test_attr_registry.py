@@ -33,14 +33,15 @@ import sqlite3
 
 import pytest
 
-# from memory_cli.registries.attr_registry_crud_normalize_autocreate import (
-#     AttrRegistryError,
-#     attr_add,
-#     attr_autocreate,
-#     attr_list,
-#     attr_remove,
-#     normalize_attr_name,
-# )
+from memory_cli.registries.attr_registry_crud_normalize_autocreate import (
+    AttrRegistryError,
+    attr_add,
+    attr_autocreate,
+    attr_list,
+    attr_remove,
+    normalize_attr_name,
+)
+from memory_cli.registries.tag_registry_crud_normalize_autocreate import tag_add
 
 
 # -----------------------------------------------------------------------------
@@ -71,7 +72,30 @@ def conn():
     #      created_at TEXT NOT NULL DEFAULT (datetime('now')))
     # 5. Yield connection
     # 6. Close connection in teardown
-    pass
+    c = sqlite3.connect(":memory:")
+    c.execute("""
+        CREATE TABLE attr_keys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            created_at INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    c.execute("""
+        CREATE TABLE neuron_attrs (
+            neuron_id INTEGER NOT NULL,
+            attr_key_id INTEGER NOT NULL,
+            value TEXT NOT NULL
+        )
+    """)
+    c.execute("""
+        CREATE TABLE tags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            created_at INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    yield c
+    c.close()
 
 
 # =============================================================================
@@ -84,28 +108,38 @@ class TestAttrAdd:
         """Adding a new attr key returns a dict with id, name, and created_at."""
         # 1. Call attr_add(conn, "priority")
         # 2. Assert result is a dict with id (int), name ("priority"), created_at (str)
-        pass
+        result = attr_add(conn, "priority")
+        assert isinstance(result, dict)
+        assert isinstance(result["id"], int)
+        assert result["name"] == "priority"
+        assert "created_at" in result
 
     def test_add_duplicate_attr_is_idempotent(self, conn):
         """Adding the same attr key twice returns the same entry both times."""
         # 1. attr_add(conn, "status") -> r1
         # 2. attr_add(conn, "status") -> r2
         # 3. Assert r1["id"] == r2["id"]
-        pass
+        r1 = attr_add(conn, "status")
+        r2 = attr_add(conn, "status")
+        assert r1["id"] == r2["id"]
 
     def test_add_case_variant_is_idempotent(self, conn):
         """Adding "Priority" after "priority" returns the same entry."""
         # 1. attr_add(conn, "priority") -> r1
         # 2. attr_add(conn, "Priority") -> r2
         # 3. Assert same id
-        pass
+        r1 = attr_add(conn, "priority")
+        r2 = attr_add(conn, "Priority")
+        assert r1["id"] == r2["id"]
 
     def test_add_multiple_attrs_get_distinct_ids(self, conn):
         """Different attr key names get different IDs."""
         # 1. attr_add(conn, "color") -> r1
         # 2. attr_add(conn, "size") -> r2
         # 3. Assert r1["id"] != r2["id"]
-        pass
+        r1 = attr_add(conn, "color")
+        r2 = attr_add(conn, "size")
+        assert r1["id"] != r2["id"]
 
 
 # =============================================================================
@@ -117,24 +151,28 @@ class TestAttrNormalization:
     def test_empty_string_rejected(self, conn):
         """Empty string raises AttrRegistryError."""
         # 1. attr_add(conn, "") -> expect AttrRegistryError
-        pass
+        with pytest.raises(AttrRegistryError):
+            attr_add(conn, "")
 
     def test_whitespace_only_rejected(self, conn):
         """Whitespace-only string raises AttrRegistryError."""
         # 1. attr_add(conn, "   ") -> expect AttrRegistryError
-        pass
+        with pytest.raises(AttrRegistryError):
+            attr_add(conn, "   ")
 
     def test_internal_whitespace_preserved(self, conn):
         """Attr key "due date" preserves the internal space."""
         # 1. attr_add(conn, "due date") -> result
         # 2. Assert result["name"] == "due date"
-        pass
+        result = attr_add(conn, "due date")
+        assert result["name"] == "due date"
 
     def test_mixed_case_lowered(self, conn):
         """Attr key "DueDate" is stored as "duedate"."""
         # 1. attr_add(conn, "DueDate") -> result
         # 2. Assert result["name"] == "duedate"
-        pass
+        result = attr_add(conn, "DueDate")
+        assert result["name"] == "duedate"
 
 
 # =============================================================================
@@ -146,7 +184,7 @@ class TestAttrList:
     def test_list_empty_registry_returns_empty_list(self, conn):
         """Empty registry returns [] not an error."""
         # 1. attr_list(conn) -> []
-        pass
+        assert attr_list(conn) == []
 
     def test_list_returns_all_attrs_ordered_by_id(self, conn):
         """Attr keys are returned in insertion order (by id)."""
@@ -155,7 +193,11 @@ class TestAttrList:
         # 3. attr_list(conn) -> result
         # 4. Assert result[0]["name"] == "zebra" (first inserted)
         # 5. Assert len(result) == 2
-        pass
+        attr_add(conn, "zebra")
+        attr_add(conn, "apple")
+        result = attr_list(conn)
+        assert len(result) == 2
+        assert result[0]["name"] == "zebra"
 
 
 # =============================================================================
@@ -169,18 +211,24 @@ class TestAttrRemove:
         # 1. attr_add(conn, "temp")
         # 2. attr_remove(conn, "temp") -> True
         # 3. attr_list(conn) -> empty
-        pass
+        attr_add(conn, "temp")
+        result = attr_remove(conn, "temp")
+        assert result is True
+        assert attr_list(conn) == []
 
     def test_remove_by_id(self, conn):
         """Remove an attr key by its integer ID."""
         # 1. attr_add(conn, "byid") -> result
         # 2. attr_remove(conn, result["id"]) -> True
-        pass
+        added = attr_add(conn, "byid")
+        result = attr_remove(conn, added["id"])
+        assert result is True
 
     def test_remove_not_found_returns_false(self, conn):
         """Removing a non-existent attr key returns False."""
         # 1. attr_remove(conn, "ghost") -> False
-        pass
+        result = attr_remove(conn, "ghost")
+        assert result is False
 
     def test_remove_in_use_blocked(self, conn):
         """Removing an attr key in use by neurons raises AttrRegistryError."""
@@ -189,13 +237,23 @@ class TestAttrRemove:
         #    VALUES (1, result["id"], "some value")
         # 3. attr_remove(conn, "locked") -> expect AttrRegistryError
         # 4. Verify attr key still in attr_list
-        pass
+        added = attr_add(conn, "locked")
+        conn.execute(
+            "INSERT INTO neuron_attrs (neuron_id, attr_key_id, value) VALUES (1, ?, 'some value')",
+            (added["id"],)
+        )
+        with pytest.raises(AttrRegistryError):
+            attr_remove(conn, "locked")
+        remaining = attr_list(conn)
+        assert any(a["name"] == "locked" for a in remaining)
 
     def test_remove_normalizes_name(self, conn):
         """Removing "  MyAttr  " matches stored "myattr"."""
         # 1. attr_add(conn, "myattr")
         # 2. attr_remove(conn, "  MyAttr  ") -> True
-        pass
+        attr_add(conn, "myattr")
+        result = attr_remove(conn, "  MyAttr  ")
+        assert result is True
 
 
 # =============================================================================
@@ -209,19 +267,25 @@ class TestAttrAutocreate:
         # 1. attr_autocreate(conn, "newkey") -> attr_id
         # 2. Assert attr_id is int
         # 3. Verify exists in attr_list
-        pass
+        attr_id = attr_autocreate(conn, "newkey")
+        assert isinstance(attr_id, int)
+        attrs = attr_list(conn)
+        assert any(a["id"] == attr_id and a["name"] == "newkey" for a in attrs)
 
     def test_autocreate_existing_attr_returns_same_id(self, conn):
         """Auto-creating an existing attr key is idempotent."""
         # 1. attr_add(conn, "existing") -> result
         # 2. attr_autocreate(conn, "existing") -> attr_id
         # 3. Assert attr_id == result["id"]
-        pass
+        result = attr_add(conn, "existing")
+        attr_id = attr_autocreate(conn, "existing")
+        assert attr_id == result["id"]
 
     def test_autocreate_empty_name_rejected(self, conn):
         """Auto-create rejects empty names."""
         # 1. attr_autocreate(conn, "") -> expect AttrRegistryError
-        pass
+        with pytest.raises(AttrRegistryError):
+            attr_autocreate(conn, "")
 
 
 # =============================================================================
@@ -237,4 +301,10 @@ class TestCrossRegistryCollision:
         # 3. Both succeed — no conflict
         # 4. IDs are independent (they're in different tables, so may be same int)
         # 5. Names are both "status"
-        pass
+        tag_result = tag_add(conn, "status")
+        attr_result = attr_add(conn, "status")
+        assert tag_result["name"] == "status"
+        assert attr_result["name"] == "status"
+        # Both entries exist independently in their respective tables
+        assert tag_result["id"] is not None
+        assert attr_result["id"] is not None

@@ -1,8 +1,8 @@
 # Session State — memory-cli v2
 
-**Last updated:** 2026-03-11
-**Stage:** 7g complete (Cross-reference reconciliation) — scaffold fully verified
-**Next:** Stage 8 (Implement) — fill code between permanent comment headers, wave by wave
+**Last updated:** 2026-03-12
+**Stage:** 8 COMPLETE (Implement) — All 7 waves done. 1324 tests passing.
+**Next:** Stage 9 (Verify — run tests, integration checks)
 
 ## Context for fresh session
 

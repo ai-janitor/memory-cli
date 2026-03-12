@@ -157,7 +157,30 @@ def neuron_add(
     # Re-fetch via neuron_get to get fully hydrated record (including embed timestamp)
     # return neuron_get(conn, neuron_id)
 
-    pass
+    import warnings
+    from .auto_tag_capture_timestamp_and_project import capture_auto_tags, merge_and_deduplicate_tags
+    from .neuron_get_by_id import neuron_get
+
+    _validate_add_inputs(conn, content, link_target_id, link_reason)
+
+    auto_tags = capture_auto_tags()
+    all_tags = merge_and_deduplicate_tags(tags, auto_tags)
+
+    neuron_id, _ = _write_neuron_record(conn, content, all_tags, source, attrs)
+
+    if not no_embed:
+        try:
+            _embed_neuron(conn, neuron_id, content, all_tags)
+        except Exception as e:
+            warnings.warn(f"Embedding failed for neuron {neuron_id}: {e}")
+
+    if link_target_id is not None:
+        try:
+            _link_neuron(conn, neuron_id, link_target_id, link_reason)
+        except Exception as e:
+            warnings.warn(f"Link creation failed for neuron {neuron_id}: {e}")
+
+    return neuron_get(conn, neuron_id)
 
 
 def _validate_add_inputs(
@@ -189,7 +212,23 @@ def _validate_add_inputs(
     Raises:
         NeuronAddError: On any validation failure.
     """
-    pass
+    if not content or not content.strip():
+        raise NeuronAddError("Content cannot be empty")
+
+    if link_target_id is not None:
+        if not link_reason or not link_reason.strip():
+            raise NeuronAddError("--link requires --reason")
+
+        row = conn.execute(
+            "SELECT id, status FROM neurons WHERE id = ?",
+            (link_target_id,)
+        ).fetchone()
+
+        if row is None:
+            raise NeuronAddError(f"Link target {link_target_id} not found")
+
+        if row["status"] != STATUS_ACTIVE:
+            raise NeuronAddError(f"Link target {link_target_id} is archived")
 
 
 def _write_neuron_record(
@@ -233,7 +272,43 @@ def _write_neuron_record(
     Raises:
         NeuronAddError: On DB write failure (transaction rolled back).
     """
-    pass
+    from memory_cli.registries import tag_autocreate, attr_autocreate
+    from .project_detection_git_or_cwd import detect_project
+    from .neuron_get_by_id import neuron_get
+
+    try:
+        now_ms = int(time.time() * 1000)
+        project = detect_project()
+
+        cursor = conn.execute(
+            """INSERT INTO neurons (content, created_at, updated_at, project, source, status)
+               VALUES (?, ?, ?, ?, ?, 'active')""",
+            (content, now_ms, now_ms, project, source)
+        )
+        neuron_id = cursor.lastrowid
+
+        for tag_name in tags:
+            tag_id = tag_autocreate(conn, tag_name)
+            conn.execute(
+                "INSERT OR IGNORE INTO neuron_tags (neuron_id, tag_id) VALUES (?, ?)",
+                (neuron_id, tag_id)
+            )
+
+        if attrs:
+            for key, value in attrs.items():
+                attr_key_id = attr_autocreate(conn, key)
+                conn.execute(
+                    "INSERT INTO neuron_attrs (neuron_id, attr_key_id, value) VALUES (?, ?, ?)",
+                    (neuron_id, attr_key_id, value)
+                )
+
+        conn.commit()
+        neuron_dict = neuron_get(conn, neuron_id)
+        return (neuron_id, neuron_dict)
+
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise NeuronAddError(f"DB write failed: {e}") from e
 
 
 def _embed_neuron(
@@ -263,7 +338,17 @@ def _embed_neuron(
     Raises:
         Any exception from embedding engine or DB — caller handles.
     """
-    pass
+    from memory_cli.embedding import embed_single, write_vector, OperationType
+
+    input_text = _build_embedding_input(content, tags)
+    vector = embed_single(None, input_text, "index")
+    write_vector(conn, neuron_id, vector)
+    now_ms = int(time.time() * 1000)
+    conn.execute(
+        "UPDATE neurons SET embedding_updated_at = ? WHERE id = ?",
+        (now_ms, neuron_id)
+    )
+    conn.commit()
 
 
 def _build_embedding_input(content: str, tags: List[str]) -> str:
@@ -285,7 +370,8 @@ def _build_embedding_input(content: str, tags: List[str]) -> str:
     Returns:
         Formatted embedding input string.
     """
-    pass
+    from memory_cli.embedding import build_embedding_input
+    return build_embedding_input(content, tags)
 
 
 def _link_neuron(
@@ -313,4 +399,9 @@ def _link_neuron(
     Raises:
         Any exception from edge module — caller handles.
     """
-    pass
+    now_ms = int(time.time() * 1000)
+    conn.execute(
+        "INSERT INTO edges (source_id, target_id, weight, reason, created_at) VALUES (?, ?, 1.0, ?, ?)",
+        (source_id, target_id, reason, now_ms)
+    )
+    conn.commit()

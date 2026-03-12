@@ -26,6 +26,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
@@ -63,44 +64,74 @@ def gather_meta_stats(
             - last_integrity_check_at: str | None (ISO 8601)
     """
     # --- Step 1: File-level stats ---
-    # db_path_str = str(Path(db_path).resolve())
-    # db_size_bytes = Path(db_path).stat().st_size (handle :memory: → 0)
+    # Handle :memory: gracefully — return 0 for size
+    db_path_str = str(db_path)
+    if db_path_str == ":memory:":
+        db_size_bytes = 0
+    else:
+        try:
+            db_size_bytes = Path(db_path_str).stat().st_size
+        except (OSError, FileNotFoundError):
+            db_size_bytes = 0
 
     # --- Step 2: Schema version ---
-    # schema_version = _read_schema_version(conn)
+    schema_version = _read_schema_version(conn)
 
     # --- Step 3: Embedding metadata from DB ---
-    # embedding_model_name = _read_meta(conn, "embedding_model_name")
-    # embedding_dimensions_str = _read_meta(conn, "embedding_dimensions")
-    # embedding_dimensions = int(embedding_dimensions_str) if embedding_dimensions_str else None
+    # Uses the key 'embedding_model' as seeded by v001 migration
+    db_model_raw = _read_meta(conn, "embedding_model")
+    # Treat 'default' as "not set" — no real vectors written yet
+    embedding_model_name: str | None = db_model_raw if (db_model_raw and db_model_raw != "default") else None
+    embedding_dimensions_str = _read_meta(conn, "embedding_dimensions")
+    embedding_dimensions: int | None = int(embedding_dimensions_str) if embedding_dimensions_str else None
 
     # --- Step 4: Embedding config from current config ---
-    # config_model_name = extract basename from config["embedding_model"]
-    # config_dimensions = int(config["embedding_dimensions"])
+    config_model_name = os.path.basename(config["embedding"]["model_path"])
+    config_dimensions = int(config["embedding"]["dimensions"])
 
     # --- Step 5: Drift detection ---
-    # drift_detected = False
-    # If embedding_model_name and embedding_model_name != config_model_name → True
-    # If embedding_dimensions and embedding_dimensions != config_dimensions → True
+    # Only compare when embedding_model_name is set (vectors have been written)
+    drift_detected = False
+    if embedding_model_name is not None and embedding_model_name != config_model_name:
+        drift_detected = True
+    if embedding_dimensions is not None and embedding_dimensions != config_dimensions:
+        drift_detected = True
 
     # --- Step 6: Stale vector status ---
-    # stale_since = _read_meta(conn, "vectors_marked_stale_at")
-    # vectors_stale = stale_since is not None
+    stale_since = _read_meta(conn, "vectors_marked_stale_at")
+    vectors_stale = stale_since is not None
 
     # --- Step 7: Entity counts ---
-    # neuron_count = _count_rows(conn, "neurons")
-    # vector_count = _count_vectors(conn)
-    # stale_vector_count = _count_stale_vectors(conn, stale_since)
-    # never_embedded_count = _count_never_embedded(conn)
-    # tag_count = _count_rows(conn, "tags")
-    # edge_count = _count_rows(conn, "edges")
+    neuron_count = _count_rows(conn, "neurons")
+    vector_count = _count_vectors(conn)
+    stale_vector_count = _count_stale_vectors(conn, stale_since)
+    never_embedded_count = _count_never_embedded(conn)
+    tag_count = _count_rows(conn, "tags")
+    edge_count = _count_rows(conn, "edges")
 
     # --- Step 8: Last integrity check ---
-    # last_integrity_check_at = _read_meta(conn, "last_integrity_check_at")
+    last_integrity_check_at = _read_meta(conn, "last_integrity_check_at")
 
-    # --- Step 9: Assemble and return ---
-    # Return dict with all fields
-    pass
+    # --- Step 9: Assemble and return dict with all 17 fields ---
+    return {
+        "db_path": db_path_str,
+        "db_size_bytes": db_size_bytes,
+        "schema_version": schema_version,
+        "embedding_model_name": embedding_model_name,
+        "embedding_dimensions": embedding_dimensions,
+        "config_model_name": config_model_name,
+        "config_dimensions": config_dimensions,
+        "drift_detected": drift_detected,
+        "vectors_stale": vectors_stale,
+        "vectors_stale_since": stale_since,
+        "neuron_count": neuron_count,
+        "vector_count": vector_count,
+        "stale_vector_count": stale_vector_count,
+        "never_embedded_count": never_embedded_count,
+        "tag_count": tag_count,
+        "edge_count": edge_count,
+        "last_integrity_check_at": last_integrity_check_at,
+    }
 
 
 def _read_meta(conn: sqlite3.Connection, key: str) -> str | None:
@@ -114,7 +145,8 @@ def _read_meta(conn: sqlite3.Connection, key: str) -> str | None:
         The string value if found, None otherwise.
     """
     # SELECT value FROM meta WHERE key = ?
-    pass
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    return row[0] if row is not None else None
 
 
 def _read_schema_version(conn: sqlite3.Connection) -> int:
@@ -126,9 +158,14 @@ def _read_schema_version(conn: sqlite3.Connection) -> int:
     Returns:
         Integer schema version, or 0 if not found.
     """
-    # Use PRAGMA user_version or read from a schema_version meta key
-    # Depends on how migration_runner stores it
-    pass
+    # Read schema_version from the meta table (seeded by v001 migration as '1')
+    row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+    if row is None:
+        return 0
+    try:
+        return int(row[0])
+    except (ValueError, TypeError):
+        return 0
 
 
 def _count_rows(conn: sqlite3.Connection, table: str) -> int:
@@ -144,7 +181,11 @@ def _count_rows(conn: sqlite3.Connection, table: str) -> int:
     # SELECT COUNT(*) FROM {table}
     # Table name is NOT parameterized (SQL limitation) but is validated
     # against a whitelist of known table names
-    pass
+    _SAFE_TABLES = {"neurons", "edges", "tags", "neuron_tags", "attr_keys", "neuron_attrs"}
+    if table not in _SAFE_TABLES:
+        raise ValueError(f"Unknown table name: {table!r}")
+    row = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+    return row[0] if row is not None else 0
 
 
 def _count_vectors(conn: sqlite3.Connection) -> int:
@@ -153,9 +194,10 @@ def _count_vectors(conn: sqlite3.Connection) -> int:
     Returns:
         Number of non-null vectors.
     """
-    # SELECT COUNT(*) FROM neuron_vectors
-    # Or however the vec0 virtual table is structured
-    pass
+    # SELECT COUNT(*) FROM neurons_vec — the vec0 virtual table
+    # Note: vec0 supports COUNT(*) via the shadow rowids table
+    row = conn.execute("SELECT COUNT(*) FROM neurons_vec").fetchone()
+    return row[0] if row is not None else 0
 
 
 def _count_stale_vectors(conn: sqlite3.Connection, stale_since: str | None) -> int:
@@ -172,10 +214,12 @@ def _count_stale_vectors(conn: sqlite3.Connection, stale_since: str | None) -> i
     Returns:
         Count of stale vectors (0 or total vector count).
     """
-    # If stale_since is None → return 0
+    # If stale_since is None → return 0 (no stale condition active)
     # If stale_since is set → return _count_vectors(conn)
     #   (model drift makes ALL vectors stale, not just some)
-    pass
+    if stale_since is None:
+        return 0
+    return _count_vectors(conn)
 
 
 def _count_never_embedded(conn: sqlite3.Connection) -> int:
@@ -184,8 +228,10 @@ def _count_never_embedded(conn: sqlite3.Connection) -> int:
     Returns:
         Number of neurons with no corresponding vector entry.
     """
-    # SELECT COUNT(*) FROM neurons n
-    # LEFT JOIN neuron_vectors v ON n.id = v.neuron_id
-    # WHERE v.neuron_id IS NULL
-    # (or equivalent depending on schema)
-    pass
+    # Count neurons with no corresponding row in neurons_vec
+    # Use a subquery since vec0 does not support standard JOINs
+    row = conn.execute("""
+        SELECT COUNT(*) FROM neurons
+        WHERE id NOT IN (SELECT neuron_id FROM neurons_vec)
+    """).fetchone()
+    return row[0] if row is not None else 0
