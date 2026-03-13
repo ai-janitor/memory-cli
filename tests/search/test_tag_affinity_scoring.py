@@ -470,3 +470,188 @@ class TestTagAffinityFinalScoring:
         result = compute_final_scores(candidates)
         # Should work like before: rrf_score * temporal_weight
         assert abs(result[0]["final_score"] - 0.016) < 1e-10
+
+
+# -----------------------------------------------------------------------------
+# Depth=2 tag-affinity tests
+# -----------------------------------------------------------------------------
+
+@pytest.fixture
+def depth2_db(migrated_conn):
+    """DB with neurons and tags for depth=2 affinity testing.
+
+    Simulates the test case: arc-b60 →(cpp)→ GLOBAL-131 →(architecture)→ GLOBAL-124
+
+    Neurons:
+      1 (seed, "arc-b60 gpu kernels") — tags: cpp, gpu
+      2 (depth=1 hop, "llama.cpp internals") — tags: cpp, architecture
+      3 (depth=2 target, "visualizer system") — tags: architecture, rendering
+      4 (unrelated) — tags: javascript
+
+    Tag distribution:
+      cpp:           neurons 1, 2       → count=2, weight=0.5
+      gpu:           neurons 1          → count=1, weight=1.0
+      architecture:  neurons 2, 3       → count=2, weight=0.5
+      rendering:     neurons 3          → count=1, weight=1.0
+      javascript:    neurons 4          → count=1, weight=1.0
+
+    Expected depth=1: neuron 2 discovered via cpp (score=0.5)
+    Expected depth=2: neuron 3 discovered via architecture through neuron 2
+      hop1_score(neuron2) = 0.5, hop2_weight(architecture) = 0.5
+      depth2_score = 0.5 * 0.5 = 0.25
+    """
+    conn = migrated_conn
+    conn.execute("BEGIN")
+
+    # Insert neurons
+    for i in range(1, 5):
+        _insert_neuron(conn, f"neuron {i}")
+
+    # Insert tags
+    t_cpp = _insert_tag(conn, "cpp")
+    t_gpu = _insert_tag(conn, "gpu")
+    t_arch = _insert_tag(conn, "architecture")
+    t_render = _insert_tag(conn, "rendering")
+    t_js = _insert_tag(conn, "javascript")
+
+    # Link neurons to tags
+    _link_neuron_tag(conn, 1, t_cpp)
+    _link_neuron_tag(conn, 1, t_gpu)
+    _link_neuron_tag(conn, 2, t_cpp)
+    _link_neuron_tag(conn, 2, t_arch)
+    _link_neuron_tag(conn, 3, t_arch)
+    _link_neuron_tag(conn, 3, t_render)
+    _link_neuron_tag(conn, 4, t_js)
+
+    conn.execute("COMMIT")
+    return conn
+
+
+class TestDepth2TagAffinity:
+    """Test depth=2 tag-affinity scoring discovers neurons 2 hops away."""
+
+    def test_depth2_discovers_neuron_through_hop1(self, depth2_db):
+        """Verify depth=2 finds neuron 3 through neuron 2.
+
+        Seed 1 →(cpp)→ neuron 2 →(architecture)→ neuron 3.
+        Neuron 3 is NOT reachable at depth=1 (no shared tags with seed 1).
+        """
+        candidates = [_make_direct_candidate(1)]
+        result = apply_tag_affinity(depth2_db, candidates)
+        result_ids = {r["neuron_id"] for r in result}
+        assert 3 in result_ids, "Depth=2 should discover neuron 3 via architecture"
+
+    def test_depth2_neuron_has_correct_match_type(self, depth2_db):
+        """Verify depth=2 discovered neurons have match_type='tag_affinity'."""
+        candidates = [_make_direct_candidate(1)]
+        result = apply_tag_affinity(depth2_db, candidates)
+        by_id = {r["neuron_id"]: r for r in result}
+        assert by_id[3]["match_type"] == "tag_affinity"
+
+    def test_depth2_neuron_has_depth_2(self, depth2_db):
+        """Verify depth=2 discovered neurons have tag_affinity_depth=2."""
+        candidates = [_make_direct_candidate(1)]
+        result = apply_tag_affinity(depth2_db, candidates)
+        by_id = {r["neuron_id"]: r for r in result}
+        assert by_id[3]["tag_affinity_depth"] == 2
+
+    def test_depth1_neuron_has_depth_1(self, depth2_db):
+        """Verify depth=1 discovered neurons have tag_affinity_depth=1."""
+        candidates = [_make_direct_candidate(1)]
+        result = apply_tag_affinity(depth2_db, candidates)
+        by_id = {r["neuron_id"]: r for r in result}
+        assert by_id[2]["tag_affinity_depth"] == 1
+
+    def test_seed_has_no_depth(self, depth2_db):
+        """Verify seed neurons have tag_affinity_depth=None."""
+        candidates = [_make_direct_candidate(1)]
+        result = apply_tag_affinity(depth2_db, candidates)
+        by_id = {r["neuron_id"]: r for r in result}
+        assert by_id[1]["tag_affinity_depth"] is None
+
+    def test_depth2_weight_is_multiplicative(self, depth2_db):
+        """Verify depth=2 score = hop1_score × hop2_weight.
+
+        Neuron 2 at depth=1: score = weight(cpp) = 0.5
+        Neuron 3 at depth=2: hop2_weight(architecture) = 0.5
+        Expected depth=2 score = 0.5 * 0.5 = 0.25
+        """
+        candidates = [_make_direct_candidate(1)]
+        result = apply_tag_affinity(depth2_db, candidates)
+        by_id = {r["neuron_id"]: r for r in result}
+        expected = 0.5 * 0.5  # hop1_score × hop2_weight
+        assert abs(by_id[3]["tag_affinity_score"] - expected) < 1e-9
+
+    def test_depth2_score_less_than_depth1(self, depth2_db):
+        """Verify depth=2 scores are lower than depth=1 (multiplicative decay)."""
+        candidates = [_make_direct_candidate(1)]
+        result = apply_tag_affinity(depth2_db, candidates)
+        by_id = {r["neuron_id"]: r for r in result}
+        assert by_id[3]["tag_affinity_score"] < by_id[2]["tag_affinity_score"]
+
+    def test_depth2_does_not_rediscover_depth1(self, depth2_db):
+        """Verify depth=2 pass does not re-add neurons already found at depth=1."""
+        candidates = [_make_direct_candidate(1)]
+        result = apply_tag_affinity(depth2_db, candidates)
+        ids = [r["neuron_id"] for r in result]
+        assert ids.count(2) == 1  # neuron 2 appears only once (depth=1)
+
+    def test_depth2_does_not_rediscover_seed(self, depth2_db):
+        """Verify depth=2 pass does not re-add the seed neuron."""
+        candidates = [_make_direct_candidate(1)]
+        result = apply_tag_affinity(depth2_db, candidates)
+        ids = [r["neuron_id"] for r in result]
+        assert ids.count(1) == 1  # seed appears only once
+
+    def test_depth2_unrelated_neuron_not_discovered(self, depth2_db):
+        """Verify neuron 4 (javascript only) is NOT discovered at depth=2."""
+        candidates = [_make_direct_candidate(1)]
+        result = apply_tag_affinity(depth2_db, candidates)
+        result_ids = {r["neuron_id"] for r in result}
+        assert 4 not in result_ids
+
+    def test_depth2_no_depth1_results_returns_no_depth2(self, migrated_conn):
+        """Verify no depth=1 discoveries → no depth=2 pass."""
+        conn = migrated_conn
+        conn.execute("BEGIN")
+        nid = _insert_neuron(conn, "isolated")
+        # Give it a tag but no other neurons share it
+        tid = _insert_tag(conn, "unique_only")
+        _link_neuron_tag(conn, nid, tid)
+        conn.execute("COMMIT")
+        candidates = [_make_direct_candidate(nid)]
+        result = apply_tag_affinity(conn, candidates)
+        depth2 = [r for r in result if r.get("tag_affinity_depth") == 2]
+        assert len(depth2) == 0
+
+    def test_depth2_with_multiple_hop1_paths(self, migrated_conn):
+        """Verify depth=2 takes the best path when multiple hop1 neurons connect.
+
+        Neuron 1 (seed) — tags: rust
+        Neuron 2 (hop1, strong) — tags: rust, systems → score via rust=0.333
+        Neuron 3 (hop1, weak)  — tags: rust, systems → score via rust=0.333
+        Neuron 4 (hop2)        — tags: systems
+
+        Both neurons 2 and 3 connect to neuron 4 via "systems".
+        Best path: max(0.333 * weight(systems), 0.333 * weight(systems))
+        """
+        conn = migrated_conn
+        conn.execute("BEGIN")
+        for i in range(1, 5):
+            _insert_neuron(conn, f"neuron {i}")
+        t_rust = _insert_tag(conn, "rust")
+        t_sys = _insert_tag(conn, "systems")
+        _link_neuron_tag(conn, 1, t_rust)
+        _link_neuron_tag(conn, 2, t_rust)
+        _link_neuron_tag(conn, 2, t_sys)
+        _link_neuron_tag(conn, 3, t_rust)
+        _link_neuron_tag(conn, 3, t_sys)
+        _link_neuron_tag(conn, 4, t_sys)
+        conn.execute("COMMIT")
+
+        candidates = [_make_direct_candidate(1)]
+        result = apply_tag_affinity(conn, candidates)
+        by_id = {r["neuron_id"]: r for r in result}
+        assert 4 in by_id
+        assert by_id[4]["tag_affinity_depth"] == 2
+        assert by_id[4]["tag_affinity_score"] > 0
