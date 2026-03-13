@@ -59,8 +59,13 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
         target_raw, rest = require_positional(rest, "target_id")
         _s1, source_id = parse_handle(source_raw)
         _s2, target_id = parse_handle(target_raw)
-        reason, rest = extract_flag(rest, "--type", default="related_to")
+        reason, rest = extract_flag(rest, "--type", default=None)
         weight, rest = extract_flag(rest, "--weight", type_fn=float, default=None)
+        # If --type was not provided, check for an optional 3rd positional arg as reason
+        if reason is None and rest and not rest[0].startswith("--"):
+            reason = rest.pop(0)
+        if reason is None:
+            reason = "related_to"
         conn, scope = get_connection_and_scope(global_flags)
         from memory_cli.edge import edge_add
         result = edge_add(conn, source_id, target_id, reason=reason, weight=weight)
