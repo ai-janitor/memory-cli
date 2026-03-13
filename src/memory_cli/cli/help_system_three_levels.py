@@ -77,6 +77,13 @@ def show_top_level_help(registry: Dict[str, Any]) -> str:
         "",
         "Usage: memory <noun> <verb> [args] [flags]",
         "",
+        "Quick capture:  memory neuron add \"deploy script is in scripts/deploy.sh\"",
+        "Structured:     memory batch load graph.yaml",
+        "",
+        "neuron add is the inbox — fast, one fact, no structure.",
+        "batch load is the filing cabinet — multiple facts with edges between them.",
+        "Edges make search work: spreading activation traverses connections.",
+        "",
     ]
     special_section = _format_section(
         "Special commands:",
@@ -98,6 +105,7 @@ def show_top_level_help(registry: Dict[str, Any]) -> str:
             ("--config <path>", "Config file path"),
             ("--db <path>", "Database file path"),
             ("--help", "Show help"),
+            ("--version", "Show version"),
         ],
     )
     lines.append(flags_section)
