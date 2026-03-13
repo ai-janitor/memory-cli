@@ -241,7 +241,10 @@ _VERB_DESCRIPTIONS = {
 _FLAG_DEFS = {
     "info": [],
     "stats": [],
-    "manifesto": [],
+    "manifesto": [
+        {"name": "set", "type": "subcommand", "default": None, "desc": "Replace manifesto: memory meta manifesto set \"<text>\""},
+        {"name": "--file", "type": "str", "default": None, "desc": "Read new manifesto from file: memory meta manifesto set --file <path>"},
+    ],
 }
 
 
