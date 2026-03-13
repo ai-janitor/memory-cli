@@ -244,6 +244,7 @@ def _build_result_record(
         "hop_distance": candidate.get("hop_distance", 0),
         "edge_reason": candidate.get("edge_reason"),
         "score": candidate.get("final_score", 0.0),
+        "tag_affinity_depth": candidate.get("tag_affinity_depth"),
     }
 
     # Only include breakdown if --explain was used (it's pre-attached)
