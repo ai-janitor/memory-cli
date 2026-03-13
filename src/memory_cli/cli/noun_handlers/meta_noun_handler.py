@@ -125,21 +125,114 @@ def handle_stats(args: List[str], global_flags: Any) -> Any:
 
 
 # =============================================================================
+# VERB: manifesto — show or update the store's memory manifesto
+# =============================================================================
+def handle_manifesto(args: List[str], global_flags: Any) -> Any:
+    """Show or update the memory manifesto for the active store.
+
+    Subcommands:
+        memory meta manifesto          — show the current manifesto
+        memory meta manifesto set "…"  — replace the manifesto with new text
+        memory meta manifesto set --file <path> — replace from file content
+
+    Args:
+        args: Remaining tokens after "manifesto" (e.g., [], ["set", "new text"],
+              ["set", "--file", "path"]).
+        global_flags: Parsed global flags.
+
+    Returns:
+        Result with manifesto text or update confirmation.
+
+    Pseudo-logic:
+    1. If args is empty: read manifesto from meta table, return it
+    2. If args[0] == "set":
+       a. If "--file" flag present: read file content, use as new manifesto
+       b. Else: use next positional arg as new manifesto text
+       c. UPDATE meta SET value = new_text WHERE key = 'manifesto'
+       d. Return Result(status="ok", data={"manifesto": new_text, "updated": True})
+    3. Otherwise: error — unknown subcommand
+    """
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_config
+
+    try:
+        conn, config = get_connection_and_config(global_flags)
+
+        # --- Subcommand dispatch ---
+        if not args:
+            # Show manifesto
+            row = conn.execute(
+                "SELECT value FROM meta WHERE key = 'manifesto'"
+            ).fetchone()
+            if row is None:
+                return Result(
+                    status="not_found",
+                    error="No manifesto found. Run `memory init` or set one with `memory meta manifesto set`.",
+                )
+            return Result(status="ok", data={"manifesto": row[0]})
+
+        subcmd = args[0]
+
+        if subcmd == "set":
+            sub_args = args[1:]
+            new_text = None
+
+            # Check for --file flag
+            if "--file" in sub_args:
+                idx = sub_args.index("--file")
+                if idx + 1 >= len(sub_args):
+                    return Result(status="error", error="--file requires a path argument.")
+                file_path = sub_args[idx + 1]
+                try:
+                    from pathlib import Path
+                    new_text = Path(file_path).read_text(encoding="utf-8")
+                except FileNotFoundError:
+                    return Result(status="error", error=f"File not found: {file_path}")
+                except OSError as e:
+                    return Result(status="error", error=f"Cannot read file: {e}")
+            elif sub_args:
+                # Positional text argument
+                new_text = sub_args[0]
+            else:
+                return Result(
+                    status="error",
+                    error='Usage: memory meta manifesto set "<text>" or memory meta manifesto set --file <path>',
+                )
+
+            if new_text is not None:
+                # Upsert manifesto
+                conn.execute(
+                    "INSERT OR REPLACE INTO meta (key, value) VALUES ('manifesto', ?)",
+                    (new_text,),
+                )
+                conn.commit()
+                return Result(status="ok", data={"manifesto": new_text, "updated": True})
+
+        return Result(status="error", error=f"Unknown manifesto subcommand: {subcmd}")
+
+    except Exception as e:
+        return Result(status="error", error=str(e))
+
+
+# =============================================================================
 # NOUN REGISTRATION
 # =============================================================================
 _VERB_MAP = {
     "info": handle_info,
     "stats": handle_stats,
+    "manifesto": handle_manifesto,
 }
 
 _VERB_DESCRIPTIONS = {
     "info": "Show database identity and configuration",
     "stats": "Show database statistics (counts, sizes)",
+    "manifesto": "Show or update the store's memory manifesto",
 }
 
 _FLAG_DEFS = {
     "info": [],
     "stats": [],
+    "manifesto": [],
 }
 
 

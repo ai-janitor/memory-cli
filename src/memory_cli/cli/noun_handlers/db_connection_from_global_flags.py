@@ -23,7 +23,7 @@ from memory_cli.config import load_config, MemoryConfig, ConfigLoadError
 from memory_cli.db import open_connection, run_pending_migrations, read_schema_version
 
 # Target schema version — must match MIGRATION_REGISTRY in db/migrations/__init__.py
-_TARGET_VERSION = 2
+_TARGET_VERSION = 3
 
 
 def get_connection_and_config(global_flags: Any) -> Tuple[sqlite3.Connection, MemoryConfig]:

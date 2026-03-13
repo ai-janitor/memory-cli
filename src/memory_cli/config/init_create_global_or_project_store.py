@@ -208,7 +208,7 @@ def _bootstrap_schema_and_fingerprint(
         conn = open_connection(db_path)
         load_sqlite_vec(conn)
         current = read_schema_version(conn)
-        target = 2  # Must match _TARGET_VERSION in db_connection_from_global_flags.py
+        target = 3  # Must match _TARGET_VERSION in db_connection_from_global_flags.py
         if current < target:
             run_pending_migrations(conn, current, target)
 
@@ -231,6 +231,14 @@ def _bootstrap_schema_and_fingerprint(
         conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('db_path', ?)",
             (str(db_path.resolve()),),
+        )
+
+        # Seed default manifesto if not already set (migration v003 uses OR IGNORE,
+        # so if init races with migration, the first write wins)
+        from memory_cli.db.migrations.v003_add_manifesto_to_meta import DEFAULT_MANIFESTO
+        conn.execute(
+            "INSERT OR IGNORE INTO meta (key, value) VALUES ('manifesto', ?)",
+            (DEFAULT_MANIFESTO,),
         )
 
         conn.commit()
