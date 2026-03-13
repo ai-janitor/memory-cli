@@ -27,6 +27,7 @@ memory neuron search "deploy process"
 memory edge add <source-id> <target-id> --reason "related"
 memory tag list
 memory meta stats
+memory batch load graph.yaml
 ```
 
 ### Nouns
@@ -37,7 +38,7 @@ memory meta stats
 | `edge` | add, list, remove |
 | `tag` | add, list, remove, rename |
 | `attr` | set, get, list, remove |
-| `batch` | export, import, reembed |
+| `batch` | export, import, load, reembed |
 | `meta` | info, stats |
 
 ### Global flags
@@ -48,6 +49,36 @@ memory meta stats
 --db <path>            Database file path
 --help                 Show help (works at any level)
 ```
+
+## Graph Document Import
+
+Load an entire knowledge graph from a single YAML file:
+
+```yaml
+# interview-prep.yaml
+neurons:
+  - ref: interview
+    content: "Video interview Friday March 13 at 1:00 PM ET"
+    tags: [interview, 2026-03-13]
+    type: event
+    source: interview-prep
+  - ref: payam
+    content: "Payam Fard — Director of Software Engineering"
+    tags: [interview, contact]
+    type: person
+
+edges:
+  - from: interview
+    to: payam
+    type: has_interviewer
+    weight: 1.0
+```
+
+```bash
+memory batch load interview-prep.yaml
+```
+
+`ref` labels are local — resolved to real neuron IDs at import time. One file, one command, entire graph.
 
 ## Install
 
@@ -90,6 +121,7 @@ curl -L -o ~/.memory/models/default.gguf \
 - SQLite with FTS5 (ships with Python)
 - [sqlite-vec](https://github.com/asg017/sqlite-vec) — vector search extension
 - [llama-cpp-python](https://github.com/abetlen/llama-cpp-python) — GGUF embedding engine
+- [PyYAML](https://pyyaml.org/) — graph document import
 - [anthropic](https://github.com/anthropics/anthropic-sdk-python) — for heavy search features (optional, needs `ANTHROPIC_API_KEY`)
 
 ## Development

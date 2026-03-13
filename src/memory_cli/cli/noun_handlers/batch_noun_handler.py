@@ -49,7 +49,23 @@ def handle_export(args: List[str], global_flags: Any) -> Any:
     5. Return Result(status="ok", data={"exported": count, "path": path_or_stdout})
     6. Error path: DB not initialized, write permission denied, etc.
     """
-    raise NotImplementedError
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection
+    from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import extract_flag
+    try:
+        rest = list(args)
+        output, rest = extract_flag(rest, "--output")
+        conn = get_connection(global_flags)
+        from memory_cli.export_import import export_neurons
+        data = export_neurons(conn)
+        if output:
+            import json
+            from pathlib import Path
+            Path(output).write_text(json.dumps(data, indent=2), encoding="utf-8")
+            return Result(status="ok", data={"path": output, "neurons": len(data.get("neurons", []))})
+        return Result(status="ok", data=data)
+    except Exception as e:
+        return Result(status="error", error=str(e))
 
 
 # =============================================================================
@@ -82,7 +98,75 @@ def handle_import(args: List[str], global_flags: Any) -> Any:
        })
     7. Error path: file not found, malformed data, DB errors
     """
-    raise NotImplementedError
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection
+    from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
+        extract_flag, extract_bool_flag,
+    )
+    try:
+        rest = list(args)
+        input_path, rest = extract_flag(rest, "--input")
+        replace_mode, rest = extract_bool_flag(rest, "--replace")
+        on_conflict = "overwrite" if replace_mode else "skip"
+        if input_path is None:
+            return Result(status="error", error="--input <path> is required")
+        conn = get_connection(global_flags)
+        from memory_cli.export_import import validate_import_file, import_neurons
+        validation = validate_import_file(input_path, conn, on_conflict=on_conflict)
+        if not validation.valid:
+            return Result(status="error", error="Validation failed", data=validation.errors)
+        result = import_neurons(conn, validation, on_conflict=on_conflict)
+        return Result(status="ok", data={
+            "neurons_written": result.neurons_written,
+            "neurons_skipped": result.neurons_skipped,
+            "edges_written": result.edges_written,
+        })
+    except Exception as e:
+        return Result(status="error", error=str(e))
+
+
+# =============================================================================
+# VERB: load — load a graph document (YAML with ref-based neurons + edges)
+# =============================================================================
+def handle_load(args: List[str], global_flags: Any) -> Any:
+    """Load a YAML graph document, creating neurons and edges in one shot.
+
+    Args:
+        args: [<file-path>, --source <source>]
+        global_flags: Parsed global flags.
+
+    Returns:
+        Result with counts of neurons/edges created and ref→ID map.
+
+    Pseudo-logic:
+    1. Parse positional arg: file path (required)
+    2. Parse optional flag: --source <source> override
+    3. Delegate to graph_document_loader_yaml_with_ref_resolution.load_graph_document()
+    4. Return Result with data or error
+    """
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection
+    from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
+        require_positional, extract_flag,
+    )
+    try:
+        rest = list(args)
+        file_path, rest = require_positional(rest, "file")
+        source, rest = extract_flag(rest, "--source")
+        conn = get_connection(global_flags)
+        from memory_cli.export_import.graph_document_loader_yaml_with_ref_resolution import (
+            load_graph_document,
+        )
+        result = load_graph_document(conn, file_path, source=source)
+        if not result.success:
+            return Result(status="error", error="; ".join(result.errors))
+        return Result(status="ok", data={
+            "neurons_created": result.neurons_created,
+            "edges_created": result.edges_created,
+            "ref_map": result.ref_map,
+        })
+    except Exception as e:
+        return Result(status="error", error=str(e))
 
 
 # =============================================================================
@@ -114,7 +198,27 @@ def handle_reembed(args: List[str], global_flags: Any) -> Any:
        })
     5. Error path: embedding model not available, DB errors
     """
-    raise NotImplementedError
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_config
+    from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
+        extract_flag, extract_bool_flag,
+    )
+    try:
+        rest = list(args)
+        batch_size, rest = extract_flag(rest, "--limit", type_fn=int, default=32)
+        force, rest = extract_bool_flag(rest, "--force")
+        conn, config = get_connection_and_config(global_flags)
+        from memory_cli.embedding.model_loader_lazy_singleton import get_model
+        from memory_cli.embedding import batch_reembed
+        model = get_model(config.embedding.model_path)
+        progress = batch_reembed(conn, model, batch_size=batch_size)
+        return Result(status="ok", data={
+            "processed": progress.processed,
+            "skipped": progress.skipped,
+            "failed": progress.failed,
+        })
+    except Exception as e:
+        return Result(status="error", error=str(e))
 
 
 # =============================================================================
@@ -123,12 +227,14 @@ def handle_reembed(args: List[str], global_flags: Any) -> Any:
 _VERB_MAP = {
     "export": handle_export,
     "import": handle_import,
+    "load": handle_load,
     "reembed": handle_reembed,
 }
 
 _VERB_DESCRIPTIONS = {
     "export": "Export database contents to portable format",
     "import": "Import data from portable format",
+    "load": "Load a YAML graph document (neurons + edges with ref labels)",
     "reembed": "Regenerate embeddings for all neurons",
 }
 
@@ -142,6 +248,10 @@ _FLAG_DEFS = {
         {"name": "--input", "type": "str", "default": None, "desc": "Input file path (default: stdin)"},
         {"name": "--merge", "type": "bool", "default": True, "desc": "Merge with existing data"},
         {"name": "--replace", "type": "bool", "default": False, "desc": "Replace existing data"},
+    ],
+    "load": [
+        {"name": "<file>", "type": "str", "default": None, "desc": "Path to YAML graph document"},
+        {"name": "--source", "type": "str", "default": None, "desc": "Override source for all neurons"},
     ],
     "reembed": [
         {"name": "--limit", "type": "int", "default": None, "desc": "Process only N neurons"},
