@@ -109,7 +109,7 @@ Sensory → short-term (working memory, ~7 items, decays fast) → long-term (co
 
 ---
 
-## HIGH — batch load: Scoped handles rejected in edge from/to fields
+## ~~HIGH — batch load: Scoped handles rejected in edge from/to fields~~ NOT REPRODUCIBLE v0.2.2
 
 **Problem:** `memory batch load` rejects scoped handles (`GLOBAL-42`, `LOCAL-42`) in edge `from`/`to` fields with error: `"ref 'GLOBAL-64' not found in neurons"`. The README (lines 186-200) documents this as a supported feature, and `memory edge add` handles scoped handles correctly via `parse_handle()`.
 
