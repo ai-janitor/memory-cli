@@ -8,7 +8,10 @@
 #            Keeping it isolated here makes the exception explicit and contained.
 # RESPONSIBILITY:
 #   - Detect "init" as the first token (done in entrypoint, but handled here)
-#   - Parse init-specific flags (--db path, --config path, --force)
+#   - Parse init-specific flags (--force, --project)
+#   - --project: create LOCAL project store at .memory/ in current directory
+#   - --force: overwrite existing config (preserve DB)
+#   - These can be combined: memory init --project --force
 #   - Delegate to config/storage layer to create database and config
 #   - Return a Result object for the output formatter
 #   - Handle already-initialized case (error unless --force)
@@ -32,8 +35,14 @@ from typing import List, Any
 def handle_init(args: List[str], global_flags: Any) -> Any:
     """Handle `memory init [flags]` command.
 
+    Supported invocations:
+        memory init             — creates GLOBAL store at ~/.memory/
+        memory init --project   — creates LOCAL project store at .memory/ in cwd
+        memory init --force     — overwrite existing config (preserve DB)
+        memory init --project --force — combine both flags
+
     Args:
-        args: Remaining tokens after "init" (e.g., ["--force"]).
+        args: Remaining tokens after "init" (e.g., ["--force", "--project"]).
         global_flags: Parsed global flags (--db, --config may override defaults).
 
     Returns:
@@ -41,7 +50,8 @@ def handle_init(args: List[str], global_flags: Any) -> Any:
 
     Pseudo-logic:
     1. Parse init-specific flags from args:
-       - --force: overwrite existing database (default False)
+       - --force: overwrite existing config, preserve DB (default False)
+       - --project: create .memory/ in cwd instead of ~/.memory/ (default False)
        - --db and --config may also come from global_flags
     2. Determine database path:
        a. If global_flags.db is set, use that
@@ -54,7 +64,7 @@ def handle_init(args: List[str], global_flags: Any) -> Any:
        a. If exists and not --force: return error result
           "Database already exists at {path}. Use --force to overwrite."
        b. If exists and --force: delete existing, proceed
-    5. Delegate to storage layer:
+    5. Delegate to storage layer via init_memory_store(project=, force=):
        a. Create database with schema (tables, indexes, vec extension)
        b. Create config file with defaults if it doesn't exist
     6. Return success result with data:
@@ -64,6 +74,7 @@ def handle_init(args: List[str], global_flags: Any) -> Any:
 
     init_flags = _parse_init_flags(list(args))
     force = init_flags["force"]
+    project = init_flags["project"]
 
     if global_flags is not None and getattr(global_flags, "db", None):
         db_path = Path(global_flags.db)
@@ -86,7 +97,7 @@ def handle_init(args: List[str], global_flags: Any) -> Any:
     # Use init_memory_store if no custom paths are specified
     try:
         from memory_cli.config.init_create_global_or_project_store import init_memory_store, InitError
-        store_path = init_memory_store(force=force)
+        store_path = init_memory_store(project=project, force=force)
         return Result(
             status="ok",
             data={
@@ -122,28 +133,38 @@ def handle_init(args: List[str], global_flags: Any) -> Any:
 def _parse_init_flags(args: List[str]) -> dict:
     """Extract init-specific flags from the argument list.
 
+    Recognized flags:
+        --force   : overwrite existing config (preserve DB)
+        --project : create LOCAL project store at .memory/ in cwd
+                    (without --project, creates GLOBAL store at ~/.memory/)
+
     Args:
         args: Tokens after "init".
 
     Returns:
-        Dict with parsed flags: {"force": bool}
+        Dict with parsed flags: {"force": bool, "project": bool}
 
     Pseudo-logic:
     1. Scan args for "--force" -> set force=True, remove from list
-    2. If any unrecognized flags remain (tokens starting with "--"),
+    2. Scan args for "--project" -> set project=True, remove from list
+    3. If any unrecognized flags remain (tokens starting with "--"),
        raise error "Unknown flag for init: {flag}"
-    3. If any positional args remain, raise error
+    4. If any positional args remain, raise error
        "init takes no positional arguments"
-    4. Return {"force": force}
+    5. Return {"force": force, "project": project}
     """
     remaining = list(args)
     force = False
+    project = False
     if "--force" in remaining:
         force = True
         remaining.remove("--force")
+    if "--project" in remaining:
+        project = True
+        remaining.remove("--project")
     for token in remaining:
         if token.startswith("--"):
             raise ValueError(f"Unknown flag for init: {token}")
     if remaining:
         raise ValueError("init takes no positional arguments")
-    return {"force": force}
+    return {"force": force, "project": project}

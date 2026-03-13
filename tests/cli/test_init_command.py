@@ -121,24 +121,24 @@ class TestInitFlagParsing:
     """Test _parse_init_flags()."""
 
     def test_no_flags_returns_defaults(self) -> None:
-        """Empty args -> force=False.
+        """Empty args -> force=False, project=False.
 
         Pseudo-logic:
         1. result = _parse_init_flags([])
-        2. Assert result == {"force": False}
+        2. Assert result == {"force": False, "project": False}
         """
         result = _parse_init_flags([])
-        assert result == {"force": False}
+        assert result == {"force": False, "project": False}
 
     def test_force_flag_parsed(self) -> None:
-        """--force -> force=True.
+        """--force -> force=True, project=False.
 
         Pseudo-logic:
         1. result = _parse_init_flags(["--force"])
-        2. Assert result == {"force": True}
+        2. Assert result == {"force": True, "project": False}
         """
         result = _parse_init_flags(["--force"])
-        assert result == {"force": True}
+        assert result == {"force": True, "project": False}
 
     def test_unknown_flag_raises_error(self) -> None:
         """Unknown flag -> error.
