@@ -295,20 +295,20 @@ class TestManifestoRegistration:
 class TestDefaultManifestoContent:
     """Verify the default manifesto contains expected sections."""
 
-    def test_contains_storage_priorities(self):
-        assert "STORAGE PRIORITIES" in DEFAULT_MANIFESTO
+    def test_contains_storing_memory(self):
+        assert "STORING MEMORY" in DEFAULT_MANIFESTO
 
-    def test_contains_anti_patterns(self):
-        assert "STORAGE ANTI-PATTERNS" in DEFAULT_MANIFESTO
+    def test_contains_what_not_to_store(self):
+        assert "WHAT NOT TO STORE" in DEFAULT_MANIFESTO
 
-    def test_contains_extraction_priorities(self):
-        assert "EXTRACTION PRIORITIES" in DEFAULT_MANIFESTO
+    def test_contains_extracting_from_blobs(self):
+        assert "EXTRACTING FROM BLOBS" in DEFAULT_MANIFESTO
 
-    def test_contains_edge_priorities(self):
-        assert "EDGE PRIORITIES" in DEFAULT_MANIFESTO
+    def test_contains_judging_value(self):
+        assert "JUDGING VALUE" in DEFAULT_MANIFESTO
 
-    def test_contains_value_signals(self):
-        assert "VALUE SIGNALS" in DEFAULT_MANIFESTO
+    def test_contains_user_preferences(self):
+        assert "USER PREFERENCES AND RULES" in DEFAULT_MANIFESTO
 
     def test_contains_provenance(self):
         assert "PROVENANCE" in DEFAULT_MANIFESTO

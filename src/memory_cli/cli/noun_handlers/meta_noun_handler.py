@@ -130,6 +130,15 @@ def handle_stats(args: List[str], global_flags: Any) -> Any:
 def handle_manifesto(args: List[str], global_flags: Any) -> Any:
     """Show or update the memory manifesto for the active store.
 
+    The manifesto is a USAGE GUIDE — it tells agents how to use this memory
+    store: how to store, extract, judge value, and handle provenance.
+
+    It is NOT a repository of rules, preferences, or project-specific data.
+    Those belong as neurons in the graph where they can have edges, fan out,
+    and participate in activation. The manifesto may point agents to search
+    for those neurons (e.g., "search for user-rule tags before scaffolding")
+    but should not contain the rules themselves.
+
     Subcommands:
         memory meta manifesto          — show the current manifesto
         memory meta manifesto set "…"  — replace the manifesto with new text
@@ -226,7 +235,7 @@ _VERB_MAP = {
 _VERB_DESCRIPTIONS = {
     "info": "Show database identity and configuration",
     "stats": "Show database statistics (counts, sizes)",
-    "manifesto": "Show or update the store's memory manifesto",
+    "manifesto": "Show or update the store's memory manifesto (usage guide, not data — rules belong as neurons)",
 }
 
 _FLAG_DEFS = {

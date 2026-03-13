@@ -19,47 +19,49 @@ from __future__ import annotations
 import sqlite3
 
 DEFAULT_MANIFESTO = """\
-MEMORY MANIFESTO — What to remember, what to extract, what matters.
+MEMORY MANIFESTO — How to use this memory store.
 
-STORAGE PRIORITIES (what to store):
-1. Decisions with downstream impact — "we chose X because Y" bends the path. Facts don't.
-2. People with relationships — name alone is useless. Name + role + org + how they connect = valuable.
-3. Feedback and corrections — the user told you to change behavior. Prevents repeating mistakes.
-4. Novel concepts — if the graph has nothing like this, flag it. New dimensions > more density.
-5. Search misses — if you searched and found nothing, that's a gap. Note what was missing.
+This manifesto is a USAGE GUIDE — it tells agents how to store, extract, and
+retrieve memory effectively. It is NOT a repository of rules, preferences, or
+project-specific data. Those belong as neurons in the graph where they can have
+edges, fan out, and participate in activation.
 
-STORAGE ANTI-PATTERNS (what NOT to store):
-1. Boilerplate — "started working on feature X" is noise.
-2. Facts derivable from code — file paths, function signatures, git history. Read the source.
-3. Common without demand — stored often, searched never = clutter.
-4. Isolated nodes — a neuron with no edges is just text. If you can't connect it, question storing it.
+STORING MEMORY:
+- Store decisions with impact, not just facts. "We chose X because Y" > "X exists."
+- Store people with relationships and edges, not just names.
+- Store user corrections as triads: [problem] --caused_by--> [pattern] --solved_by--> [solution].
+- Connect what you store. A neuron with no edges is just text.
+- Tag with specifics: "works_at" not "related_to."
 
-EXTRACTION PRIORITIES (what to extract from blobs):
-1. Decisions and their consequences — what was chosen, what was rejected, why.
-2. Relationships between entities — not just "Payam exists" but "Payam works_at Leidos."
-3. Tensions and tradeoffs — where two good ideas conflicted and one won.
-4. The user's corrections — "no, do it THIS way" is the highest-signal extraction target.
-5. Purpose behind actions — why was this built, not just what was built.
+WHAT NOT TO STORE:
+- Boilerplate or status updates.
+- Facts derivable from code, git history, or file paths.
+- Duplicates of what's already in the graph.
 
-EDGE PRIORITIES (relationships > nodes):
-- A neuron with 5 edges is more valuable than 5 neurons with 0 edges.
-- Authored edges (agent wrote them) > extracted edges (model guessed them).
-- Edge reason should be specific: "works_at" not "related_to."
-- Fan-out nodes (decisions that caused other things) are load-bearing. Protect them.
+EXTRACTING FROM BLOBS:
+- Prioritize decisions and consequences over entity lists.
+- Prioritize relationships over isolated facts.
+- Extract the user's corrections — highest-signal target.
+- Extract purpose: why was this built, not just what.
 
-VALUE SIGNALS (how to judge what matters):
+JUDGING VALUE:
 - Impact: did this change what happened next?
-- Demand: do agents keep searching for this?
+- Demand: do agents search for this?
 - Centrality: do paths flow through this node?
-- Novelty: is this a new dimension the graph didn't have?
 - NOT frequency. Common ≠ valuable. Demanded = valuable.
 
-PROVENANCE (track the source):
-- Authored (agent wrote structure): confidence 1.0, intentional edges.
-- Extracted (model guessed): confidence < 1.0, inferred edges.
-- The graph must know the difference. Activation should respect it.
+PROVENANCE:
+- User-authored: confidence 1.0, ground truth. The user's word is law.
+- Agent-authored: confidence 1.0, intentional structure.
+- Extracted: confidence < 1.0, model inferred. Weight accordingly.
 
-This manifesto evolves. Update it as you learn what matters for this store."""
+USER PREFERENCES AND RULES:
+- User preferences are stored as neurons, NOT in this manifesto.
+- Search for them: memory neuron search "user-rule <topic>"
+- They have edges, they fan out, they participate in activation.
+- Before scaffolding, coding, or naming: search for applicable user rules first.
+
+This manifesto evolves. Update it with: memory meta manifesto set"""
 
 
 def apply(conn: sqlite3.Connection) -> None:
