@@ -51,12 +51,31 @@ memory meta stats
 
 ## Install
 
+### One-liner (recommended)
+
 ```bash
-# Clone and install
+curl -fsSL https://raw.githubusercontent.com/ai-janitor/memory-cli/master/install.sh | bash
+```
+
+### Manual
+
+```bash
 git clone https://github.com/ai-janitor/memory-cli.git
 cd memory-cli
-pip install -e ".[dev]"
+pipx install .
+```
 
+### Developer
+
+```bash
+git clone https://github.com/ai-janitor/memory-cli.git
+cd memory-cli
+pipx install --editable .
+```
+
+### Post-install
+
+```bash
 # Initialize the memory store
 memory init
 
