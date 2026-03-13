@@ -97,7 +97,7 @@ Sensory → short-term (working memory, ~7 items, decays fast) → long-term (co
 
 ---
 
-## HIGH — batch load: YAML date tags parsed as datetime.date, not string
+## ~~HIGH — batch load: YAML date tags parsed as datetime.date, not string~~ SHIPPED v0.1.3
 
 **Problem:** `memory batch load` fails when a tag looks like a date (e.g., `2026-03-13`). YAML auto-parses it as `datetime.date`, then the tag creation code calls `.strip()` on it and crashes: `'datetime.date' object has no attribute 'strip'`.
 
@@ -109,7 +109,7 @@ Sensory → short-term (working memory, ~7 items, decays fast) → long-term (co
 
 ---
 
-## HIGH — batch load: No dedup — identical content creates duplicate neurons
+## ~~HIGH — batch load: No dedup — identical content creates duplicate neurons~~ SHIPPED v0.1.3
 
 **Problem:** Running `memory batch load` on a graph doc that contains content already in the DB creates duplicate neurons. No content-hash or idempotency check. We loaded the same interview prep twice (once via individual calls, once via batch load) and got 14 results for "leidos interview" — every neuron duplicated.
 
