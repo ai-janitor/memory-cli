@@ -216,6 +216,34 @@ class TestFuzzySearchStandalone:
         scores = [r["fuzzy_score"] for r in results]
         assert scores == sorted(scores, reverse=True)
 
+    def test_fuzzy_default_threshold_is_065(self, fuzzy_db):
+        """Default threshold should be 0.65, filtering out low-quality noise."""
+        conn, nids = fuzzy_db
+        # With default threshold (0.65), "adidit" should match Aditi (0.73)
+        # but not garbage results below 0.65.
+        results = fuzzy_search(conn, "adidit", limit=10)
+        assert len(results) > 0
+        for r in results:
+            assert r["fuzzy_score"] >= 0.65
+
+    def test_fuzzy_gap_cutoff_truncates_noise(self, fuzzy_db):
+        """Score gap cutoff should truncate results after a significant drop."""
+        conn, nids = fuzzy_db
+        # Use a low threshold so many results pass, but gap cutoff should
+        # isolate the clearly-better match from the noise.
+        results = fuzzy_search(conn, "adidit", limit=10, threshold=0.3)
+        # The Aditi match (0.73) should be present; if there's a gap > 0.10
+        # between it and the next result, the noise gets cut.
+        if len(results) > 1:
+            # Verify there's no gap > 0.10 between consecutive results
+            # (if there were, they'd have been truncated)
+            for i in range(len(results) - 1):
+                gap = results[i]["fuzzy_score"] - results[i + 1]["fuzzy_score"]
+                assert gap <= 0.10, (
+                    f"Gap of {gap:.4f} between results {i} and {i+1} "
+                    f"should have triggered cutoff"
+                )
+
     def test_fuzzy_exact_substring_scores_1(self, fuzzy_db):
         """Exact substring match in content should score 1.0."""
         conn, nids = fuzzy_db

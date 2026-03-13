@@ -30,7 +30,7 @@ def fuzzy_search(
     conn: sqlite3.Connection,
     query: str,
     limit: int = 10,
-    threshold: float = 0.4,
+    threshold: float = 0.65,
 ) -> List[Dict[str, Any]]:
     """Last-resort fuzzy search when BM25 + vector return nothing.
 
@@ -41,8 +41,10 @@ def fuzzy_search(
     4. Load all attr values per neuron via neuron_attrs JOIN attr_keys.
     5. For each neuron, compute best fuzzy score across all fields.
     6. Filter candidates above threshold.
-    7. Sort by score descending, return top `limit`.
-    8. Return candidate dicts with neuron_id, match_type, fuzzy metadata.
+    7. Sort by score descending.
+    8. Apply score gap cutoff — if gap between consecutive scores > 0.10,
+       truncate at the gap to isolate clearly-better matches from noise.
+    9. Return top `limit` candidate dicts with neuron_id, match_type, fuzzy metadata.
 
     Args:
         conn: SQLite connection with neurons, neuron_tags, tags,
@@ -108,9 +110,20 @@ def fuzzy_search(
         if best_score >= threshold:
             scored.append((best_score, best_field, neuron_id))
 
-    # --- Sort by score descending, take top `limit` ---
+    # --- Sort by score descending ---
     scored.sort(key=lambda x: x[0], reverse=True)
-    top = scored[:limit]
+
+    # --- Score gap cutoff ---
+    # If there is a significant gap (> 0.10) between consecutive results,
+    # truncate at the gap. This isolates clearly-better matches from noise.
+    gap_threshold = 0.10
+    cutoff = len(scored)
+    for i in range(len(scored) - 1):
+        if scored[i][0] - scored[i + 1][0] > gap_threshold:
+            cutoff = i + 1
+            break
+
+    top = scored[:min(cutoff, limit)]
 
     # --- Build candidate dicts compatible with hydration pipeline ---
     results: List[Dict[str, Any]] = []
