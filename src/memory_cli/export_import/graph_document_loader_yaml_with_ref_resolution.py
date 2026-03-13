@@ -55,13 +55,16 @@ def load_graph_document(
     conn: sqlite3.Connection,
     file_path: str,
     source: Optional[str] = None,
+    yaml_content: Optional[str] = None,
 ) -> GraphDocumentResult:
     """Load a YAML graph document, creating neurons and edges.
 
     Args:
         conn: Active SQLite connection to the memory database.
-        file_path: Path to the YAML graph document.
+        file_path: Path to the YAML graph document (ignored if yaml_content provided).
         source: Optional source tag for all created neurons.
+        yaml_content: If provided, parse this YAML string directly instead of
+            reading from file_path. Enables stdin and --inline modes.
 
     Returns:
         GraphDocumentResult with counts and ref→ID map.
@@ -85,7 +88,7 @@ def load_graph_document(
             weight: 1.0
 
     Logic flow:
-    1. Read and parse YAML file
+    1. Read and parse YAML (from yaml_content string or file_path)
     2. Validate document structure
     3. Phase 1: Create neurons, build ref→ID map
     4. Phase 2: Create edges using resolved refs
@@ -95,18 +98,25 @@ def load_graph_document(
 
     result = GraphDocumentResult()
 
-    # 1. Read and parse YAML file
-    path = Path(file_path)
-    if not path.exists():
-        result.errors.append(f"File not found: {file_path}")
-        return result
+    # 1. Read and parse YAML — from string if provided, otherwise from file
+    if yaml_content is not None:
+        try:
+            doc = yaml.safe_load(yaml_content)
+        except Exception as e:
+            result.errors.append(f"YAML parse error: {e}")
+            return result
+    else:
+        path = Path(file_path)
+        if not path.exists():
+            result.errors.append(f"File not found: {file_path}")
+            return result
 
-    try:
-        raw = path.read_text(encoding="utf-8")
-        doc = yaml.safe_load(raw)
-    except Exception as e:
-        result.errors.append(f"YAML parse error: {e}")
-        return result
+        try:
+            raw = path.read_text(encoding="utf-8")
+            doc = yaml.safe_load(raw)
+        except Exception as e:
+            result.errors.append(f"YAML parse error: {e}")
+            return result
 
     if not isinstance(doc, dict):
         result.errors.append(f"Document root must be a mapping, got {type(doc).__name__}")
