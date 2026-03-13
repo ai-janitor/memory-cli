@@ -116,6 +116,15 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     first_token = remaining_tokens[0]
 
+    if first_token in ("--version", "-V"):
+        try:
+            from importlib.metadata import version as _pkg_version
+            ver = _pkg_version("memory-cli")
+        except Exception:
+            ver = "unknown"
+        write_output(f"memory-cli {ver}", stream=sys.stdout)
+        sys.exit(EXIT_SUCCESS)
+
     if first_token == "init":
         try:
             result = handle_init(remaining_tokens[1:], global_flags)
