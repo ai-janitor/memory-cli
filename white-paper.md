@@ -115,11 +115,55 @@ The difference between inbox and filing cabinet is not merely organizational —
 
 Over time, this creates a natural selection pressure: **connected memories persist in search relevance; isolated memories decay**. This mirrors the cognitive science finding that elaborative rehearsal (connecting new information to existing knowledge) is essential for long-term retention.
 
-### 3.4 Typical Agent Workflow
+### 3.4 Two-Pass Memory: Author Mode and Collector Mode
+
+Agents interact with memory in two fundamentally different modes:
+
+**Author mode** (`batch load`): The agent writes structured graph documents with explicit neurons, edges, tags, and attributes. The agent *is* the knowledge engineer — it chooses the topology, names the relationships, sets the weights. Every edge is intentional. Confidence is 1.0.
+
+**Collector mode** (`neuron add`): The agent dumps a raw text blob — a quick observation, a scraped fact, a captured insight. The content contains entities and relationships, but they are flattened into a string. The graph engine cannot traverse them.
+
+Both modes are valid. Agents are structured authors at end-of-session when they have time to reflect, and lazy collectors mid-task when speed matters. The system must support both.
+
+The solution is **two-pass memory**:
+
+```
+First pass (real-time):    neuron add "blob"  →  STM (isolated, no edges)
+                                ↓
+Second pass (consolidation):   extract entities, create sub-neurons, wire edges
+                                ↓
+                            LTM (connected, searchable, activatable)
+```
+
+A consolidation pass (`memory meta consolidate`) processes unconsolidated neurons — extracting entities, creating sub-neurons, and wiring edges back to the parent. Each neuron tracks its consolidation state via a nullable timestamp: `NULL` means never processed, a timestamp means juiced. If content is later updated (`updated_at > consolidated`), the neuron is stale and eligible for re-extraction.
+
+Crucially, **provenance distinguishes authored from extracted structure**. Authored edges carry full confidence and intentional relationship labels chosen by the agent. Extracted edges carry model confidence and inferred labels. Spreading activation can weight these differently — authored edges are stronger signal than extracted ones, preventing inferred noise from polluting traversal.
+
+### 3.5 Edge Type Normalization
+
+Edge `reason` fields are unconstrained free text. Agents write `has_interviewer`, extraction models write `mentioned_with`, different sessions produce `works_at` and `employed_by` for the same relationship. No validation on the write path — speed over consistency.
+
+A periodic **janitor pass** normalizes edge types into a subsumption hierarchy:
+
+```
+affiliated_with
+  ├── works_at  ← absorbs: works_for, employed_by
+  ├── studies_at
+  └── volunteered_at
+participant
+  └── interviewer  ← absorbs: has_interviewer, interviewed_by
+```
+
+The original `reason` is preserved as provenance. A `canonical_reason` maps to the hierarchy. Queries can filter by canonical type at any level — asking for `affiliated_with` returns all child types. This turns edge types into a traversal language over graph topology.
+
+Search results surface the **top canonical edge types** as a neighborhood summary alongside each hit, giving agents a three-dimensional view: what the neuron says (content), how it was found (score breakdown), and how it connects to the graph (edge type distribution).
+
+### 3.6 Typical Agent Workflow
 
 1. **During work:** `neuron add` for quick observations (short-term capture)
 2. **End of session:** `batch load` a graph document that structures what was learned (long-term consolidation)
-3. **Over time:** Isolated neurons with no edges decay in search ranking; connected ones persist
+3. **Periodically:** `meta consolidate` extracts entities from unconsolidated neurons (automated consolidation)
+4. **Over time:** Isolated neurons with no edges decay in search ranking; connected ones persist
 
 ---
 
@@ -363,8 +407,10 @@ Memory-cli demonstrates that agent memory does not require centralized infrastru
 - **Memory strengthens through connection**, not just storage
 - **Consolidation is an explicit agent action**, not a background process
 - **The agent writes the graph document, knows exactly what went in, controls the structure** — no lossy LLM extraction between experience and memory
+- **Two-pass memory supports both authoring and collection** — fast capture now, automated extraction later, with provenance tracking the difference
+- **Edge types self-organize through janitor normalization** — free-text on write, subsumption hierarchy on read
 - **Federation emerges from use**, not configuration
-- **Search traverses association**, not just similarity
+- **Search traverses association**, not just similarity — returning content, relevance, and topology in every result
 
 The three-scope model (LOCAL, GLOBAL, foreign) with scoped handles and self-describing databases provides a foundation for **inter-agent memory sharing** without the coordination overhead of centralized systems. Each store is sovereign, portable, and self-contained — yet capable of participating in a larger memory graph through explicit edge references.
 
