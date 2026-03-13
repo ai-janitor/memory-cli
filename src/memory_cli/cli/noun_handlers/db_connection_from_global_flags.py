@@ -28,10 +28,10 @@ _TARGET_VERSION = 3
 
 
 def get_connection_and_config(global_flags: Any) -> Tuple[sqlite3.Connection, MemoryConfig]:
-    """Load config respecting --config and --db overrides, open DB, run migrations.
+    """Load config respecting --config, --db, and --global overrides, open DB, run migrations.
 
     Args:
-        global_flags: Parsed GlobalFlags with .config and .db attributes.
+        global_flags: Parsed GlobalFlags with .config, .db, and .global_only attributes.
 
     Returns:
         Tuple of (sqlite3.Connection, MemoryConfig).
@@ -42,6 +42,11 @@ def get_connection_and_config(global_flags: Any) -> Tuple[sqlite3.Connection, Me
     """
     config_override = getattr(global_flags, "config", None)
     db_override = getattr(global_flags, "db", None)
+    global_only = getattr(global_flags, "global_only", False)
+    # If --global flag set, force loading from the global store
+    if global_only and config_override is None and db_override is None:
+        from memory_cli.config.config_path_resolution_ancestor_walk import _global_config_path
+        config_override = str(_global_config_path())
     config = load_config(config_override=config_override, db_override=db_override)
     conn = open_connection(config.db_path)
     # Load sqlite-vec extension before migrations (vec0 virtual tables need it)
