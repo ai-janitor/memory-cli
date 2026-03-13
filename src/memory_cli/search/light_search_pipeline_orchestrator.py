@@ -408,6 +408,22 @@ def _run_output_stage(
 
     state.results = hydrate_results(conn, state.paginated, explain=options.explain)
 
+    # --- Stage 11: Fuzzy fallback — only if primary search returned nothing ---
+    # This is a last-resort safety net. If BM25 + vector + RRF all returned
+    # zero results, try fuzzy matching against content, tags, and attrs.
+    # Zero impact on the happy path — only fires on the empty-results path.
+    if not state.results:
+        from memory_cli.search.fuzzy_fallback_levenshtein import fuzzy_search
+        fuzzy_candidates = fuzzy_search(conn, options.query, limit=options.limit)
+        if fuzzy_candidates:
+            state.results = hydrate_results(conn, fuzzy_candidates, explain=False)
+            # Preserve fuzzy metadata through hydration
+            for result, candidate in zip(state.results, fuzzy_candidates):
+                result["match_type"] = "fuzzy"
+                result["fuzzy_score"] = candidate["fuzzy_score"]
+                result["fuzzy_matched_field"] = candidate["fuzzy_matched_field"]
+            total = len(fuzzy_candidates)
+
     return SearchResultEnvelope(
         results=state.results,
         total_before_pagination=total,
