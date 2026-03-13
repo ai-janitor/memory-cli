@@ -132,17 +132,20 @@ def handle_load(args: List[str], global_flags: Any) -> Any:
     """Load a YAML graph document, creating neurons and edges in one shot.
 
     Args:
-        args: [<file-path>, --source <source>]
+        args: [<file-path>|-, --inline <yaml>, --source <source>]
         global_flags: Parsed global flags.
 
     Returns:
         Result with counts of neurons/edges created and ref→ID map.
 
     Pseudo-logic:
-    1. Parse positional arg: file path (required)
-    2. Parse optional flag: --source <source> override
-    3. Delegate to graph_document_loader_yaml_with_ref_resolution.load_graph_document()
-    4. Return Result with data or error
+    1. Parse optional flag: --inline <yaml-string> (takes priority)
+    2. If no --inline, parse positional arg: file path (required)
+       a. If file path is "-", read YAML from stdin
+       b. Otherwise, use file path as file to load
+    3. Parse optional flag: --source <source> override
+    4. Delegate to graph_document_loader_yaml_with_ref_resolution.load_graph_document()
+    5. Return Result with data or error
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
     from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection
@@ -151,13 +154,32 @@ def handle_load(args: List[str], global_flags: Any) -> Any:
     )
     try:
         rest = list(args)
-        file_path, rest = require_positional(rest, "file")
+
+        # --inline takes priority: YAML string passed directly as CLI argument
+        inline_yaml, rest = extract_flag(rest, "--inline")
+
+        # Determine input mode: --inline, stdin (-), or file path
+        yaml_content = None
+        file_path = None
+
+        if inline_yaml is not None:
+            yaml_content = inline_yaml
+        else:
+            file_path, rest = require_positional(rest, "file")
+            if file_path == "-":
+                # stdin mode: read YAML from stdin
+                import sys
+                yaml_content = sys.stdin.read()
+                file_path = None
+
         source, rest = extract_flag(rest, "--source")
         conn = get_connection(global_flags)
         from memory_cli.export_import.graph_document_loader_yaml_with_ref_resolution import (
             load_graph_document,
         )
-        result = load_graph_document(conn, file_path, source=source)
+        result = load_graph_document(
+            conn, file_path or "<inline>", source=source, yaml_content=yaml_content,
+        )
         if not result.success:
             return Result(status="error", error="; ".join(result.errors))
         return Result(status="ok", data={
@@ -235,7 +257,7 @@ _VERB_MAP = {
 _VERB_DESCRIPTIONS = {
     "export": "Export database contents to portable format",
     "import": "Import data from portable format",
-    "load": "Load a YAML graph document (neurons + edges with ref labels or neuron IDs)",
+    "load": "Load a YAML graph document (neurons + edges with ref labels or neuron IDs) from file, stdin (-), or --inline",
     "reembed": "Regenerate embeddings for all neurons",
 }
 
@@ -251,7 +273,8 @@ _FLAG_DEFS = {
         {"name": "--replace", "type": "bool", "default": False, "desc": "Replace existing data"},
     ],
     "load": [
-        {"name": "<file>", "type": "str", "default": None, "desc": "Path to YAML graph document"},
+        {"name": "<file>", "type": "str", "default": None, "desc": "Path to YAML graph document (use - for stdin)"},
+        {"name": "--inline", "type": "str", "default": None, "desc": "Pass YAML graph document as inline string"},
         {"name": "--source", "type": "str", "default": None, "desc": "Override source for all neurons"},
     ],
     "reembed": [
