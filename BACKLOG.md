@@ -1,6 +1,6 @@
 # memory-cli Backlog
 
-## HIGH — Global CLI Install (pipx/symlink)
+## ~~HIGH — Global CLI Install (pipx/symlink)~~ SHIPPED v0.1.2
 
 **Problem:** `memory` command only works inside the project venv. Every use requires `cd ~/projects/memory-cli && source .venv/bin/activate && memory ...`. This is unacceptable for a CLI tool that agents and humans need from anywhere.
 
@@ -15,7 +15,7 @@
 
 ---
 
-## HIGH — Graph Document Import (neurons + edges in one file)
+## ~~HIGH — Graph Document Import (neurons + edges in one file)~~ SHIPPED v0.1.2
 
 **Problem:** Storing a structured knowledge graph (e.g., interview prep with 5 neurons and 7 edges) requires 12+ individual CLI calls. `batch import` exists but uses the flat export format — not a human-authored graph document.
 
@@ -50,6 +50,7 @@ Then: `memory batch load interview-prep.yaml` — one call, entire graph.
 ---
 
 ## EXPLORE — Short-Term / Long-Term Memory Consolidation
+> minion backlog #4 · type: idea · priority: medium · flow-hint: feature
 
 **Problem:** All neurons are treated equally. No mechanism distinguishes fleeting observations from deeply connected, frequently accessed knowledge. Temporal decay in search provides implicit forgetting, but there's no promotion — nothing makes a memory "stick."
 
