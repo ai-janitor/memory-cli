@@ -49,7 +49,24 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
     7. Return Result(status="ok", data={"id": neuron_id, ...})
     8. Error path: storage failure -> Result(status="error", error=str(e))
     """
-    raise NotImplementedError
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection
+    from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
+        require_positional, extract_flag,
+    )
+    try:
+        content, rest = require_positional(list(args), "content")
+        ntype, rest = extract_flag(rest, "--type")
+        source, rest = extract_flag(rest, "--source")
+        tags_flag, rest = extract_flag(rest, "--tags")
+        tags = [t.strip() for t in tags_flag.split(",") if t.strip()] if tags_flag else None
+        attrs = {"type": ntype} if ntype else None
+        conn = get_connection(global_flags)
+        from memory_cli.neuron import neuron_add
+        result = neuron_add(conn, content, tags=tags, source=source, attrs=attrs, no_embed=True)
+        return Result(status="ok", data=result)
+    except Exception as e:
+        return Result(status="error", error=str(e))
 
 
 # =============================================================================
@@ -72,7 +89,19 @@ def handle_get(args: List[str], global_flags: Any) -> Any:
     4. If not found: return Result(status="not_found", error="Neuron {id} not found")
     5. If found: return Result(status="ok", data=neuron_dict)
     """
-    raise NotImplementedError
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection
+    from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import require_positional
+    try:
+        nid, rest = require_positional(list(args), "neuron_id")
+        conn = get_connection(global_flags)
+        from memory_cli.neuron import neuron_get
+        neuron = neuron_get(conn, int(nid))
+        if neuron is None:
+            return Result(status="not_found", error=f"Neuron {nid} not found")
+        return Result(status="ok", data=neuron)
+    except Exception as e:
+        return Result(status="error", error=str(e))
 
 
 # =============================================================================
@@ -101,7 +130,25 @@ def handle_list(args: List[str], global_flags: Any) -> Any:
                      meta={"total": total, "limit": limit, "offset": offset})
     5. Empty results are success (exit 0), not "not_found"
     """
-    raise NotImplementedError
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection
+    from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
+        extract_flag, extract_bool_flag,
+    )
+    try:
+        rest = list(args)
+        tag, rest = extract_flag(rest, "--tag")
+        limit, rest = extract_flag(rest, "--limit", type_fn=int, default=50)
+        offset, rest = extract_flag(rest, "--offset", type_fn=int, default=0)
+        archived, rest = extract_bool_flag(rest, "--archived")
+        status = "all" if archived else "active"
+        tags_and = [tag] if tag else None
+        conn = get_connection(global_flags)
+        from memory_cli.neuron import neuron_list
+        neurons = neuron_list(conn, tags_and=tags_and, status=status, limit=limit, offset=offset)
+        return Result(status="ok", data=neurons, meta={"limit": limit, "offset": offset})
+    except Exception as e:
+        return Result(status="error", error=str(e))
 
 
 # =============================================================================
@@ -126,7 +173,25 @@ def handle_update(args: List[str], global_flags: Any) -> Any:
     6. If --content changed: trigger re-embedding
     7. Return Result(status="ok", data=updated_neuron_dict)
     """
-    raise NotImplementedError
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection
+    from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
+        require_positional, extract_flag,
+    )
+    try:
+        nid, rest = require_positional(list(args), "neuron_id")
+        content, rest = extract_flag(rest, "--content")
+        source, rest = extract_flag(rest, "--source")
+        if content is None and source is None:
+            return Result(status="error", error="At least one of --content, --source is required")
+        conn = get_connection(global_flags)
+        from memory_cli.neuron import neuron_update, NeuronUpdateError
+        result = neuron_update(conn, int(nid), content=content, source=source, no_embed=True)
+        return Result(status="ok", data=result)
+    except NeuronUpdateError as e:
+        return Result(status="not_found", error=str(e))
+    except Exception as e:
+        return Result(status="error", error=str(e))
 
 
 # =============================================================================
@@ -148,7 +213,19 @@ def handle_archive(args: List[str], global_flags: Any) -> Any:
     3. If not found: return Result(status="not_found")
     4. Return Result(status="ok", data={"id": neuron_id, "archived": True})
     """
-    raise NotImplementedError
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection
+    from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import require_positional
+    try:
+        nid, rest = require_positional(list(args), "neuron_id")
+        conn = get_connection(global_flags)
+        from memory_cli.neuron import neuron_archive, NeuronLifecycleError
+        result = neuron_archive(conn, int(nid))
+        return Result(status="ok", data=result)
+    except NeuronLifecycleError as e:
+        return Result(status="not_found", error=str(e))
+    except Exception as e:
+        return Result(status="error", error=str(e))
 
 
 # =============================================================================
@@ -171,7 +248,19 @@ def handle_restore(args: List[str], global_flags: Any) -> Any:
     4. If not archived: return Result(status="error", error="Neuron is not archived")
     5. Return Result(status="ok", data={"id": neuron_id, "archived": False})
     """
-    raise NotImplementedError
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection
+    from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import require_positional
+    try:
+        nid, rest = require_positional(list(args), "neuron_id")
+        conn = get_connection(global_flags)
+        from memory_cli.neuron import neuron_restore, NeuronLifecycleError
+        result = neuron_restore(conn, int(nid))
+        return Result(status="ok", data=result)
+    except NeuronLifecycleError as e:
+        return Result(status="not_found", error=str(e))
+    except Exception as e:
+        return Result(status="error", error=str(e))
 
 
 # =============================================================================
@@ -200,7 +289,33 @@ def handle_search(args: List[str], global_flags: Any) -> Any:
                      meta={"total": len(results), "query": query_text})
     7. Empty results are success (exit 0), data=[]
     """
-    raise NotImplementedError
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection
+    from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
+        require_positional, extract_flag,
+    )
+    try:
+        query, rest = require_positional(list(args), "query")
+        limit, rest = extract_flag(rest, "--limit", type_fn=int, default=10)
+        threshold, rest = extract_flag(rest, "--threshold", type_fn=float, default=0.0)
+        conn = get_connection(global_flags)
+        from memory_cli.search import light_search, SearchOptions
+        options = SearchOptions(query=query, limit=limit)
+        envelope = light_search(conn, options)
+        results = envelope.results
+        if threshold > 0.0:
+            results = [r for r in results if r.get("score", 0) >= threshold]
+        return Result(
+            status="ok",
+            data=results,
+            meta={
+                "query": query,
+                "total": envelope.total_before_pagination,
+                "vector_unavailable": envelope.vector_unavailable,
+            },
+        )
+    except Exception as e:
+        return Result(status="error", error=str(e))
 
 
 # =============================================================================

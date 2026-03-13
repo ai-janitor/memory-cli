@@ -44,7 +44,31 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
     6. Return Result(status="ok", data={"neuron_id": id, "tags_added": [...]})
     7. If neuron not found: Result(status="not_found")
     """
-    raise NotImplementedError
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection
+    from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
+        require_positional, extract_flag,
+    )
+    try:
+        nid, rest = require_positional(list(args), "neuron_id")
+        # Collect tag names from remaining positional args or --tags flag
+        tags_flag, rest = extract_flag(rest, "--tags")
+        tag_names = []
+        if tags_flag:
+            tag_names.extend([t.strip() for t in tags_flag.split(",") if t.strip()])
+        # Remaining positional args are also tag names
+        tag_names.extend([t for t in rest if not t.startswith("--")])
+        if not tag_names:
+            return Result(status="error", error="At least one tag name is required")
+        conn = get_connection(global_flags)
+        from memory_cli.neuron import neuron_get, neuron_update, NeuronUpdateError
+        neuron = neuron_get(conn, int(nid))
+        if neuron is None:
+            return Result(status="not_found", error=f"Neuron {nid} not found")
+        neuron_update(conn, int(nid), tags_add=tag_names)
+        return Result(status="ok", data={"neuron_id": int(nid), "tags_added": tag_names})
+    except (ValueError, Exception) as e:
+        return Result(status="error", error=str(e))
 
 
 # =============================================================================
@@ -72,7 +96,24 @@ def handle_list(args: List[str], global_flags: Any) -> Any:
     4. Return Result(status="ok", data=tag_list)
     5. Empty list is success (exit 0)
     """
-    raise NotImplementedError
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection
+    from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import extract_flag
+    try:
+        neuron_id, rest = extract_flag(list(args), "--neuron")
+        conn = get_connection(global_flags)
+        if neuron_id is not None:
+            from memory_cli.neuron import neuron_get
+            neuron = neuron_get(conn, int(neuron_id))
+            if neuron is None:
+                return Result(status="not_found", error=f"Neuron {neuron_id} not found")
+            return Result(status="ok", data=neuron.get("tags", []))
+        else:
+            from memory_cli.registries import tag_list
+            tags = tag_list(conn)
+            return Result(status="ok", data=tags)
+    except Exception as e:
+        return Result(status="error", error=str(e))
 
 
 # =============================================================================
@@ -96,7 +137,23 @@ def handle_remove(args: List[str], global_flags: Any) -> Any:
     5. Return Result(status="ok", data={"neuron_id": id, "tags_removed": [...]})
     6. If neuron not found: Result(status="not_found")
     """
-    raise NotImplementedError
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection
+    from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import require_positional
+    try:
+        nid, rest = require_positional(list(args), "neuron_id")
+        tag_names = [t for t in rest if not t.startswith("--")]
+        if not tag_names:
+            return Result(status="error", error="At least one tag name is required")
+        conn = get_connection(global_flags)
+        from memory_cli.neuron import neuron_get, neuron_update
+        neuron = neuron_get(conn, int(nid))
+        if neuron is None:
+            return Result(status="not_found", error=f"Neuron {nid} not found")
+        neuron_update(conn, int(nid), tags_remove=tag_names)
+        return Result(status="ok", data={"neuron_id": int(nid), "tags_removed": tag_names})
+    except Exception as e:
+        return Result(status="error", error=str(e))
 
 
 # =============================================================================

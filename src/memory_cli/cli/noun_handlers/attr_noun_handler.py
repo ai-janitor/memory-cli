@@ -43,7 +43,22 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
     5. Return Result(status="ok", data={"neuron_id": id, "key": key, "value": value})
     6. If neuron not found: Result(status="not_found")
     """
-    raise NotImplementedError
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection
+    from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import require_positional
+    try:
+        nid, rest = require_positional(list(args), "neuron_id")
+        key, rest = require_positional(rest, "key")
+        value, rest = require_positional(rest, "value")
+        conn = get_connection(global_flags)
+        from memory_cli.neuron import neuron_get, neuron_update
+        neuron = neuron_get(conn, int(nid))
+        if neuron is None:
+            return Result(status="not_found", error=f"Neuron {nid} not found")
+        neuron_update(conn, int(nid), attr_set={key: value})
+        return Result(status="ok", data={"neuron_id": int(nid), "key": key, "value": value})
+    except Exception as e:
+        return Result(status="error", error=str(e))
 
 
 # =============================================================================
@@ -67,7 +82,19 @@ def handle_list(args: List[str], global_flags: Any) -> Any:
     5. Empty list is success (exit 0)
     6. If neuron not found: Result(status="not_found")
     """
-    raise NotImplementedError
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection
+    from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import require_positional
+    try:
+        nid, rest = require_positional(list(args), "neuron_id")
+        conn = get_connection(global_flags)
+        from memory_cli.neuron import neuron_get
+        neuron = neuron_get(conn, int(nid))
+        if neuron is None:
+            return Result(status="not_found", error=f"Neuron {nid} not found")
+        return Result(status="ok", data=neuron.get("attrs", {}))
+    except Exception as e:
+        return Result(status="error", error=str(e))
 
 
 # =============================================================================
@@ -91,7 +118,21 @@ def handle_remove(args: List[str], global_flags: Any) -> Any:
     5. Return Result(status="ok", data={"neuron_id": id, "key": key, "removed": True})
     6. If neuron not found: Result(status="not_found")
     """
-    raise NotImplementedError
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection
+    from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import require_positional
+    try:
+        nid, rest = require_positional(list(args), "neuron_id")
+        key, rest = require_positional(rest, "key")
+        conn = get_connection(global_flags)
+        from memory_cli.neuron import neuron_get, neuron_update
+        neuron = neuron_get(conn, int(nid))
+        if neuron is None:
+            return Result(status="not_found", error=f"Neuron {nid} not found")
+        neuron_update(conn, int(nid), attr_unset=[key])
+        return Result(status="ok", data={"neuron_id": int(nid), "key": key, "removed": True})
+    except Exception as e:
+        return Result(status="error", error=str(e))
 
 
 # =============================================================================

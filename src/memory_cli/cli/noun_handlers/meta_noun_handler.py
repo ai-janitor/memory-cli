@@ -47,7 +47,21 @@ def handle_info(args: List[str], global_flags: Any) -> Any:
     5. Error path: DB not initialized -> Result(status="error",
        error="Database not initialized. Run `memory init`.")
     """
-    raise NotImplementedError
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_config
+    try:
+        conn, config = get_connection_and_config(global_flags)
+        from memory_cli.db import read_schema_version
+        version = read_schema_version(conn)
+        info = {
+            "db_path": config.db_path,
+            "schema_version": version,
+            "embedding_model": config.embedding.model_path,
+            "embedding_dimensions": config.embedding.dimensions,
+        }
+        return Result(status="ok", data=info)
+    except Exception as e:
+        return Result(status="error", error=str(e))
 
 
 # =============================================================================
@@ -78,7 +92,21 @@ def handle_stats(args: List[str], global_flags: Any) -> Any:
     4. Return Result(status="ok", data=stats_dict)
     5. Error path: DB not initialized -> error result
     """
-    raise NotImplementedError
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_config
+    try:
+        conn, config = get_connection_and_config(global_flags)
+        from memory_cli.integrity import gather_meta_stats
+        config_dict = {
+            "embedding": {
+                "model_path": config.embedding.model_path,
+                "dimensions": config.embedding.dimensions,
+            },
+        }
+        stats = gather_meta_stats(conn, config_dict, config.db_path)
+        return Result(status="ok", data=stats)
+    except Exception as e:
+        return Result(status="error", error=str(e))
 
 
 # =============================================================================

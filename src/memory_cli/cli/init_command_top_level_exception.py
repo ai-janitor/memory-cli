@@ -73,7 +73,7 @@ def handle_init(args: List[str], global_flags: Any) -> Any:
     if global_flags is not None and getattr(global_flags, "config", None):
         config_path = Path(global_flags.config)
     else:
-        config_path = Path.home() / ".memory" / "config.toml"
+        config_path = Path.home() / ".memory" / "config.json"
 
     if db_path.exists():
         if not force:
@@ -83,16 +83,32 @@ def handle_init(args: List[str], global_flags: Any) -> Any:
             )
         db_path.unlink()
 
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-
+    # Use init_memory_store if no custom paths are specified
     try:
-        from memory_cli.config.init_create_global_or_project_store import create_store
-        create_store(db_path=db_path, config_path=config_path)
-    except Exception:
+        from memory_cli.config.init_create_global_or_project_store import init_memory_store, InitError
+        store_path = init_memory_store(force=force)
+        return Result(
+            status="ok",
+            data={
+                "database": str(store_path / "memory.db"),
+                "config": str(store_path / "config.json"),
+                "created": True,
+            },
+        )
+    except (InitError, Exception):
+        # Fallback: manually create DB and config with valid JSON
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.parent.mkdir(parents=True, exist_ok=True)
         db_path.touch()
-        if not config_path.exists():
-            config_path.touch()
+        if not config_path.exists() or force:
+            import json
+            from memory_cli.config import CONFIG_DEFAULTS
+            import copy
+            config = copy.deepcopy(CONFIG_DEFAULTS)
+            config["db_path"] = str(db_path)
+            config["embedding"]["model_path"] = str(db_path.parent / "models" / "default.gguf")
+            config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+            (db_path.parent / "models").mkdir(parents=True, exist_ok=True)
 
     return Result(
         status="ok",
