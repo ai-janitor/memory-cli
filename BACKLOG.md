@@ -109,6 +109,25 @@ Sensory → short-term (working memory, ~7 items, decays fast) → long-term (co
 
 ---
 
+## HIGH — batch load: Scoped handles rejected in edge from/to fields
+
+**Problem:** `memory batch load` rejects scoped handles (`GLOBAL-42`, `LOCAL-42`) in edge `from`/`to` fields with error: `"ref 'GLOBAL-64' not found in neurons"`. The README (lines 186-200) documents this as a supported feature, and `memory edge add` handles scoped handles correctly via `parse_handle()`.
+
+**Root cause:** Validation in `graph_document_loader_yaml_with_ref_resolution.py` line 227 checks `elif val not in refs_seen` — but `refs_seen` only contains local ref labels from the YAML's `neurons` section. Scoped handles like `GLOBAL-64` are strings, pass the `isinstance(val, str)` check, then fail the `refs_seen` lookup.
+
+**The edge creation phase** (`_create_edges_from_refs()`, line 341) would handle them correctly if they got past validation — it already does `ref_map.get(from_ref)` lookups. The problem is purely in the validation gate.
+
+**Fix:** In `_validate_graph_document()` (line 227), before rejecting a string ref as missing, check if it's a valid scoped handle via `parse_handle()`. If it parses successfully, accept it — the DB existence check happens at edge creation time. Alternatively, add scoped handles to `refs_seen` during validation after confirming the neuron exists in the DB.
+
+**Files:**
+- Bug: `src/memory_cli/export_import/graph_document_loader_yaml_with_ref_resolution.py` (line 227)
+- Reference: `src/memory_cli/cli/noun_handlers/edge_noun_handler.py` (lines 60-61 — correct usage of `parse_handle()`)
+- Utility: `src/memory_cli/cli/scoped_handle_format_and_parse.py` (`parse_handle()`)
+
+**Acceptance:** `memory batch load --inline 'neurons: [{ref: x, content: "test"}] edges: [{from: x, to: GLOBAL-42, type: relates_to}]'` succeeds when GLOBAL-42 exists.
+
+---
+
 ## ~~HIGH — batch load: No dedup — identical content creates duplicate neurons~~ SHIPPED v0.1.3
 
 **Problem:** Running `memory batch load` on a graph doc that contains content already in the DB creates duplicate neurons. No content-hash or idempotency check. We loaded the same interview prep twice (once via individual calls, once via batch load) and got 14 results for "leidos interview" — every neuron duplicated.

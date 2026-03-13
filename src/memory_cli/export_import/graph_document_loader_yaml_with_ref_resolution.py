@@ -31,6 +31,19 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
+def _is_scoped_handle(val: str) -> bool:
+    """Check if a string looks like a scoped handle (LOCAL-42, GLOBAL-42, L-42, G-42).
+
+    Does not validate DB existence — that happens at edge creation time.
+    """
+    from memory_cli.cli.scoped_handle_format_and_parse import parse_handle
+    try:
+        scope, _ = parse_handle(val)
+        return scope is not None  # bare integers are not scoped handles
+    except ValueError:
+        return False
+
+
 @dataclass
 class GraphDocumentResult:
     """Summary of what the graph document loader created.
@@ -207,6 +220,7 @@ def _validate_graph_document(doc: Dict[str, Any]) -> List[str]:
     # Edge from/to can be:
     #   - A local ref label (string matching a neuron in this file)
     #   - An integer neuron ID (cross-file reference to existing DB neuron)
+    #   - A scoped handle (LOCAL-42, GLOBAL-42, L-42, G-42) — validated at create time
     edges = doc.get("edges")
     if edges is not None:
         if not isinstance(edges, list):
@@ -224,7 +238,7 @@ def _validate_graph_document(doc: Dict[str, Any]) -> List[str]:
                         pass  # external neuron ID — validated at create time
                     elif not isinstance(val, str):
                         errors.append(f"edges[{i}]: '{field_name}' must be a string or integer")
-                    elif val not in refs_seen:
+                    elif val not in refs_seen and not _is_scoped_handle(val):
                         errors.append(f"edges[{i}]: '{field_name}' ref '{val}' not found in neurons")
 
     return errors
@@ -311,6 +325,31 @@ def _find_existing_neuron(
     return row[0] if row else None
 
 
+def _resolve_ref(ref: Any, ref_map: Dict[str, int]) -> Optional[int]:
+    """Resolve an edge ref to an integer neuron ID.
+
+    Resolution order:
+    1. Integer — direct neuron ID
+    2. String in ref_map — local YAML ref label
+    3. Scoped handle (LOCAL-42, GLOBAL-42) — parse to extract integer ID
+    4. None — unresolvable
+    """
+    if isinstance(ref, int):
+        return ref
+    if isinstance(ref, str):
+        if ref in ref_map:
+            return ref_map[ref]
+        # Try scoped handle parse
+        from memory_cli.cli.scoped_handle_format_and_parse import parse_handle
+        try:
+            scope, nid = parse_handle(ref)
+            if scope is not None:
+                return nid
+        except ValueError:
+            pass
+    return None
+
+
 def _create_edges_from_refs(
     conn: sqlite3.Connection,
     edges_spec: List[Dict[str, Any]],
@@ -344,9 +383,9 @@ def _create_edges_from_refs(
         reason = spec.get("type", spec.get("reason", "related"))
         weight = spec.get("weight")
 
-        # Resolve refs: integer = direct neuron ID, string = local ref label
-        source_id = from_ref if isinstance(from_ref, int) else ref_map.get(from_ref)
-        target_id = to_ref if isinstance(to_ref, int) else ref_map.get(to_ref)
+        # Resolve refs: integer = direct neuron ID, string = local ref label or scoped handle
+        source_id = _resolve_ref(from_ref, ref_map)
+        target_id = _resolve_ref(to_ref, ref_map)
 
         if source_id is None:
             errors.append(f"edges[{i}]: from ref '{from_ref}' has no resolved ID")
