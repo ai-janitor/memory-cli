@@ -180,6 +180,7 @@ def handle_load(args: List[str], global_flags: Any) -> Any:
         )
         result = load_graph_document(
             conn, file_path or "<inline>", source=source, yaml_content=yaml_content,
+            current_scope=scope,
         )
         if not result.success:
             return Result(status="error", error="; ".join(result.errors))

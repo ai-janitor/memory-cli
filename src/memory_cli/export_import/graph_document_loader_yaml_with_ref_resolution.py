@@ -69,6 +69,7 @@ def load_graph_document(
     file_path: str,
     source: Optional[str] = None,
     yaml_content: Optional[str] = None,
+    current_scope: Optional[str] = None,
 ) -> GraphDocumentResult:
     """Load a YAML graph document, creating neurons and edges.
 
@@ -78,6 +79,11 @@ def load_graph_document(
         source: Optional source tag for all created neurons.
         yaml_content: If provided, parse this YAML string directly instead of
             reading from file_path. Enables stdin and --inline modes.
+        current_scope: The scope of the target store ("LOCAL" or "GLOBAL").
+            When provided, scoped handle refs (e.g. GLOBAL-94) are validated
+            against this scope. Cross-scope references raise a clear error.
+            When None, scoped handles are resolved to bare ints without scope
+            checking (legacy/test behavior).
 
     Returns:
         GraphDocumentResult with counts and ref→ID map.
@@ -104,7 +110,7 @@ def load_graph_document(
     1. Read and parse YAML (from yaml_content string or file_path)
     2. Validate document structure
     3. Phase 1: Create neurons, build ref→ID map
-    4. Phase 2: Create edges using resolved refs
+    4. Phase 2: Create edges using resolved refs (scope-aware)
     5. Return result
     """
     import yaml
@@ -155,8 +161,8 @@ def load_graph_document(
         result.errors.extend(neuron_errors)
         return result
 
-    # 4. Phase 2: Create edges using resolved refs
-    edges_created, edge_errors = _create_edges_from_refs(conn, edges_spec, ref_map)
+    # 4. Phase 2: Create edges using resolved refs (scope-aware)
+    edges_created, edge_errors = _create_edges_from_refs(conn, edges_spec, ref_map, current_scope=current_scope)
     result.edges_created = edges_created
     if edge_errors:
         result.errors.extend(edge_errors)
@@ -325,28 +331,54 @@ def _find_existing_neuron(
     return row[0] if row else None
 
 
-def _resolve_ref(ref: Any, ref_map: Dict[str, int]) -> Optional[int]:
+def _resolve_ref(
+    ref: Any,
+    ref_map: Dict[str, int],
+    current_scope: Optional[str] = None,
+) -> Optional[int]:
     """Resolve an edge ref to an integer neuron ID.
 
     Resolution order:
     1. Integer — direct neuron ID
     2. String in ref_map — local YAML ref label
-    3. Scoped handle (LOCAL-42, GLOBAL-42) — parse to extract integer ID
+    3. Scoped handle (LOCAL-42, GLOBAL-42) — scope-aware resolution:
+       a. If current_scope is provided and handle scope matches -> return bare int
+       b. If current_scope is provided and handle scope differs -> raise ValueError
+          (cross-store edges not yet supported)
+       c. If current_scope is None (legacy/test) -> return bare int without checking
     4. None — unresolvable
+
+    Args:
+        ref: The ref value from the YAML edge spec.
+        ref_map: Mapping of local ref labels to real neuron IDs.
+        current_scope: The scope of the target store ("LOCAL" or "GLOBAL"), or None.
+
+    Raises:
+        ValueError: If ref is a scoped handle that crosses store boundaries.
     """
     if isinstance(ref, int):
         return ref
     if isinstance(ref, str):
         if ref in ref_map:
             return ref_map[ref]
-        # Try scoped handle parse
+        # Try scoped handle parse — parse_handle raises ValueError for non-handle strings
         from memory_cli.cli.scoped_handle_format_and_parse import parse_handle
         try:
             scope, nid = parse_handle(ref)
-            if scope is not None:
-                return nid
         except ValueError:
-            pass
+            # Not a valid handle syntax (e.g. arbitrary string like "foo-bar") — unresolvable
+            return None
+        if scope is not None:
+            # Scope-aware validation: detect cross-store references
+            if current_scope is not None and scope != current_scope:
+                raise ValueError(
+                    f"Cross-store edges not yet supported. "
+                    f"Handle '{ref}' is in the {scope} store but this batch load "
+                    f"targets the {current_scope} store. "
+                    f"Create the edge manually after both neurons exist locally."
+                )
+            # Same scope (or no scope check) — return bare int
+            return nid
     return None
 
 
@@ -354,6 +386,7 @@ def _create_edges_from_refs(
     conn: sqlite3.Connection,
     edges_spec: List[Dict[str, Any]],
     ref_map: Dict[str, int],
+    current_scope: Optional[str] = None,
 ) -> tuple:
     """Create edges using resolved ref→ID mappings.
 
@@ -361,13 +394,15 @@ def _create_edges_from_refs(
         conn: Active SQLite connection.
         edges_spec: List of edge dicts from the YAML document.
         ref_map: Mapping of ref labels to real neuron IDs.
+        current_scope: The scope of the target store ("LOCAL" or "GLOBAL"), or None.
+            Passed to _resolve_ref() for cross-store detection.
 
     Returns:
         Tuple of (edges_created count, error list).
 
     Logic flow:
     1. For each edge spec:
-       a. Resolve from/to refs to real IDs via ref_map
+       a. Resolve from/to refs to real IDs via ref_map (scope-aware)
        b. Extract type (reason) and weight
        c. Call edge_add() to create the edge
     2. Return (count, errors)
@@ -384,8 +419,17 @@ def _create_edges_from_refs(
         weight = spec.get("weight")
 
         # Resolve refs: integer = direct neuron ID, string = local ref label or scoped handle
-        source_id = _resolve_ref(from_ref, ref_map)
-        target_id = _resolve_ref(to_ref, ref_map)
+        # _resolve_ref raises ValueError for cross-store scoped handles
+        try:
+            source_id = _resolve_ref(from_ref, ref_map, current_scope=current_scope)
+        except ValueError as e:
+            errors.append(f"edges[{i}]: from ref '{from_ref}' — {e}")
+            continue
+        try:
+            target_id = _resolve_ref(to_ref, ref_map, current_scope=current_scope)
+        except ValueError as e:
+            errors.append(f"edges[{i}]: to ref '{to_ref}' — {e}")
+            continue
 
         if source_id is None:
             errors.append(f"edges[{i}]: from ref '{from_ref}' has no resolved ID")
