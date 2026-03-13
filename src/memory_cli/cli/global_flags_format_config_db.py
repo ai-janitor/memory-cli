@@ -34,10 +34,14 @@ class GlobalFlags:
         format: Output format — "json" or "text". Default "json".
         config: Path to config file override. None means use default location.
         db: Path to SQLite database override. None means use default location.
+        global_only: When True, only query/write the global ~/.memory/ store.
+            Skips local .memory/ even if it exists. The escape hatch for
+            layered PATH-style search.
     """
     format: str = "json"
     config: Optional[str] = None
     db: Optional[str] = None
+    global_only: bool = False
 
 
 # =============================================================================
@@ -78,7 +82,12 @@ def parse_global_flags(argv: List[str]) -> Tuple[GlobalFlags, List[str]]:
         format_value = "json"
     config_value, tokens = _consume_flag(tokens, "--config")
     db_value, tokens = _consume_flag(tokens, "--db")
-    flags = GlobalFlags(format=format_value, config=config_value, db=db_value)
+    # --global is a boolean flag (no value) — consume it manually
+    global_only = False
+    if "--global" in tokens:
+        tokens = [t for t in tokens if t != "--global"]
+        global_only = True
+    flags = GlobalFlags(format=format_value, config=config_value, db=db_value, global_only=global_only)
     return flags, tokens
 
 

@@ -44,7 +44,7 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
     6. If neuron not found: Result(status="not_found")
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
-    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_scope
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import require_positional
     from memory_cli.cli.scoped_handle_format_and_parse import parse_handle, format_handle
     try:
@@ -52,7 +52,8 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
         _scope, nid = parse_handle(nid_raw)
         key, rest = require_positional(rest, "key")
         value, rest = require_positional(rest, "value")
-        conn, scope = get_connection_and_scope(global_flags)
+        # Write to first (local-preferred) connection
+        conn, scope = get_layered_connections(global_flags)[0]
         from memory_cli.neuron import neuron_get, neuron_update
         neuron = neuron_get(conn, nid)
         if neuron is None:
@@ -85,18 +86,20 @@ def handle_list(args: List[str], global_flags: Any) -> Any:
     6. If neuron not found: Result(status="not_found")
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
-    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_scope
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import require_positional
     from memory_cli.cli.scoped_handle_format_and_parse import parse_handle
     try:
         nid_raw, rest = require_positional(list(args), "neuron_id")
         _scope, nid = parse_handle(nid_raw)
-        conn, scope = get_connection_and_scope(global_flags)
+        # Neuron-scoped: find the neuron in whichever store has it
+        connections = get_layered_connections(global_flags)
         from memory_cli.neuron import neuron_get
-        neuron = neuron_get(conn, nid)
-        if neuron is None:
-            return Result(status="not_found", error=f"Neuron {nid_raw} not found")
-        return Result(status="ok", data=neuron.get("attrs", {}))
+        for conn, scope in connections:
+            neuron = neuron_get(conn, nid)
+            if neuron is not None:
+                return Result(status="ok", data=neuron.get("attrs", {}))
+        return Result(status="not_found", error=f"Neuron {nid_raw} not found")
     except Exception as e:
         return Result(status="error", error=str(e))
 
@@ -123,14 +126,15 @@ def handle_remove(args: List[str], global_flags: Any) -> Any:
     6. If neuron not found: Result(status="not_found")
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
-    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_scope
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import require_positional
     from memory_cli.cli.scoped_handle_format_and_parse import parse_handle, format_handle
     try:
         nid_raw, rest = require_positional(list(args), "neuron_id")
         _scope, nid = parse_handle(nid_raw)
         key, rest = require_positional(rest, "key")
-        conn, scope = get_connection_and_scope(global_flags)
+        # Write to first (local-preferred) connection
+        conn, scope = get_layered_connections(global_flags)[0]
         from memory_cli.neuron import neuron_get, neuron_update
         neuron = neuron_get(conn, nid)
         if neuron is None:

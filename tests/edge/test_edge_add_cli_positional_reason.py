@@ -67,8 +67,8 @@ class TestEdgeAddPositionalReason:
 
         # Monkeypatch get_connection_and_scope to return our test connection
         monkeypatch.setattr(
-            "memory_cli.cli.noun_handlers.db_connection_from_global_flags.get_connection_and_scope",
-            lambda gf: (migrated_conn, "LOCAL"),
+            "memory_cli.cli.noun_handlers.db_connection_from_global_flags.get_layered_connections",
+            lambda gf: [(migrated_conn, "LOCAL")],
         )
 
         result = edge_noun_handler.handle_add(
@@ -86,8 +86,8 @@ class TestEdgeAddPositionalReason:
         tgt = _create_test_neuron(migrated_conn, "target2")
 
         monkeypatch.setattr(
-            "memory_cli.cli.noun_handlers.db_connection_from_global_flags.get_connection_and_scope",
-            lambda gf: (migrated_conn, "LOCAL"),
+            "memory_cli.cli.noun_handlers.db_connection_from_global_flags.get_layered_connections",
+            lambda gf: [(migrated_conn, "LOCAL")],
         )
 
         result = edge_noun_handler.handle_add(
@@ -105,8 +105,8 @@ class TestEdgeAddPositionalReason:
         tgt = _create_test_neuron(migrated_conn, "target3")
 
         monkeypatch.setattr(
-            "memory_cli.cli.noun_handlers.db_connection_from_global_flags.get_connection_and_scope",
-            lambda gf: (migrated_conn, "LOCAL"),
+            "memory_cli.cli.noun_handlers.db_connection_from_global_flags.get_layered_connections",
+            lambda gf: [(migrated_conn, "LOCAL")],
         )
 
         result = edge_noun_handler.handle_add(
@@ -124,8 +124,8 @@ class TestEdgeAddPositionalReason:
         tgt = _create_test_neuron(migrated_conn, "target4")
 
         monkeypatch.setattr(
-            "memory_cli.cli.noun_handlers.db_connection_from_global_flags.get_connection_and_scope",
-            lambda gf: (migrated_conn, "LOCAL"),
+            "memory_cli.cli.noun_handlers.db_connection_from_global_flags.get_layered_connections",
+            lambda gf: [(migrated_conn, "LOCAL")],
         )
 
         result = edge_noun_handler.handle_add(

@@ -50,7 +50,7 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
     8. Error path: storage failure -> Result(status="error", error=str(e))
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
-    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_scope
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
         require_positional, extract_flag,
     )
@@ -62,7 +62,8 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
         tags_flag, rest = extract_flag(rest, "--tags")
         tags = [t.strip() for t in tags_flag.split(",") if t.strip()] if tags_flag else None
         attrs = {"type": ntype} if ntype else None
-        conn, scope = get_connection_and_scope(global_flags)
+        # Write to first (local-preferred) connection
+        conn, scope = get_layered_connections(global_flags)[0]
         from memory_cli.neuron import neuron_add
         result = neuron_add(conn, content, tags=tags, source=source, attrs=attrs, no_embed=True)
         return Result(status="ok", data=scope_neuron_dict(result, scope))
@@ -91,18 +92,30 @@ def handle_get(args: List[str], global_flags: Any) -> Any:
     5. If found: return Result(status="ok", data=neuron_dict)
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
-    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_scope
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import require_positional
     from memory_cli.cli.scoped_handle_format_and_parse import parse_handle, scope_neuron_dict
     try:
         nid_raw, rest = require_positional(list(args), "neuron_id")
-        _scope, nid = parse_handle(nid_raw)
-        conn, scope = get_connection_and_scope(global_flags)
+        handle_scope, nid = parse_handle(nid_raw)
+        connections = get_layered_connections(global_flags)
         from memory_cli.neuron import neuron_get
-        neuron = neuron_get(conn, nid)
-        if neuron is None:
-            return Result(status="not_found", error=f"Neuron {nid_raw} not found")
-        return Result(status="ok", data=scope_neuron_dict(neuron, scope))
+        # If handle has an explicit scope prefix (LOCAL-42 or GLOBAL-42),
+        # route directly to the matching store.
+        if handle_scope is not None:
+            for conn, scope in connections:
+                if scope == handle_scope:
+                    neuron = neuron_get(conn, nid)
+                    if neuron is None:
+                        return Result(status="not_found", error=f"Neuron {nid_raw} not found")
+                    return Result(status="ok", data=scope_neuron_dict(neuron, scope))
+            return Result(status="not_found", error=f"No {handle_scope} store available for {nid_raw}")
+        # No scope prefix — search local first, then global
+        for conn, scope in connections:
+            neuron = neuron_get(conn, nid)
+            if neuron is not None:
+                return Result(status="ok", data=scope_neuron_dict(neuron, scope))
+        return Result(status="not_found", error=f"Neuron {nid_raw} not found")
     except Exception as e:
         return Result(status="error", error=str(e))
 
@@ -134,7 +147,7 @@ def handle_list(args: List[str], global_flags: Any) -> Any:
     5. Empty results are success (exit 0), not "not_found"
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
-    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_scope
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
         extract_flag, extract_bool_flag,
     )
@@ -147,10 +160,14 @@ def handle_list(args: List[str], global_flags: Any) -> Any:
         archived, rest = extract_bool_flag(rest, "--archived")
         status = "all" if archived else "active"
         tags_and = [tag] if tag else None
-        conn, scope = get_connection_and_scope(global_flags)
+        # Layered: query all stores, merge results (local first)
+        connections = get_layered_connections(global_flags)
+        all_neurons = []
         from memory_cli.neuron import neuron_list
-        neurons = neuron_list(conn, tags_and=tags_and, status=status, limit=limit, offset=offset)
-        return Result(status="ok", data=scope_list(neurons, scope, "neuron"), meta={"limit": limit, "offset": offset})
+        for conn, scope in connections:
+            neurons = neuron_list(conn, tags_and=tags_and, status=status, limit=limit, offset=offset)
+            all_neurons.extend(scope_list(neurons, scope, "neuron"))
+        return Result(status="ok", data=all_neurons, meta={"limit": limit, "offset": offset})
     except Exception as e:
         return Result(status="error", error=str(e))
 
@@ -178,19 +195,26 @@ def handle_update(args: List[str], global_flags: Any) -> Any:
     7. Return Result(status="ok", data=updated_neuron_dict)
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
-    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_scope
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
         require_positional, extract_flag,
     )
     from memory_cli.cli.scoped_handle_format_and_parse import parse_handle, scope_neuron_dict
     try:
         nid_raw, rest = require_positional(list(args), "neuron_id")
-        _scope, nid = parse_handle(nid_raw)
+        handle_scope, nid = parse_handle(nid_raw)
         content, rest = extract_flag(rest, "--content")
         source, rest = extract_flag(rest, "--source")
         if content is None and source is None:
             return Result(status="error", error="At least one of --content, --source is required")
-        conn, scope = get_connection_and_scope(global_flags)
+        # Write operation — route by handle scope, default to first (local)
+        connections = get_layered_connections(global_flags)
+        conn, scope = connections[0]
+        if handle_scope is not None:
+            for c, s in connections:
+                if s == handle_scope:
+                    conn, scope = c, s
+                    break
         from memory_cli.neuron import neuron_update, NeuronUpdateError
         result = neuron_update(conn, nid, content=content, source=source, no_embed=True)
         return Result(status="ok", data=scope_neuron_dict(result, scope))
@@ -220,13 +244,20 @@ def handle_archive(args: List[str], global_flags: Any) -> Any:
     4. Return Result(status="ok", data={"id": neuron_id, "archived": True})
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
-    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_scope
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import require_positional
     from memory_cli.cli.scoped_handle_format_and_parse import parse_handle, scope_neuron_dict
     try:
         nid_raw, rest = require_positional(list(args), "neuron_id")
-        _scope, nid = parse_handle(nid_raw)
-        conn, scope = get_connection_and_scope(global_flags)
+        handle_scope, nid = parse_handle(nid_raw)
+        # Write operation — route by handle scope, default to first (local)
+        connections = get_layered_connections(global_flags)
+        conn, scope = connections[0]
+        if handle_scope is not None:
+            for c, s in connections:
+                if s == handle_scope:
+                    conn, scope = c, s
+                    break
         from memory_cli.neuron import neuron_archive, NeuronLifecycleError
         result = neuron_archive(conn, nid)
         return Result(status="ok", data=scope_neuron_dict(result, scope))
@@ -257,13 +288,20 @@ def handle_restore(args: List[str], global_flags: Any) -> Any:
     5. Return Result(status="ok", data={"id": neuron_id, "archived": False})
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
-    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_scope
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import require_positional
     from memory_cli.cli.scoped_handle_format_and_parse import parse_handle, scope_neuron_dict
     try:
         nid_raw, rest = require_positional(list(args), "neuron_id")
-        _scope, nid = parse_handle(nid_raw)
-        conn, scope = get_connection_and_scope(global_flags)
+        handle_scope, nid = parse_handle(nid_raw)
+        # Write operation — route by handle scope, default to first (local)
+        connections = get_layered_connections(global_flags)
+        conn, scope = connections[0]
+        if handle_scope is not None:
+            for c, s in connections:
+                if s == handle_scope:
+                    conn, scope = c, s
+                    break
         from memory_cli.neuron import neuron_restore, NeuronLifecycleError
         result = neuron_restore(conn, nid)
         return Result(status="ok", data=scope_neuron_dict(result, scope))
@@ -300,7 +338,7 @@ def handle_search(args: List[str], global_flags: Any) -> Any:
     7. Empty results are success (exit 0), data=[]
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
-    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_scope
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
         require_positional, extract_flag,
     )
@@ -309,20 +347,29 @@ def handle_search(args: List[str], global_flags: Any) -> Any:
         query, rest = require_positional(list(args), "query")
         limit, rest = extract_flag(rest, "--limit", type_fn=int, default=10)
         threshold, rest = extract_flag(rest, "--threshold", type_fn=float, default=0.0)
-        conn, scope = get_connection_and_scope(global_flags)
+        # Layered: search all stores, merge results (local first)
+        connections = get_layered_connections(global_flags)
+        all_results = []
+        total = 0
+        vector_unavailable = False
         from memory_cli.search import light_search, SearchOptions
-        options = SearchOptions(query=query, limit=limit)
-        envelope = light_search(conn, options)
-        results = envelope.results
-        if threshold > 0.0:
-            results = [r for r in results if r.get("score", 0) >= threshold]
+        for conn, scope in connections:
+            options = SearchOptions(query=query, limit=limit)
+            envelope = light_search(conn, options)
+            results = envelope.results
+            if threshold > 0.0:
+                results = [r for r in results if r.get("score", 0) >= threshold]
+            all_results.extend(scope_list(results, scope, "neuron"))
+            total += envelope.total_before_pagination
+            if envelope.vector_unavailable:
+                vector_unavailable = True
         return Result(
             status="ok",
-            data=scope_list(results, scope, "neuron"),
+            data=all_results,
             meta={
                 "query": query,
-                "total": envelope.total_before_pagination,
-                "vector_unavailable": envelope.vector_unavailable,
+                "total": total,
+                "vector_unavailable": vector_unavailable,
             },
         )
     except Exception as e:

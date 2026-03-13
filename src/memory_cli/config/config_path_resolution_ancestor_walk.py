@@ -22,7 +22,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional, Tuple
 
 
 # -----------------------------------------------------------------------------
@@ -145,6 +145,45 @@ def _walk_ancestors(start_dir: Path) -> Optional[Path]:
 
     # 4. Return None if nothing found
     return None
+
+
+def resolve_all_config_paths(
+    cwd: Optional[Path] = None,
+) -> List[Tuple[Path, str]]:
+    """Resolve ALL config paths found (local AND global) for layered access.
+
+    Unlike resolve_config_path() which returns the first match, this returns
+    every config path that exists, tagged with its scope. Used by the layered
+    PATH-style search to query both stores.
+
+    Resolution:
+    1. Ancestor walk: find local .memory/config.json -> tagged "LOCAL"
+    2. Global fallback: ~/.memory/config.json -> tagged "GLOBAL"
+    3. Both can be returned if both exist.
+
+    Args:
+        cwd: Working directory to start ancestor walk from. Defaults to Path.cwd().
+
+    Returns:
+        List of (config_path, scope) tuples. Order: LOCAL first, GLOBAL second.
+        Empty list if no configs found.
+    """
+    results: List[Tuple[Path, str]] = []
+    start_dir = cwd if cwd is not None else Path.cwd()
+
+    # 1. Ancestor walk for local config
+    local = _walk_ancestors(start_dir)
+    if local is not None:
+        results.append((local, "LOCAL"))
+
+    # 2. Global fallback
+    global_path = _global_config_path()
+    if global_path.is_file():
+        # Don't add global if it's the same path as local (ancestor walk found ~/.memory/)
+        if local is None or global_path.resolve() != local.resolve():
+            results.append((global_path, "GLOBAL"))
+
+    return results
 
 
 def _global_config_path() -> Path:

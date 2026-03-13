@@ -20,6 +20,6 @@
 # These will be the primary entry points consumed by the CLI layer and other packages.
 
 from .config_schema_and_defaults import CONFIG_DEFAULTS, ConfigSchema
-from .config_path_resolution_ancestor_walk import resolve_config_path
+from .config_path_resolution_ancestor_walk import resolve_config_path, resolve_all_config_paths
 from .config_loader_and_validator import load_config, MemoryConfig, ConfigLoadError
 from .init_create_global_or_project_store import init_memory_store, InitError

@@ -68,6 +68,10 @@ def handle_init(args: List[str], global_flags: Any) -> Any:
     force = init_flags["force"]
     global_store = init_flags["global_store"]
 
+    # --global may also come from global_flags (parsed at top level before init sees args)
+    if getattr(global_flags, "global_only", False):
+        global_store = True
+
     # Default is LOCAL (project=True). --global flips to GLOBAL (project=False).
     project = not global_store
 

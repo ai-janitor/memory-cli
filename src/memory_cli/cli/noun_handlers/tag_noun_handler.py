@@ -45,7 +45,7 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
     7. If neuron not found: Result(status="not_found")
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
-    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_scope
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
         require_positional, extract_flag,
     )
@@ -62,7 +62,8 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
         tag_names.extend([t for t in rest if not t.startswith("--")])
         if not tag_names:
             return Result(status="error", error="At least one tag name is required")
-        conn, scope = get_connection_and_scope(global_flags)
+        # Write to first (local-preferred) connection
+        conn, scope = get_layered_connections(global_flags)[0]
         from memory_cli.neuron import neuron_get, neuron_update, NeuronUpdateError
         neuron = neuron_get(conn, nid)
         if neuron is None:
@@ -99,23 +100,34 @@ def handle_list(args: List[str], global_flags: Any) -> Any:
     5. Empty list is success (exit 0)
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
-    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_scope
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import extract_flag
     from memory_cli.cli.scoped_handle_format_and_parse import parse_handle
     try:
         neuron_id_raw, rest = extract_flag(list(args), "--neuron")
-        conn, scope = get_connection_and_scope(global_flags)
+        connections = get_layered_connections(global_flags)
         if neuron_id_raw is not None:
+            # Neuron-scoped: find the neuron in whichever store has it
             _scope, neuron_id = parse_handle(neuron_id_raw)
             from memory_cli.neuron import neuron_get
-            neuron = neuron_get(conn, neuron_id)
-            if neuron is None:
-                return Result(status="not_found", error=f"Neuron {neuron_id_raw} not found")
-            return Result(status="ok", data=neuron.get("tags", []))
+            for conn, scope in connections:
+                neuron = neuron_get(conn, neuron_id)
+                if neuron is not None:
+                    return Result(status="ok", data=neuron.get("tags", []))
+            return Result(status="not_found", error=f"Neuron {neuron_id_raw} not found")
         else:
+            # Global tag list: merge from all stores, deduplicate
             from memory_cli.registries import tag_list
-            tags = tag_list(conn)
-            return Result(status="ok", data=tags)
+            all_tags = []
+            seen = set()
+            for conn, scope in connections:
+                tags = tag_list(conn)
+                for t in tags:
+                    tag_name = t["tag"] if isinstance(t, dict) else t
+                    if tag_name not in seen:
+                        seen.add(tag_name)
+                        all_tags.append(t)
+            return Result(status="ok", data=all_tags)
     except Exception as e:
         return Result(status="error", error=str(e))
 
@@ -142,7 +154,7 @@ def handle_remove(args: List[str], global_flags: Any) -> Any:
     6. If neuron not found: Result(status="not_found")
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
-    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_scope
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import require_positional
     from memory_cli.cli.scoped_handle_format_and_parse import parse_handle, format_handle
     try:
@@ -151,7 +163,8 @@ def handle_remove(args: List[str], global_flags: Any) -> Any:
         tag_names = [t for t in rest if not t.startswith("--")]
         if not tag_names:
             return Result(status="error", error="At least one tag name is required")
-        conn, scope = get_connection_and_scope(global_flags)
+        # Write to first (local-preferred) connection
+        conn, scope = get_layered_connections(global_flags)[0]
         from memory_cli.neuron import neuron_get, neuron_update
         neuron = neuron_get(conn, nid)
         if neuron is None:

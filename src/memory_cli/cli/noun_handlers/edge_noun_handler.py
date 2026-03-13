@@ -49,7 +49,7 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
     8. If either neuron not found: Result(status="not_found", error="Neuron {id} not found")
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
-    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_scope
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
         require_positional, extract_flag,
     )
@@ -66,7 +66,8 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
             reason = rest.pop(0)
         if reason is None:
             reason = "related_to"
-        conn, scope = get_connection_and_scope(global_flags)
+        # Write to first (local-preferred) connection
+        conn, scope = get_layered_connections(global_flags)[0]
         from memory_cli.edge import edge_add
         result = edge_add(conn, source_id, target_id, reason=reason, weight=weight)
         conn.commit()
@@ -104,7 +105,7 @@ def handle_list(args: List[str], global_flags: Any) -> Any:
     5. Empty list is success (exit 0)
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
-    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_scope
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import extract_flag
     from memory_cli.cli.scoped_handle_format_and_parse import parse_handle, scope_list
     try:
@@ -116,14 +117,18 @@ def handle_list(args: List[str], global_flags: Any) -> Any:
         if neuron_id_raw is None:
             return Result(status="error", error="--neuron <id> is required for edge list")
         _scope, neuron_id = parse_handle(neuron_id_raw)
-        conn, scope = get_connection_and_scope(global_flags)
+        # Layered: query all stores, merge results (local first)
+        connections = get_layered_connections(global_flags)
         from memory_cli.edge import edge_list
         # Map CLI direction names to internal names
         dir_map = {"in": "incoming", "out": "outgoing", "both": "both",
                     "incoming": "incoming", "outgoing": "outgoing"}
         direction = dir_map.get(direction, direction)
-        edges = edge_list(conn, neuron_id, direction=direction, limit=limit, offset=offset)
-        return Result(status="ok", data=scope_list(edges, scope, "edge"), meta={"limit": limit, "offset": offset})
+        all_edges = []
+        for conn, scope in connections:
+            edges = edge_list(conn, neuron_id, direction=direction, limit=limit, offset=offset)
+            all_edges.extend(scope_list(edges, scope, "edge"))
+        return Result(status="ok", data=all_edges, meta={"limit": limit, "offset": offset})
     except Exception as e:
         return Result(status="error", error=str(e))
 
@@ -149,7 +154,7 @@ def handle_remove(args: List[str], global_flags: Any) -> Any:
     5. Return Result(status="ok", data={"source": s, "target": t, "removed": True})
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
-    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_scope
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import require_positional
     from memory_cli.cli.scoped_handle_format_and_parse import parse_handle
     try:
@@ -157,7 +162,8 @@ def handle_remove(args: List[str], global_flags: Any) -> Any:
         target_raw, rest = require_positional(rest, "target_id")
         _s1, source_id = parse_handle(source_raw)
         _s2, target_id = parse_handle(target_raw)
-        conn, scope = get_connection_and_scope(global_flags)
+        # Write to first (local-preferred) connection
+        conn, scope = get_layered_connections(global_flags)[0]
         from memory_cli.edge import edge_remove
         result = edge_remove(conn, source_id, target_id)
         conn.commit()
