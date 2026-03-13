@@ -172,15 +172,19 @@ class TestLightSearchFullPipeline:
         assert scores == sorted(scores, reverse=True)
 
     def test_direct_matches_have_match_type_direct(self, search_db):
-        """Verify direct BM25/vector matches have match_type='direct_match'."""
+        """Verify direct BM25/vector matches have match_type='direct_match'.
+
+        Tag-affinity may also discover tag-connected neurons (match_type='tag_affinity'),
+        which is valid. No edge-based fan_out should appear at fan_out_depth=0.
+        """
         conn, nids = search_db
         options = SearchOptions(query="python", fan_out_depth=0)
         with patch("memory_cli.search.light_search_pipeline_orchestrator.get_model",
                    side_effect=FileNotFoundError):
             envelope = light_search(conn, options)
-        # With fan_out_depth=0, all results should be direct_match
+        # With fan_out_depth=0, no edge-based fan_out; direct_match and tag_affinity are valid
         for r in envelope.results:
-            assert r["match_type"] == "direct_match"
+            assert r["match_type"] in ("direct_match", "tag_affinity")
 
     def test_fan_out_results_have_hop_distance_gt_zero(self, search_db):
         """Verify fan-out results have hop_distance > 0 and edge_reason set."""
@@ -409,9 +413,10 @@ class TestSearchOptionsAndEnvelope:
             assert "python" in r["tags"]
 
     def test_fan_out_depth_zero_no_fan_out(self, search_db):
-        """Verify --fan-out-depth=0 returns only direct matches.
+        """Verify --fan-out-depth=0 returns no edge-based fan_out results.
 
         Assert: no results with match_type='fan_out'.
+        Tag-affinity discoveries (match_type='tag_affinity') are valid even at depth=0.
         """
         conn, nids = search_db
         options = SearchOptions(query="python", fan_out_depth=0)
@@ -419,4 +424,4 @@ class TestSearchOptionsAndEnvelope:
                    side_effect=FileNotFoundError):
             envelope = light_search(conn, options)
         for r in envelope.results:
-            assert r["match_type"] == "direct_match"
+            assert r["match_type"] in ("direct_match", "tag_affinity")
