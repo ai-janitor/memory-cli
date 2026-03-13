@@ -23,7 +23,7 @@ from memory_cli.config import load_config, MemoryConfig, ConfigLoadError
 from memory_cli.db import open_connection, run_pending_migrations, read_schema_version
 
 # Target schema version — must match MIGRATION_REGISTRY in db/migrations/__init__.py
-_TARGET_VERSION = 1
+_TARGET_VERSION = 2
 
 
 def get_connection_and_config(global_flags: Any) -> Tuple[sqlite3.Connection, MemoryConfig]:
@@ -63,3 +63,22 @@ def get_connection(global_flags: Any) -> sqlite3.Connection:
     """
     conn, _ = get_connection_and_config(global_flags)
     return conn
+
+
+def get_connection_and_scope(global_flags: Any) -> Tuple[sqlite3.Connection, str]:
+    """Get DB connection and scope string ("LOCAL" or "GLOBAL").
+
+    Determines scope from the resolved config.db_path:
+    - If db_path starts with ~/.memory/ (expanded) -> "GLOBAL"
+    - Otherwise -> "LOCAL"
+
+    Args:
+        global_flags: Parsed GlobalFlags with .config and .db attributes.
+
+    Returns:
+        Tuple of (sqlite3.Connection, scope_str).
+    """
+    conn, config = get_connection_and_config(global_flags)
+    from memory_cli.cli.scoped_handle_format_and_parse import detect_scope
+    scope = detect_scope(config.db_path)
+    return conn, scope

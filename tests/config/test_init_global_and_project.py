@@ -117,14 +117,14 @@ class TestGlobalInit:
         init_memory_store(project=False)
         assert (fake_home / ".memory" / "models").is_dir()
 
-    # --- test_creates_empty_db_file ---
+    # --- test_creates_db_file_with_schema ---
     # Assert ~/.memory/memory.db exists
-    # Assert file size is 0 (empty, no schema yet)
-    def test_creates_empty_db_file(self, fake_home):
+    # Assert file is non-empty (schema bootstrapped at init time)
+    def test_creates_db_file_with_schema(self, fake_home):
         init_memory_store(project=False)
         db_path = fake_home / ".memory" / "memory.db"
         assert db_path.is_file()
-        assert db_path.stat().st_size == 0
+        assert db_path.stat().st_size > 0
 
 
 # =============================================================================

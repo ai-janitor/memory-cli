@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import copy
 import json
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -140,11 +141,104 @@ def init_memory_store(
     db_path = store_path / "memory.db"
     _create_empty_db_file(db_path)
 
+    # 5b. Bootstrap schema and write store fingerprint
+    # Open the DB, run migrations (creates schema if new), then stamp
+    # fingerprint, project name, and db_path into meta table.
+    _bootstrap_schema_and_fingerprint(db_path, base, project)
+
     # 6. Print post-init instructions
     _print_post_init_instructions(store_path, project=project)
 
     # 7. Return store_path
     return store_path
+
+
+def _derive_project_name(base: Path) -> str:
+    """Derive project name from cwd basename or git remote.
+
+    Logic:
+    1. Try git remote origin URL -> extract repo name
+    2. Fall back to base directory basename
+    3. If all else fails, return "unknown"
+
+    Args:
+        base: The base directory (cwd or home).
+
+    Returns:
+        A human-readable project name string.
+    """
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True, text=True, cwd=str(base), timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            url = result.stdout.strip()
+            # Extract repo name from URL (handles both HTTPS and SSH)
+            name = url.rstrip("/").rsplit("/", 1)[-1]
+            if name.endswith(".git"):
+                name = name[:-4]
+            if name:
+                return name
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+    # Fall back to directory basename
+    name = base.name
+    return name if name else "unknown"
+
+
+def _bootstrap_schema_and_fingerprint(
+    db_path: Path, base: Path, project: bool
+) -> None:
+    """Open the DB, run migrations to create schema, then stamp fingerprint.
+
+    This ensures that after `memory init`, the database is fully ready with
+    schema, fingerprint, project name, and db_path in the meta table.
+
+    Args:
+        db_path: Absolute path to the SQLite DB file.
+        base: The base directory used for project name derivation.
+        project: Whether this is a project-scoped init.
+    """
+    try:
+        from memory_cli.db import open_connection, run_pending_migrations, read_schema_version
+        from memory_cli.db.extension_loader_sqlite_vec import load_sqlite_vec
+
+        conn = open_connection(db_path)
+        load_sqlite_vec(conn)
+        current = read_schema_version(conn)
+        target = 2  # Must match _TARGET_VERSION in db_connection_from_global_flags.py
+        if current < target:
+            run_pending_migrations(conn, current, target)
+
+        # Stamp fingerprint if not already set (migration v002 uses OR IGNORE,
+        # so if init races with migration, the first write wins)
+        fingerprint = uuid.uuid4().hex[:8]
+        conn.execute(
+            "INSERT OR IGNORE INTO meta (key, value) VALUES ('fingerprint', ?)",
+            (fingerprint,),
+        )
+
+        # Derive and write project name
+        project_name = _derive_project_name(base)
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('project', ?)",
+            (project_name,),
+        )
+
+        # Write absolute db_path
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('db_path', ?)",
+            (str(db_path.resolve()),),
+        )
+
+        conn.commit()
+        conn.close()
+    except Exception:
+        # Non-fatal: init still succeeds even if fingerprint stamping fails.
+        # The migration will handle it on first real use.
+        pass
 
 
 def _create_directory_structure(store_path: Path) -> None:
