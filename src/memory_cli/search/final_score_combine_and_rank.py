@@ -56,6 +56,8 @@ def compute_final_scores(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any
         match_type = candidate.get("match_type", "direct_match")
         if match_type == "direct_match":
             candidate["final_score"] = _score_direct_match(candidate)
+        elif match_type == "tag_affinity":
+            candidate["final_score"] = _score_tag_affinity(candidate)
         else:
             candidate["final_score"] = _score_fan_out(candidate)
 
@@ -89,7 +91,8 @@ def _score_direct_match(candidate: Dict[str, Any]) -> float:
     # return rrf_score * temporal_weight
     rrf_score = candidate.get("rrf_score", 0.0)
     temporal_weight = candidate.get("temporal_weight", 1.0)
-    return rrf_score * temporal_weight
+    tag_affinity_score = candidate.get("tag_affinity_score", 0.0)
+    return (rrf_score + tag_affinity_score) * temporal_weight
 
 
 def _score_fan_out(candidate: Dict[str, Any]) -> float:
@@ -114,4 +117,26 @@ def _score_fan_out(candidate: Dict[str, Any]) -> float:
     # return activation_score * temporal_weight
     activation_score = candidate.get("activation_score", 0.0)
     temporal_weight = candidate.get("temporal_weight", 1.0)
-    return activation_score * temporal_weight
+    tag_affinity_score = candidate.get("tag_affinity_score", 0.0)
+    return (activation_score + tag_affinity_score) * temporal_weight
+
+
+def _score_tag_affinity(candidate: Dict[str, Any]) -> float:
+    """Compute final score for a tag-affinity-only neuron (no edge/RRF connection).
+
+    Formula: final_score = tag_affinity_score * temporal_weight
+
+    These neurons were discovered purely through shared tags with seeds —
+    they had no direct text/vector match and no edge-based activation.
+
+    Defaults: tag_affinity_score=0.0 if missing, temporal_weight=1.0 if missing.
+
+    Args:
+        candidate: Candidate dict with tag_affinity_score and temporal_weight.
+
+    Returns:
+        Final score as float.
+    """
+    tag_affinity_score = candidate.get("tag_affinity_score", 0.0)
+    temporal_weight = candidate.get("temporal_weight", 1.0)
+    return tag_affinity_score * temporal_weight

@@ -94,6 +94,7 @@ EXPECTED_FIELDS = {
     "bm25_raw", "bm25_normalized", "bm25_rank",
     "vector_distance", "vector_rank",
     "rrf_score", "activation_score", "hop_distance",
+    "tag_affinity_score",
     "temporal_weight", "final_score",
     "vector_unavailable", "match_type", "match_source",
 }

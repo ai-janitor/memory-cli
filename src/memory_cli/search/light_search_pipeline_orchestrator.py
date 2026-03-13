@@ -33,6 +33,7 @@ from .vector_retrieval_two_step_knn import retrieve_vectors
 from .rrf_fusion_rank_based_k60 import fuse_rrf
 from .spreading_activation_bfs_linear_decay import spread
 from .temporal_decay_exponential_halflife import apply_temporal_decay
+from .tag_affinity_scoring_shared_tags import apply_tag_affinity
 from .tag_filter_post_activation import filter_by_tags
 from .final_score_combine_and_rank import compute_final_scores
 from .explain_scoring_breakdown import build_explain_breakdowns
@@ -96,6 +97,9 @@ class PipelineState:
 
     # Stage 5: Post-activation candidates with activation scores
     activated_candidates: List[Dict[str, Any]] = field(default_factory=list)
+
+    # Stage 5b: Tag-affinity boosted candidates (after activation, before temporal)
+    tag_affinity_boosted: List[Dict[str, Any]] = field(default_factory=list)
 
     # Stage 6: Temporal weights applied
     temporally_weighted: List[Dict[str, Any]] = field(default_factory=list)
@@ -359,8 +363,13 @@ def _run_scoring_stage(
         conn, state.rrf_candidates, fan_out_depth=options.fan_out_depth
     )
 
+    # --- Stage 5b: Tag-affinity scoring ---
+    # After activation discovers graph-connected neurons, tag-affinity boosts
+    # neurons sharing tags with seeds and discovers tag-only neighbors.
+    state.tag_affinity_boosted = apply_tag_affinity(conn, state.activated_candidates)
+
     # --- Stage 6: Temporal decay ---
-    state.temporally_weighted = apply_temporal_decay(conn, state.activated_candidates)
+    state.temporally_weighted = apply_temporal_decay(conn, state.tag_affinity_boosted)
 
     # --- Stage 7: Tag filtering (only if tags specified) ---
     if options.tags:

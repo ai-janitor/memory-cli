@@ -113,6 +113,7 @@ def _build_single_breakdown(
         "rrf_score": candidate.get("rrf_score", 0.0),
         "activation_score": candidate.get("activation_score", 1.0),
         "hop_distance": candidate.get("hop_distance", 0),
+        "tag_affinity_score": candidate.get("tag_affinity_score", 0.0),
         "temporal_weight": candidate.get("temporal_weight", 1.0),
         "final_score": candidate.get("final_score", 0.0),
         "vector_unavailable": vector_unavailable,
