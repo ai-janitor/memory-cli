@@ -155,7 +155,8 @@ def _validate_graph_document(doc: Dict[str, Any]) -> List[str]:
     - ref labels are unique
     - edges key (if present) is a list
     - Each edge has from (str) and to (str)
-    - Edge from/to refs exist in the neurons list
+    - Edge from/to refs exist in the neurons list, or are external refs
+      (integer neuron IDs for cross-file references)
 
     Returns:
         List of error strings (empty if valid).
@@ -193,6 +194,9 @@ def _validate_graph_document(doc: Dict[str, Any]) -> List[str]:
             errors.append(f"neurons[{i}]: 'content' must be a non-empty string")
 
     # Edges validation (optional section)
+    # Edge from/to can be:
+    #   - A local ref label (string matching a neuron in this file)
+    #   - An integer neuron ID (cross-file reference to existing DB neuron)
     edges = doc.get("edges")
     if edges is not None:
         if not isinstance(edges, list):
@@ -206,8 +210,10 @@ def _validate_graph_document(doc: Dict[str, Any]) -> List[str]:
                     val = edge.get(field_name)
                     if val is None:
                         errors.append(f"edges[{i}]: missing '{field_name}' field")
+                    elif isinstance(val, int):
+                        pass  # external neuron ID — validated at create time
                     elif not isinstance(val, str):
-                        errors.append(f"edges[{i}]: '{field_name}' must be a string")
+                        errors.append(f"edges[{i}]: '{field_name}' must be a string or integer")
                     elif val not in refs_seen:
                         errors.append(f"edges[{i}]: '{field_name}' ref '{val}' not found in neurons")
 
@@ -328,8 +334,9 @@ def _create_edges_from_refs(
         reason = spec.get("type", spec.get("reason", "related"))
         weight = spec.get("weight")
 
-        source_id = ref_map.get(from_ref)
-        target_id = ref_map.get(to_ref)
+        # Resolve refs: integer = direct neuron ID, string = local ref label
+        source_id = from_ref if isinstance(from_ref, int) else ref_map.get(from_ref)
+        target_id = to_ref if isinstance(to_ref, int) else ref_map.get(to_ref)
 
         if source_id is None:
             errors.append(f"edges[{i}]: from ref '{from_ref}' has no resolved ID")
