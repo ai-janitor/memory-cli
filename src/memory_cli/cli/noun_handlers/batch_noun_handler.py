@@ -162,6 +162,7 @@ def handle_load(args: List[str], global_flags: Any) -> Any:
             return Result(status="error", error="; ".join(result.errors))
         return Result(status="ok", data={
             "neurons_created": result.neurons_created,
+            "neurons_reused": result.neurons_reused,
             "edges_created": result.edges_created,
             "ref_map": result.ref_map,
         })

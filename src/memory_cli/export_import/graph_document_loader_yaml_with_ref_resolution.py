@@ -38,12 +38,14 @@ class GraphDocumentResult:
     Attributes:
         success: True if load completed without error.
         neurons_created: Count of neurons inserted.
+        neurons_reused: Count of neurons matched to existing (dedup).
         edges_created: Count of edges inserted.
         ref_map: Mapping of ref labels to real neuron IDs.
         errors: List of error messages if any.
     """
     success: bool = False
     neurons_created: int = 0
+    neurons_reused: int = 0
     edges_created: int = 0
     ref_map: Dict[str, int] = field(default_factory=dict)
     errors: List[str] = field(default_factory=list)
@@ -120,11 +122,12 @@ def load_graph_document(
     edges_spec = doc.get("edges", [])
 
     # 3. Phase 1: Create neurons, build ref→ID map
-    ref_map, neuron_errors = _create_neurons_and_collect_ids(
+    ref_map, neurons_created, neurons_reused, neuron_errors = _create_neurons_and_collect_ids(
         conn, neurons_spec, source_override=source,
     )
     result.ref_map = ref_map
-    result.neurons_created = len(ref_map)
+    result.neurons_created = neurons_created
+    result.neurons_reused = neurons_reused
     if neuron_errors:
         result.errors.extend(neuron_errors)
         return result
@@ -237,25 +240,59 @@ def _create_neurons_and_collect_ids(
 
     ref_map: Dict[str, int] = {}
     errors: List[str] = []
+    created = 0
+    reused = 0
 
     for i, spec in enumerate(neurons_spec):
         ref = spec["ref"]
         content = spec["content"]
-        tags = spec.get("tags")
+        raw_tags = spec.get("tags")
+        tags = [str(t).strip() for t in raw_tags] if raw_tags else None
         source = source_override or spec.get("source")
         ntype = spec.get("type")
         attrs = {"type": ntype} if ntype else None
 
         try:
+            # Dedup: if a neuron with same source + content exists, reuse it
+            existing = _find_existing_neuron(conn, content, source)
+            if existing is not None:
+                ref_map[ref] = existing
+                reused += 1
+                continue
+
             result = neuron_add(
                 conn, content, tags=tags, source=source, attrs=attrs, no_embed=True,
             )
             neuron_id = result["id"]
             ref_map[ref] = neuron_id
+            created += 1
         except Exception as e:
             errors.append(f"neurons[{i}] ref='{ref}': failed to create — {e}")
 
-    return ref_map, errors
+    return ref_map, created, reused, errors
+
+
+def _find_existing_neuron(
+    conn: sqlite3.Connection,
+    content: str,
+    source: Optional[str],
+) -> Optional[int]:
+    """Check if a neuron with the same content and source already exists.
+
+    Returns:
+        Neuron ID if found, None otherwise.
+    """
+    if source:
+        row = conn.execute(
+            "SELECT id FROM neurons WHERE content = ? AND source = ? AND status = 'active' LIMIT 1",
+            (content, source),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT id FROM neurons WHERE content = ? AND status = 'active' LIMIT 1",
+            (content,),
+        ).fetchone()
+    return row[0] if row else None
 
 
 def _create_edges_from_refs(

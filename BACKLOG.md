@@ -94,3 +94,32 @@ Sensory → short-term (working memory, ~7 items, decays fast) → long-term (co
 - Item 6 (reflection/synthesis): 2-3 sessions — Haiku integration, clustering, prompt engineering
 
 **Acceptance:** `memory meta consolidate` runs, promotes high-signal neurons, and search results demonstrably favor consolidated knowledge over isolated recent noise.
+
+---
+
+## HIGH — batch load: YAML date tags parsed as datetime.date, not string
+
+**Problem:** `memory batch load` fails when a tag looks like a date (e.g., `2026-03-13`). YAML auto-parses it as `datetime.date`, then the tag creation code calls `.strip()` on it and crashes: `'datetime.date' object has no attribute 'strip'`.
+
+**Observed:** Loading a graph doc with `tags: [leidos, interview, 2026-03-13]` — had to quote it as `"2026-03-13"` to work around.
+
+**Fix:** In the batch load tag processing, coerce all tag values to `str()` before passing to the tag creation path. One line: `tag = str(tag).strip()`. Date tags are common (temporal queries depend on them), so this should just work without quoting.
+
+**Acceptance:** `tags: [leidos, interview, 2026-03-13]` (unquoted) loads without error.
+
+---
+
+## HIGH — batch load: No dedup — identical content creates duplicate neurons
+
+**Problem:** Running `memory batch load` on a graph doc that contains content already in the DB creates duplicate neurons. No content-hash or idempotency check. We loaded the same interview prep twice (once via individual calls, once via batch load) and got 14 results for "leidos interview" — every neuron duplicated.
+
+**Observed:** Neurons 4-8 (individual calls) and 17-21 (batch load) have identical content. Also neurons 12-16 appeared from an earlier batch load attempt. Search returns 14 hits for content that should be 5.
+
+**Fix options:**
+1. **Content hash dedup** — hash neuron content on create, reject or merge if hash exists. Simple, catches exact dupes.
+2. **Ref-based idempotency** — if a neuron with the same `source` + `ref` already exists, update instead of create. More flexible, allows intentional re-loads.
+3. **`--upsert` flag** — opt-in: `memory batch load --upsert file.yaml` merges with existing; without flag, skip or warn on dupes.
+
+**Preferred:** Option 2 (source + ref idempotency) with option 1 as a safety net. The `ref` label in graph docs is already a natural key — use it.
+
+**Acceptance:** Running `memory batch load file.yaml` twice produces the same number of neurons, not double.
