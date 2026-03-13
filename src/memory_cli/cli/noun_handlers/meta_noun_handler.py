@@ -52,10 +52,25 @@ def handle_info(args: List[str], global_flags: Any) -> Any:
     try:
         conn, config = get_connection_and_config(global_flags)
         from memory_cli.db import read_schema_version
+        from memory_cli.db.store_fingerprint_read_and_cache import get_fingerprint
         version = read_schema_version(conn)
+        # Read fingerprint and store identity from meta table
+        try:
+            fingerprint = get_fingerprint(conn)
+        except ValueError:
+            fingerprint = None
+        meta_project = conn.execute(
+            "SELECT value FROM meta WHERE key = 'project'"
+        ).fetchone()
+        meta_db_path = conn.execute(
+            "SELECT value FROM meta WHERE key = 'db_path'"
+        ).fetchone()
         info = {
             "db_path": config.db_path,
             "schema_version": version,
+            "fingerprint": fingerprint,
+            "project": meta_project[0] if meta_project else None,
+            "store_db_path": meta_db_path[0] if meta_db_path else None,
             "embedding_model": config.embedding.model_path,
             "embedding_dimensions": config.embedding.dimensions,
         }
