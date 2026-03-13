@@ -148,10 +148,11 @@ def handle_load(args: List[str], global_flags: Any) -> Any:
     5. Return Result with data or error
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
-    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_scope
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
         require_positional, extract_flag,
     )
+    from memory_cli.cli.scoped_handle_format_and_parse import scope_ref_map
     try:
         rest = list(args)
 
@@ -173,7 +174,7 @@ def handle_load(args: List[str], global_flags: Any) -> Any:
                 file_path = None
 
         source, rest = extract_flag(rest, "--source")
-        conn = get_connection(global_flags)
+        conn, scope = get_connection_and_scope(global_flags)
         from memory_cli.export_import.graph_document_loader_yaml_with_ref_resolution import (
             load_graph_document,
         )
@@ -186,7 +187,7 @@ def handle_load(args: List[str], global_flags: Any) -> Any:
             "neurons_created": result.neurons_created,
             "neurons_reused": result.neurons_reused,
             "edges_created": result.edges_created,
-            "ref_map": result.ref_map,
+            "ref_map": scope_ref_map(result.ref_map, scope),
         })
     except Exception as e:
         return Result(status="error", error=str(e))
