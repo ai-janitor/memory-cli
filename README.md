@@ -39,7 +39,7 @@ memory batch load graph.yaml
 | `tag` | add, list, remove, rename |
 | `attr` | set, get, list, remove |
 | `batch` | export, import, load, reembed |
-| `meta` | info, stats |
+| `meta` | info, stats, manifesto |
 
 ### Global flags
 
@@ -47,6 +47,7 @@ memory batch load graph.yaml
 --format <json|text>   Output format (default: json)
 --config <path>        Config file path
 --db <path>            Database file path
+--global               Use only the global store (~/.memory/), skip local
 --help                 Show help (works at any level)
 ```
 
@@ -80,8 +81,8 @@ The difference matters because **edges are what make search work**. Spreading ac
     project A          project B
 ```
 
-- **Global** (`~/.memory/`) — user preferences, cross-project knowledge, personal facts. Created with `memory init`.
-- **Local** (`<project>/.memory/`) — project-specific knowledge. Created with `memory init --project`.
+- **Local** (`<project>/.memory/`) — project-specific knowledge. Created with `memory init` (default).
+- **Global** (`~/.memory/`) — user preferences, cross-project knowledge, personal facts. Created with `memory init --global`.
 - **Foreign** — another project's local store, referenced by fingerprint.
 
 ### Scoped neuron handles
@@ -127,7 +128,7 @@ edges:
     type: learned_from
 ```
 
-**Search traverses all three scopes.** An agent in project B searches "deploy process" — spreading activation hits the local fact, follows the edge to the global preference, follows another edge to project A's deploy knowledge. Three stores, one search, full context.
+**Search is layered (PATH-style).** When both local and global stores exist, search queries both — local results first, then global. An agent in project B searches "deploy process" — gets project-specific facts first, then global preferences and cross-project knowledge. Use `--global` to query only the global store.
 
 ## Graph Document Import
 
@@ -228,12 +229,16 @@ pipx install --editable .
 ### Post-install
 
 ```bash
-# Initialize the memory store
-memory init
+# Initialize a global memory store (user-wide preferences, cross-project knowledge)
+memory init --global
 
 # Download the embedding model
 curl -L -o ~/.memory/models/default.gguf \
   https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q8_0.gguf
+
+# Initialize a local memory store in your project (optional — project-specific knowledge)
+cd your-project/
+memory init
 ```
 
 ## Requirements

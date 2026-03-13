@@ -100,10 +100,12 @@
 - Nouns: neuron, tag, attr, edge, meta, batch
 
 ### 7.2 Init & Config
-- `memory init` creates global config and DB at `~/.memory/`
-- `memory init --project` creates project-scoped config and DB at `.memory/` in cwd
+- `memory init` creates local project store at `.memory/` in cwd (default — git-style)
+- `memory init --global` creates global store at `~/.memory/`
 - Config resolution chain: `--config` flag → walk up from cwd for `.memory/config.json` → `~/.memory/config.json`
-- Project-scoped memory is isolated — its own DB, its own config
+- Search is layered (PATH-style): queries hit local first, then global, merged results with local ranked higher
+- Writes go to local if `.memory/` exists, global otherwise
+- `--global` flag on any command forces global-only (skip local store)
 - Config includes: db path, embedding model settings, search defaults (including temporal half-life), Haiku API key env var, Haiku model name (default: claude-haiku-4-5-20251001)
 - `--config` and `--db` flags override for edge cases
 - `memory init` is a top-level command (exception to noun-verb grammar, like `git init`)

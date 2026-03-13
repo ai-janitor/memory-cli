@@ -46,9 +46,10 @@
 
 ### R-9: Project-scoped memory stores (Source: Stage 6 Wave A reflect gate)
 **Layer:** Requirements (§7.2 Init & Config)
-**Finding:** User wants per-project memory stores in addition to global. `memory init` = global (~/.memory/), `memory init --project` = project-scoped (.memory/ in cwd). Config resolution walks up from cwd looking for .memory/config.json, falls back to ~/.memory/config.json. Like .git/ discovery.
-**Impact:** Config loading must implement ancestor-directory walk. `memory init` is a top-level command exception to noun-verb grammar. Each store is isolated (own DB, own config).
+**Finding:** User wants per-project memory stores in addition to global. Config resolution walks up from cwd looking for .memory/config.json, falls back to ~/.memory/config.json. Like .git/ discovery.
+**Impact:** Config loading must implement ancestor-directory walk. `memory init` is a top-level command exception to noun-verb grammar.
 **Status:** Resolved — added to REQUIREMENTS.md §7.2.
+**Updated v0.3.0:** Init default flipped — `memory init` = local (.memory/ in cwd), `memory init --global` = global (~/.memory/). Layered PATH-style search added: queries hit local first, then global, merged results. `--project` flag removed, replaced by `--global`. Stores are no longer fully isolated on read — search merges both stores with local ranked first. Writes still target a single store (local preferred).
 
 ### R-10: `memory init` as grammar exception (Source: Stage 6 Wave A reflect gate)
 **Layer:** Requirements (§7.1 Grammar, §7.2 Init & Config)
