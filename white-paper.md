@@ -318,7 +318,7 @@ Git proved that decentralized, content-addressable references could replace cent
 
 ### 6.2 Hosted Memory Services
 
-**Mem0** provides a dedicated memory layer with versioned APIs, MMR-based reranking, and recently added graph memory. However, it operates as a managed SaaS with centralized storage.
+**Mem0** (Chhikara et al., 2025) provides a dedicated memory layer with versioned APIs, MMR-based reranking, and recently added graph memory (backed by Neo4j). However, it operates as a managed SaaS with centralized storage. More fundamentally, Mem0 interposes an LLM extraction step between the agent's experience and its memory — GPT-4o-mini decides what is worth remembering, introducing a lossy compression layer the agent cannot inspect or control. In memory-cli, **the agent is the author**: it writes neuron content and edge structure directly through graph documents. No middleman, no interpretation loss, no per-write token cost.
 
 **Zep** stores memory as a temporal knowledge graph tracking fact evolution, combining graph-based memory with vector search. It offers on-premise deployment but requires a managed graph database infrastructure.
 
@@ -362,6 +362,7 @@ Memory-cli demonstrates that agent memory does not require centralized infrastru
 
 - **Memory strengthens through connection**, not just storage
 - **Consolidation is an explicit agent action**, not a background process
+- **The agent writes the graph document, knows exactly what went in, controls the structure** — no lossy LLM extraction between experience and memory
 - **Federation emerges from use**, not configuration
 - **Search traverses association**, not just similarity
 
@@ -377,11 +378,11 @@ We believe this architecture points toward a future where AI agents maintain ric
 
 2. Collins, A. M., & Loftus, E. F. (1975). A spreading-activation theory of semantic processing. *Psychological Review*, 82(6), 407-428.
 
-3. Cormack, G. V., Clarke, C. L., & Buettcher, S. (2009). Reciprocal rank fusion outperforms condorcet and individual rank learning methods. *Proceedings of SIGIR '09*, 758-759.
+3. Cormack, G. V., Clarke, C. L., & Büttcher, S. (2009). Reciprocal rank fusion outperforms condorcet and individual rank learning methods. *Proceedings of SIGIR '09*, 758-759.
 
 4. Packer, C., Wooders, S., Lin, K., Fang, V., Patil, S., Stoica, I., & Gonzalez, J. (2023). MemGPT: Towards LLMs as operating systems. *arXiv:2310.08560*.
 
-5. Choudhary, T., et al. (2025). Mem0: Building production-ready AI agents with scalable long-term memory. *arXiv:2504.19413*.
+5. Chhikara, P., Khant, D., Aryan, S., Singh, T., & Yadav, D. (2025). Mem0: Building production-ready AI agents with scalable long-term memory. *arXiv:2504.19413*.
 
 6. Besta, M., et al. (2025). Leveraging spreading activation for improved document retrieval in knowledge-graph-based RAG systems. *arXiv:2512.15922*.
 
