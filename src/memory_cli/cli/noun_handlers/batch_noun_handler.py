@@ -235,7 +235,7 @@ _VERB_MAP = {
 _VERB_DESCRIPTIONS = {
     "export": "Export database contents to portable format",
     "import": "Import data from portable format",
-    "load": "Load a YAML graph document (neurons + edges with ref labels)",
+    "load": "Load a YAML graph document (neurons + edges with ref labels or neuron IDs)",
     "reembed": "Regenerate embeddings for all neurons",
 }
 

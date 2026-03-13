@@ -80,6 +80,38 @@ memory batch load interview-prep.yaml
 
 `ref` labels are local — resolved to real neuron IDs at import time. One file, one command, entire graph.
 
+### Graph Document Format
+
+```yaml
+neurons:                          # required — list of neurons to create
+  - ref: <label>                  # required — local label for edge references
+    content: "..."                # required — neuron content
+    tags: [tag1, tag2]            # optional — list of tags
+    type: <type>                  # optional — stored as attr type=<type>
+    source: <source>              # optional — origin identifier
+
+edges:                            # optional — list of edges to create
+  - from: <ref-or-id>            # required — local ref label or integer neuron ID
+    to: <ref-or-id>              # required — local ref label or integer neuron ID
+    type: <reason>               # optional — edge reason (default: "related")
+    weight: <float>              # optional — edge weight (default: 1.0)
+```
+
+**Cross-file references:** Edge `from`/`to` accepts integer neuron IDs to link to neurons from previous loads:
+
+```yaml
+neurons:
+  - ref: new-fact
+    content: "A new fact that extends an existing neuron"
+
+edges:
+  - from: new-fact
+    to: 42                        # links to existing neuron #42
+    type: extends
+```
+
+**Idempotent:** Loading the same file twice reuses existing neurons (matched by source + content) instead of creating duplicates.
+
 ## Install
 
 ### One-liner (recommended)
