@@ -105,6 +105,10 @@ def handle_list(args: List[str], global_flags: Any) -> Any:
     from memory_cli.cli.scoped_handle_format_and_parse import parse_handle
     try:
         neuron_id_raw, rest = extract_flag(list(args), "--neuron")
+        sort_value, rest = extract_flag(rest, "--sort")
+        limit_value, rest = extract_flag(rest, "--limit")
+        limit = int(limit_value) if limit_value else 0
+        sort_by_count = sort_value == "count" if sort_value else False
         connections = get_layered_connections(global_flags)
         if neuron_id_raw is not None:
             # Neuron-scoped: find the neuron in whichever store has it
@@ -115,6 +119,20 @@ def handle_list(args: List[str], global_flags: Any) -> Any:
                 if neuron is not None:
                     return Result(status="ok", data=neuron.get("tags", []))
             return Result(status="not_found", error=f"Neuron {neuron_id_raw} not found")
+        elif sort_by_count:
+            # Tag list with counts, sorted by most common
+            from memory_cli.registries import tag_list_with_counts
+            merged: dict = {}
+            for conn, scope in connections:
+                tags = tag_list_with_counts(conn)
+                for t in tags:
+                    name = t["name"]
+                    merged[name] = merged.get(name, 0) + t["count"]
+            result_list = [{"name": k, "count": v} for k, v in merged.items()]
+            result_list.sort(key=lambda x: x["count"], reverse=True)
+            if limit > 0:
+                result_list = result_list[:limit]
+            return Result(status="ok", data=result_list)
         else:
             # Global tag list: merge from all stores, deduplicate
             from memory_cli.registries import tag_list
@@ -123,10 +141,12 @@ def handle_list(args: List[str], global_flags: Any) -> Any:
             for conn, scope in connections:
                 tags = tag_list(conn)
                 for t in tags:
-                    tag_name = t["tag"] if isinstance(t, dict) else t
+                    tag_name = t.get("name", t.get("tag", t)) if isinstance(t, dict) else t
                     if tag_name not in seen:
                         seen.add(tag_name)
                         all_tags.append(t)
+            if limit > 0:
+                all_tags = all_tags[:limit]
             return Result(status="ok", data=all_tags)
     except Exception as e:
         return Result(status="error", error=str(e))

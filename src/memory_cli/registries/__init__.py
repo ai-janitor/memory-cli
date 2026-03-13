@@ -25,6 +25,7 @@
 from .tag_registry_crud_normalize_autocreate import (
     tag_add,
     tag_list,
+    tag_list_with_counts,
     tag_remove,
     tag_autocreate,
     normalize_tag_name,
@@ -56,6 +57,7 @@ __all__ = [
     # Tag registry
     "tag_add",
     "tag_list",
+    "tag_list_with_counts",
     "tag_remove",
     "tag_autocreate",
     "normalize_tag_name",

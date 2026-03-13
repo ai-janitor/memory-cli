@@ -164,6 +164,27 @@ def tag_list(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
     return [{"id": row[0], "name": row[1], "created_at": row[2]} for row in rows]
 
 
+def tag_list_with_counts(conn: sqlite3.Connection, limit: int = 0) -> List[Dict[str, Any]]:
+    """List all tags with neuron counts, sorted by most common first.
+
+    Args:
+        conn: SQLite connection.
+        limit: Max results. 0 = unlimited.
+
+    Returns:
+        List of dicts {name, count}, sorted by count descending.
+    """
+    sql = (
+        "SELECT t.name, COUNT(nt.neuron_id) as count "
+        "FROM tags t LEFT JOIN neuron_tags nt ON t.id = nt.tag_id "
+        "GROUP BY t.id ORDER BY count DESC"
+    )
+    if limit > 0:
+        sql += f" LIMIT {int(limit)}"
+    rows = conn.execute(sql).fetchall()
+    return [{"name": row[0], "count": row[1]} for row in rows]
+
+
 def tag_remove(conn: sqlite3.Connection, name_or_id: Union[str, int]) -> bool:
     """Remove a tag from the registry by name or id.
 
