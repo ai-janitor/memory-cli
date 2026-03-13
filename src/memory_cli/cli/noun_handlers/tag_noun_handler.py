@@ -45,12 +45,14 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
     7. If neuron not found: Result(status="not_found")
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
-    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_scope
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
         require_positional, extract_flag,
     )
+    from memory_cli.cli.scoped_handle_format_and_parse import parse_handle, format_handle
     try:
-        nid, rest = require_positional(list(args), "neuron_id")
+        nid_raw, rest = require_positional(list(args), "neuron_id")
+        _scope, nid = parse_handle(nid_raw)
         # Collect tag names from remaining positional args or --tags flag
         tags_flag, rest = extract_flag(rest, "--tags")
         tag_names = []
@@ -60,13 +62,13 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
         tag_names.extend([t for t in rest if not t.startswith("--")])
         if not tag_names:
             return Result(status="error", error="At least one tag name is required")
-        conn = get_connection(global_flags)
+        conn, scope = get_connection_and_scope(global_flags)
         from memory_cli.neuron import neuron_get, neuron_update, NeuronUpdateError
-        neuron = neuron_get(conn, int(nid))
+        neuron = neuron_get(conn, nid)
         if neuron is None:
-            return Result(status="not_found", error=f"Neuron {nid} not found")
-        neuron_update(conn, int(nid), tags_add=tag_names)
-        return Result(status="ok", data={"neuron_id": int(nid), "tags_added": tag_names})
+            return Result(status="not_found", error=f"Neuron {nid_raw} not found")
+        neuron_update(conn, nid, tags_add=tag_names)
+        return Result(status="ok", data={"neuron_id": format_handle(nid, scope), "tags_added": tag_names})
     except (ValueError, Exception) as e:
         return Result(status="error", error=str(e))
 
@@ -97,16 +99,18 @@ def handle_list(args: List[str], global_flags: Any) -> Any:
     5. Empty list is success (exit 0)
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
-    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_scope
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import extract_flag
+    from memory_cli.cli.scoped_handle_format_and_parse import parse_handle
     try:
-        neuron_id, rest = extract_flag(list(args), "--neuron")
-        conn = get_connection(global_flags)
-        if neuron_id is not None:
+        neuron_id_raw, rest = extract_flag(list(args), "--neuron")
+        conn, scope = get_connection_and_scope(global_flags)
+        if neuron_id_raw is not None:
+            _scope, neuron_id = parse_handle(neuron_id_raw)
             from memory_cli.neuron import neuron_get
-            neuron = neuron_get(conn, int(neuron_id))
+            neuron = neuron_get(conn, neuron_id)
             if neuron is None:
-                return Result(status="not_found", error=f"Neuron {neuron_id} not found")
+                return Result(status="not_found", error=f"Neuron {neuron_id_raw} not found")
             return Result(status="ok", data=neuron.get("tags", []))
         else:
             from memory_cli.registries import tag_list
@@ -138,20 +142,22 @@ def handle_remove(args: List[str], global_flags: Any) -> Any:
     6. If neuron not found: Result(status="not_found")
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
-    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_scope
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import require_positional
+    from memory_cli.cli.scoped_handle_format_and_parse import parse_handle, format_handle
     try:
-        nid, rest = require_positional(list(args), "neuron_id")
+        nid_raw, rest = require_positional(list(args), "neuron_id")
+        _scope, nid = parse_handle(nid_raw)
         tag_names = [t for t in rest if not t.startswith("--")]
         if not tag_names:
             return Result(status="error", error="At least one tag name is required")
-        conn = get_connection(global_flags)
+        conn, scope = get_connection_and_scope(global_flags)
         from memory_cli.neuron import neuron_get, neuron_update
-        neuron = neuron_get(conn, int(nid))
+        neuron = neuron_get(conn, nid)
         if neuron is None:
-            return Result(status="not_found", error=f"Neuron {nid} not found")
-        neuron_update(conn, int(nid), tags_remove=tag_names)
-        return Result(status="ok", data={"neuron_id": int(nid), "tags_removed": tag_names})
+            return Result(status="not_found", error=f"Neuron {nid_raw} not found")
+        neuron_update(conn, nid, tags_remove=tag_names)
+        return Result(status="ok", data={"neuron_id": format_handle(nid, scope), "tags_removed": tag_names})
     except Exception as e:
         return Result(status="error", error=str(e))
 

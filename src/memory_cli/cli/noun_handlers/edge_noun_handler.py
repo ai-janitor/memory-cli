@@ -49,20 +49,23 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
     8. If either neuron not found: Result(status="not_found", error="Neuron {id} not found")
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
-    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_scope
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
         require_positional, extract_flag,
     )
+    from memory_cli.cli.scoped_handle_format_and_parse import parse_handle, scope_edge_dict
     try:
-        source_id, rest = require_positional(list(args), "source_id")
-        target_id, rest = require_positional(rest, "target_id")
+        source_raw, rest = require_positional(list(args), "source_id")
+        target_raw, rest = require_positional(rest, "target_id")
+        _s1, source_id = parse_handle(source_raw)
+        _s2, target_id = parse_handle(target_raw)
         reason, rest = extract_flag(rest, "--type", default="related_to")
         weight, rest = extract_flag(rest, "--weight", type_fn=float, default=None)
-        conn = get_connection(global_flags)
+        conn, scope = get_connection_and_scope(global_flags)
         from memory_cli.edge import edge_add
-        result = edge_add(conn, int(source_id), int(target_id), reason=reason, weight=weight)
+        result = edge_add(conn, source_id, target_id, reason=reason, weight=weight)
         conn.commit()
-        return Result(status="ok", data=result)
+        return Result(status="ok", data=scope_edge_dict(result, scope))
     except Exception as e:
         return Result(status="error", error=str(e))
 
@@ -96,24 +99,26 @@ def handle_list(args: List[str], global_flags: Any) -> Any:
     5. Empty list is success (exit 0)
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
-    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_scope
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import extract_flag
+    from memory_cli.cli.scoped_handle_format_and_parse import parse_handle, scope_list
     try:
         rest = list(args)
-        neuron_id, rest = extract_flag(rest, "--neuron")
+        neuron_id_raw, rest = extract_flag(rest, "--neuron")
         direction, rest = extract_flag(rest, "--direction", default="both")
         limit, rest = extract_flag(rest, "--limit", type_fn=int, default=50)
         offset, rest = extract_flag(rest, "--offset", type_fn=int, default=0)
-        if neuron_id is None:
+        if neuron_id_raw is None:
             return Result(status="error", error="--neuron <id> is required for edge list")
-        conn = get_connection(global_flags)
+        _scope, neuron_id = parse_handle(neuron_id_raw)
+        conn, scope = get_connection_and_scope(global_flags)
         from memory_cli.edge import edge_list
         # Map CLI direction names to internal names
         dir_map = {"in": "incoming", "out": "outgoing", "both": "both",
                     "incoming": "incoming", "outgoing": "outgoing"}
         direction = dir_map.get(direction, direction)
-        edges = edge_list(conn, int(neuron_id), direction=direction, limit=limit, offset=offset)
-        return Result(status="ok", data=edges, meta={"limit": limit, "offset": offset})
+        edges = edge_list(conn, neuron_id, direction=direction, limit=limit, offset=offset)
+        return Result(status="ok", data=scope_list(edges, scope, "edge"), meta={"limit": limit, "offset": offset})
     except Exception as e:
         return Result(status="error", error=str(e))
 
@@ -139,14 +144,17 @@ def handle_remove(args: List[str], global_flags: Any) -> Any:
     5. Return Result(status="ok", data={"source": s, "target": t, "removed": True})
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
-    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_scope
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import require_positional
+    from memory_cli.cli.scoped_handle_format_and_parse import parse_handle
     try:
-        source_id, rest = require_positional(list(args), "source_id")
-        target_id, rest = require_positional(rest, "target_id")
-        conn = get_connection(global_flags)
+        source_raw, rest = require_positional(list(args), "source_id")
+        target_raw, rest = require_positional(rest, "target_id")
+        _s1, source_id = parse_handle(source_raw)
+        _s2, target_id = parse_handle(target_raw)
+        conn, scope = get_connection_and_scope(global_flags)
         from memory_cli.edge import edge_remove
-        result = edge_remove(conn, int(source_id), int(target_id))
+        result = edge_remove(conn, source_id, target_id)
         conn.commit()
         return Result(status="ok", data=result)
     except Exception as e:
