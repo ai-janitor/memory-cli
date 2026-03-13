@@ -50,6 +50,22 @@ memory batch load graph.yaml
 --help                 Show help (works at any level)
 ```
 
+## When to Use What
+
+| Method | When | Example |
+|--------|------|---------|
+| `neuron add` | Quick capture mid-task — one fact, no structure | `memory neuron add "deploy script is in scripts/deploy.sh"` |
+| `batch load` | Structured knowledge — multiple facts with relationships | A person, a meeting, talking points, and how they connect |
+
+`neuron add` is the inbox — fast, unstructured, ephemeral. `batch load` is the filing cabinet — structured, connected, durable.
+
+The difference matters because **edges are what make search work**. Spreading activation needs connections to traverse. A single neuron is a dot. A graph document is dots with lines between them — and those lines are what surface related memories when you search.
+
+**Typical workflow:**
+1. **During work:** `neuron add` for quick observations (short-term capture)
+2. **End of session:** `batch load` a graph doc that structures what you learned (long-term storage)
+3. **Over time:** Isolated neurons with no edges decay in search ranking; connected ones persist
+
 ## Graph Document Import
 
 Load an entire knowledge graph from a single YAML file:
