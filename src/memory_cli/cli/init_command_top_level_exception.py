@@ -8,10 +8,11 @@
 #            Keeping it isolated here makes the exception explicit and contained.
 # RESPONSIBILITY:
 #   - Detect "init" as the first token (done in entrypoint, but handled here)
-#   - Parse init-specific flags (--force, --project)
-#   - --project: create LOCAL project store at .memory/ in current directory
+#   - Parse init-specific flags (--force, --global)
+#   - Default (no flags): create LOCAL project store at .memory/ in cwd
+#   - --global: create GLOBAL store at ~/.memory/
 #   - --force: overwrite existing config (preserve DB)
-#   - These can be combined: memory init --project --force
+#   - These can be combined: memory init --global --force
 #   - Delegate to config/storage layer to create database and config
 #   - Return a Result object for the output formatter
 #   - Handle already-initialized case (error unless --force)
@@ -22,7 +23,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import List, Any
 
@@ -36,13 +36,13 @@ def handle_init(args: List[str], global_flags: Any) -> Any:
     """Handle `memory init [flags]` command.
 
     Supported invocations:
-        memory init             — creates GLOBAL store at ~/.memory/
-        memory init --project   — creates LOCAL project store at .memory/ in cwd
+        memory init             — creates LOCAL project store at .memory/ in cwd
+        memory init --global    — creates GLOBAL store at ~/.memory/
         memory init --force     — overwrite existing config (preserve DB)
-        memory init --project --force — combine both flags
+        memory init --global --force — combine both flags
 
     Args:
-        args: Remaining tokens after "init" (e.g., ["--force", "--project"]).
+        args: Remaining tokens after "init" (e.g., ["--force", "--global"]).
         global_flags: Parsed global flags (--db, --config may override defaults).
 
     Returns:
@@ -51,50 +51,28 @@ def handle_init(args: List[str], global_flags: Any) -> Any:
     Pseudo-logic:
     1. Parse init-specific flags from args:
        - --force: overwrite existing config, preserve DB (default False)
-       - --project: create .memory/ in cwd instead of ~/.memory/ (default False)
+       - --global: create ~/.memory/ instead of .memory/ in cwd (default False)
        - --db and --config may also come from global_flags
-    2. Determine database path:
-       a. If global_flags.db is set, use that
-       b. Else if --db in init args, use that
-       c. Else use default path from config module
-    3. Determine config path:
-       a. If global_flags.config is set, use that
-       b. Else use default path from config module
-    4. Check if database already exists at target path:
-       a. If exists and not --force: return error result
-          "Database already exists at {path}. Use --force to overwrite."
-       b. If exists and --force: delete existing, proceed
-    5. Delegate to storage layer via init_memory_store(project=, force=):
+    2. Determine whether this is a local (project) or global init:
+       a. Default (no --global flag): project=True -> .memory/ in cwd (LOCAL)
+       b. With --global flag: project=False -> ~/.memory/ (GLOBAL)
+    3. Delegate to init_memory_store(project=, force=):
        a. Create database with schema (tables, indexes, vec extension)
        b. Create config file with defaults if it doesn't exist
-    6. Return success result with data:
+    4. Return success result with data:
        {"database": str(db_path), "config": str(config_path), "created": True}
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
 
     init_flags = _parse_init_flags(list(args))
     force = init_flags["force"]
-    project = init_flags["project"]
+    global_store = init_flags["global_store"]
 
-    if global_flags is not None and getattr(global_flags, "db", None):
-        db_path = Path(global_flags.db)
-    else:
-        db_path = Path.home() / ".memory" / "memory.db"
+    # Default is LOCAL (project=True). --global flips to GLOBAL (project=False).
+    project = not global_store
 
-    if global_flags is not None and getattr(global_flags, "config", None):
-        config_path = Path(global_flags.config)
-    else:
-        config_path = Path.home() / ".memory" / "config.json"
-
-    if db_path.exists():
-        if not force:
-            return Result(
-                status="error",
-                error=f"Database already exists at {db_path}. Use --force to overwrite.",
-            )
-        db_path.unlink()
-
-    # Use init_memory_store if no custom paths are specified
+    # Delegate to init_memory_store — it handles path resolution, directory
+    # creation, config writing, DB creation, and post-init instructions.
     try:
         from memory_cli.config.init_create_global_or_project_store import init_memory_store, InitError
         store_path = init_memory_store(project=project, force=force)
@@ -106,25 +84,11 @@ def handle_init(args: List[str], global_flags: Any) -> Any:
                 "created": True,
             },
         )
-    except (InitError, Exception):
-        # Fallback: manually create DB and config with valid JSON
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        db_path.touch()
-        if not config_path.exists() or force:
-            import json
-            from memory_cli.config import CONFIG_DEFAULTS
-            import copy
-            config = copy.deepcopy(CONFIG_DEFAULTS)
-            config["db_path"] = str(db_path)
-            config["embedding"]["model_path"] = str(db_path.parent / "models" / "default.gguf")
-            config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
-            (db_path.parent / "models").mkdir(parents=True, exist_ok=True)
-
-    return Result(
-        status="ok",
-        data={"database": str(db_path), "config": str(config_path), "created": True},
-    )
+    except Exception as exc:
+        return Result(
+            status="error",
+            error=str(exc),
+        )
 
 
 # =============================================================================
@@ -134,37 +98,38 @@ def _parse_init_flags(args: List[str]) -> dict:
     """Extract init-specific flags from the argument list.
 
     Recognized flags:
-        --force   : overwrite existing config (preserve DB)
-        --project : create LOCAL project store at .memory/ in cwd
-                    (without --project, creates GLOBAL store at ~/.memory/)
+        --force        : overwrite existing config (preserve DB)
+        --global       : create GLOBAL store at ~/.memory/
+                         (without --global, creates LOCAL store at .memory/ in cwd)
 
     Args:
         args: Tokens after "init".
 
     Returns:
-        Dict with parsed flags: {"force": bool, "project": bool}
+        Dict with parsed flags: {"force": bool, "global_store": bool}
+        (Uses "global_store" because "global" is a Python keyword.)
 
     Pseudo-logic:
     1. Scan args for "--force" -> set force=True, remove from list
-    2. Scan args for "--project" -> set project=True, remove from list
+    2. Scan args for "--global" -> set global_store=True, remove from list
     3. If any unrecognized flags remain (tokens starting with "--"),
        raise error "Unknown flag for init: {flag}"
     4. If any positional args remain, raise error
        "init takes no positional arguments"
-    5. Return {"force": force, "project": project}
+    5. Return {"force": force, "global_store": global_store}
     """
     remaining = list(args)
     force = False
-    project = False
+    global_store = False
     if "--force" in remaining:
         force = True
         remaining.remove("--force")
-    if "--project" in remaining:
-        project = True
-        remaining.remove("--project")
+    if "--global" in remaining:
+        global_store = True
+        remaining.remove("--global")
     for token in remaining:
         if token.startswith("--"):
             raise ValueError(f"Unknown flag for init: {token}")
     if remaining:
         raise ValueError("init takes no positional arguments")
-    return {"force": force, "project": project}
+    return {"force": force, "global_store": global_store}

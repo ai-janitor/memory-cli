@@ -8,8 +8,8 @@
 #            correctly to the config/storage layer.
 # RESPONSIBILITY:
 #   - Test handle_init() with various flag combinations
-#   - Test --force behavior when DB already exists
-#   - Test error when DB already exists without --force
+#   - Test --force behavior when store already exists
+#   - Test error when store already exists without --force
 #   - Test that init creates DB and config via storage layer
 #   - Test _parse_init_flags() for valid and invalid inputs
 # ORGANIZATION:
@@ -17,7 +17,6 @@
 #   2. Test class: TestInitHappyPath
 #   3. Test class: TestInitAlreadyExists
 #   4. Test class: TestInitFlagParsing
-#   5. Test class: TestInitWithGlobalFlags
 # =============================================================================
 
 from __future__ import annotations
@@ -25,9 +24,9 @@ from __future__ import annotations
 import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
+from types import SimpleNamespace
 
 from memory_cli.cli.init_command_top_level_exception import handle_init, _parse_init_flags
-from memory_cli.cli.global_flags_format_config_db import GlobalFlags
 
 
 # =============================================================================
@@ -36,81 +35,130 @@ from memory_cli.cli.global_flags_format_config_db import GlobalFlags
 class TestInitHappyPath:
     """Test successful init scenarios."""
 
-    def test_init_creates_database_and_config(self, tmp_path: Path) -> None:
-        """Init with no existing DB -> creates DB and config, returns success.
+    def test_init_default_creates_local_store(self, tmp_path: Path) -> None:
+        """Init with no flags -> creates LOCAL store (.memory/ in cwd), returns success.
 
         Pseudo-logic:
-        1. Patch storage layer (DB does not exist)
-        2. result = handle_init([], mock_global_flags)
+        1. Mock init_memory_store to return tmp_path/.memory
+        2. result = handle_init([], global_flags)
         3. Assert result.status == "ok"
-        4. Assert result.data contains "database" and "config" paths
-        5. Assert storage.create_database was called
+        4. Assert init_memory_store called with project=True (local default)
         """
-        db_path = tmp_path / "memory.db"
-        config_path = tmp_path / "config.toml"
-        flags = GlobalFlags(db=str(db_path), config=str(config_path))
-        with patch("memory_cli.cli.init_command_top_level_exception.Path.touch"):
-            result = handle_init([], flags)
+        mock_store = tmp_path / ".memory"
+        mock_store.mkdir()
+        mock_init = MagicMock(return_value=mock_store)
+        global_flags = SimpleNamespace(db=None, config=None)
+
+        with patch(
+            "memory_cli.config.init_create_global_or_project_store.init_memory_store",
+            mock_init,
+        ):
+            result = handle_init([], global_flags)
+
+        mock_init.assert_called_once_with(project=True, force=False)
         assert result.status == "ok"
         assert "database" in result.data
         assert "config" in result.data
+
+    def test_init_global_flag_creates_global_store(self, tmp_path: Path) -> None:
+        """Init with --global -> creates GLOBAL store (~/.memory/), returns success.
+
+        Pseudo-logic:
+        1. Mock init_memory_store to return tmp_path/.memory
+        2. result = handle_init(["--global"], global_flags)
+        3. Assert result.status == "ok"
+        4. Assert init_memory_store called with project=False (global)
+        """
+        mock_store = tmp_path / ".memory"
+        mock_store.mkdir()
+        mock_init = MagicMock(return_value=mock_store)
+        global_flags = SimpleNamespace(db=None, config=None)
+
+        with patch(
+            "memory_cli.config.init_create_global_or_project_store.init_memory_store",
+            mock_init,
+        ):
+            result = handle_init(["--global"], global_flags)
+
+        mock_init.assert_called_once_with(project=False, force=False)
+        assert result.status == "ok"
 
     def test_init_returns_created_paths(self, tmp_path: Path) -> None:
         """Result data includes the paths of created files.
 
         Pseudo-logic:
-        1. Patch storage with known paths
-        2. result = handle_init([], mock_global_flags)
-        3. Assert result.data["database"] == expected_db_path
-        4. Assert result.data["config"] == expected_config_path
+        1. Mock init_memory_store with known store path
+        2. result = handle_init([], global_flags)
+        3. Assert result.data["database"] and result.data["config"] are correct
         """
-        db_path = tmp_path / "memory.db"
-        config_path = tmp_path / "config.toml"
-        flags = GlobalFlags(db=str(db_path), config=str(config_path))
-        result = handle_init([], flags)
+        mock_store = tmp_path / ".memory"
+        mock_store.mkdir()
+        mock_init = MagicMock(return_value=mock_store)
+        global_flags = SimpleNamespace(db=None, config=None)
+
+        with patch(
+            "memory_cli.config.init_create_global_or_project_store.init_memory_store",
+            mock_init,
+        ):
+            result = handle_init([], global_flags)
+
         assert result.status == "ok"
-        assert result.data["database"] == str(db_path)
-        assert result.data["config"] == str(config_path)
+        assert result.data["database"] == str(mock_store / "memory.db")
+        assert result.data["config"] == str(mock_store / "config.json")
 
 
 # =============================================================================
 # TEST: ALREADY EXISTS
 # =============================================================================
 class TestInitAlreadyExists:
-    """Test init when database already exists."""
+    """Test init when store already exists."""
 
-    def test_init_without_force_errors_on_existing_db(self, tmp_path: Path) -> None:
-        """DB exists + no --force -> error result.
+    def test_init_without_force_errors_on_existing_store(self) -> None:
+        """Store exists + no --force -> error result from init_memory_store.
 
         Pseudo-logic:
-        1. Patch storage to indicate DB exists
-        2. result = handle_init([], mock_global_flags)
+        1. Mock init_memory_store to raise InitError("already_exists")
+        2. result = handle_init([], global_flags)
         3. Assert result.status == "error"
         4. Assert "already exists" in result.error
         """
-        db_path = tmp_path / "memory.db"
-        config_path = tmp_path / "config.toml"
-        db_path.touch()
-        flags = GlobalFlags(db=str(db_path), config=str(config_path))
-        result = handle_init([], flags)
+        from memory_cli.config.init_create_global_or_project_store import InitError
+
+        mock_init = MagicMock(
+            side_effect=InitError("already_exists", "Memory store already exists at /tmp/.memory. Use --force to overwrite the config (DB will be preserved).")
+        )
+        global_flags = SimpleNamespace(db=None, config=None)
+
+        with patch(
+            "memory_cli.config.init_create_global_or_project_store.init_memory_store",
+            mock_init,
+        ):
+            result = handle_init([], global_flags)
+
         assert result.status == "error"
         assert "already exists" in result.error
 
-    def test_init_with_force_overwrites_existing_db(self, tmp_path: Path) -> None:
-        """DB exists + --force -> deletes and recreates, returns success.
+    def test_init_with_force_overwrites_existing(self, tmp_path: Path) -> None:
+        """Store exists + --force -> succeeds, returns success.
 
         Pseudo-logic:
-        1. Patch storage to indicate DB exists
-        2. result = handle_init(["--force"], mock_global_flags)
+        1. Mock init_memory_store to succeed with force=True
+        2. result = handle_init(["--force"], global_flags)
         3. Assert result.status == "ok"
-        4. Assert storage.delete_database was called
-        5. Assert storage.create_database was called
+        4. Assert init_memory_store called with force=True
         """
-        db_path = tmp_path / "memory.db"
-        config_path = tmp_path / "config.toml"
-        db_path.touch()
-        flags = GlobalFlags(db=str(db_path), config=str(config_path))
-        result = handle_init(["--force"], flags)
+        mock_store = tmp_path / ".memory"
+        mock_store.mkdir()
+        mock_init = MagicMock(return_value=mock_store)
+        global_flags = SimpleNamespace(db=None, config=None)
+
+        with patch(
+            "memory_cli.config.init_create_global_or_project_store.init_memory_store",
+            mock_init,
+        ):
+            result = handle_init(["--force"], global_flags)
+
+        mock_init.assert_called_once_with(project=True, force=True)
         assert result.status == "ok"
 
 
@@ -121,24 +169,34 @@ class TestInitFlagParsing:
     """Test _parse_init_flags()."""
 
     def test_no_flags_returns_defaults(self) -> None:
-        """Empty args -> force=False, project=False.
+        """Empty args -> force=False, global_store=False.
 
         Pseudo-logic:
         1. result = _parse_init_flags([])
-        2. Assert result == {"force": False, "project": False}
+        2. Assert result == {"force": False, "global_store": False}
         """
         result = _parse_init_flags([])
-        assert result == {"force": False, "project": False}
+        assert result == {"force": False, "global_store": False}
 
     def test_force_flag_parsed(self) -> None:
-        """--force -> force=True, project=False.
+        """--force -> force=True, global_store=False.
 
         Pseudo-logic:
         1. result = _parse_init_flags(["--force"])
-        2. Assert result == {"force": True, "project": False}
+        2. Assert result == {"force": True, "global_store": False}
         """
         result = _parse_init_flags(["--force"])
-        assert result == {"force": True, "project": False}
+        assert result == {"force": True, "global_store": False}
+
+    def test_global_flag_parsed(self) -> None:
+        """--global -> force=False, global_store=True.
+
+        Pseudo-logic:
+        1. result = _parse_init_flags(["--global"])
+        2. Assert result == {"force": False, "global_store": True}
+        """
+        result = _parse_init_flags(["--global"])
+        assert result == {"force": False, "global_store": True}
 
     def test_unknown_flag_raises_error(self) -> None:
         """Unknown flag -> error.
@@ -160,39 +218,12 @@ class TestInitFlagParsing:
         with pytest.raises(ValueError):
             _parse_init_flags(["something"])
 
-
-# =============================================================================
-# TEST: INIT WITH GLOBAL FLAGS
-# =============================================================================
-class TestInitWithGlobalFlags:
-    """Test that --db and --config from global flags are respected by init."""
-
-    def test_global_db_flag_overrides_default_path(self, tmp_path: Path) -> None:
-        """--db from global flags sets the database path for init.
+    def test_old_project_flag_raises_error(self) -> None:
+        """--project is no longer recognized -> error.
 
         Pseudo-logic:
-        1. mock_flags = GlobalFlags(db="/custom/path.db")
-        2. result = handle_init([], mock_flags)
-        3. Assert storage.create_database called with path="/custom/path.db"
+        1. pytest.raises(ValueError)
+        2. Call _parse_init_flags(["--project"])
         """
-        db_path = tmp_path / "custom.db"
-        config_path = tmp_path / "config.toml"
-        flags = GlobalFlags(db=str(db_path), config=str(config_path))
-        result = handle_init([], flags)
-        assert result.status == "ok"
-        assert result.data["database"] == str(db_path)
-
-    def test_global_config_flag_overrides_default_path(self, tmp_path: Path) -> None:
-        """--config from global flags sets the config path for init.
-
-        Pseudo-logic:
-        1. mock_flags = GlobalFlags(config="/custom/config.toml")
-        2. result = handle_init([], mock_flags)
-        3. Assert config file created at "/custom/config.toml"
-        """
-        db_path = tmp_path / "memory.db"
-        config_path = tmp_path / "custom.toml"
-        flags = GlobalFlags(db=str(db_path), config=str(config_path))
-        result = handle_init([], flags)
-        assert result.status == "ok"
-        assert result.data["config"] == str(config_path)
+        with pytest.raises(ValueError, match="Unknown flag for init"):
+            _parse_init_flags(["--project"])
