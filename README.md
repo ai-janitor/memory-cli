@@ -56,8 +56,9 @@ memory batch load graph.yaml
 |--------|------|---------|
 | `neuron add` | Quick capture mid-task — one fact, no structure | `memory neuron add "deploy script is in scripts/deploy.sh"` |
 | `batch load` | Structured knowledge — multiple facts with relationships | A person, a meeting, talking points, and how they connect |
+| `batch load --inline` | Structured knowledge, single tool call (no temp file) | `memory batch load --inline '<yaml>'` |
 
-`neuron add` is the inbox — fast, unstructured, ephemeral. `batch load` is the filing cabinet — structured, connected, durable.
+`neuron add` is the inbox — fast, unstructured, ephemeral. `batch load` is the filing cabinet — structured, connected, durable. `batch load --inline` is the filing cabinet without the paperwork — same structure, one tool call.
 
 The difference matters because **edges are what make search work**. Spreading activation needs connections to traverse. A single neuron is a dot. A graph document is dots with lines between them — and those lines are what surface related memories when you search.
 
@@ -65,6 +66,68 @@ The difference matters because **edges are what make search work**. Spreading ac
 1. **During work:** `neuron add` for quick observations (short-term capture)
 2. **End of session:** `batch load` a graph doc that structures what you learned (long-term storage)
 3. **Over time:** Isolated neurons with no edges decay in search ranking; connected ones persist
+
+## Memory Stores and Scoped Handles
+
+`memory-cli` supports three scopes of memory, connected by edges into a single searchable graph:
+
+```
+        GLOBAL (~/.memory/)
+           /          \
+          /            \
+    LOCAL-A            LOCAL-B
+   (.memory/)         (.memory/)
+    project A          project B
+```
+
+- **Global** (`~/.memory/`) — user preferences, cross-project knowledge, personal facts. Created with `memory init`.
+- **Local** (`<project>/.memory/`) — project-specific knowledge. Created with `memory init --project`.
+- **Foreign** — another project's local store, referenced by fingerprint.
+
+### Scoped neuron handles
+
+Every neuron ID returned by the CLI is scoped — preventing accidents when agents work across multiple projects. A bare `42` from project A means nothing in project B.
+
+| Handle | Store | Scope | Example |
+|--------|-------|-------|---------|
+| `LOCAL-42` | `.memory/memory.db` in project dir | This project | Project-specific facts |
+| `GLOBAL-42` | `~/.memory/memory.db` | User-wide | Preferences, cross-project knowledge |
+| `a3f2:42` | Foreign store by fingerprint | Another project | Inter-project shared memory |
+
+Handles are stored compact (`L-42`, `G-42`) but displayed explicit (`LOCAL-42`, `GLOBAL-42`). Both forms accepted on input.
+
+### Store fingerprints
+
+Each store gets a UUID fingerprint at `memory init` time, written to a metadata table in the DB. The fingerprint is how agents reference neurons across project boundaries:
+
+```
+Agent A (project A) stores a fact → gets back LOCAL-42
+Agent A shares it as a3f2:42 (fingerprint:id)
+Agent B (project B) can resolve a3f2:42 → finds project A's store → reads neuron #42
+```
+
+The DB is self-describing — the metadata table holds the fingerprint, project name, creation timestamp, and DB path. No external registry needed. When a store first resolves a foreign fingerprint, it caches the `{fingerprint: path}` mapping in its own `meta` table. Every store is both a memory graph and a phonebook of every other store it's ever talked to.
+
+### Cross-store edges
+
+Edges can connect neurons across any combination of stores:
+
+```yaml
+# In project B's graph document
+neurons:
+  - ref: deploy-fact
+    content: "project B deploys to staging first"
+
+edges:
+  - from: deploy-fact
+    to: GLOBAL-42              # user preference: "prefers cautious deploys"
+    type: informed_by
+  - from: deploy-fact
+    to: a3f2:42                # project A's neuron: "deploy uses rsync to prod-west-2"
+    type: learned_from
+```
+
+**Search traverses all three scopes.** An agent in project B searches "deploy process" — spreading activation hits the local fact, follows the edge to the global preference, follows another edge to project A's deploy knowledge. Three stores, one search, full context.
 
 ## Graph Document Import
 
@@ -91,7 +154,14 @@ edges:
 ```
 
 ```bash
+# From file
 memory batch load interview-prep.yaml
+
+# Inline (single tool call — no temp file needed)
+memory batch load --inline 'neurons: [{ref: q1, content: "Why do you want this role?", tags: [interview]}]'
+
+# From stdin
+echo '<yaml>' | memory batch load -
 ```
 
 `ref` labels are local — resolved to real neuron IDs at import time. One file, one command, entire graph.
@@ -113,7 +183,7 @@ edges:                            # optional — list of edges to create
     weight: <float>              # optional — edge weight (default: 1.0)
 ```
 
-**Cross-file references:** Edge `from`/`to` accepts integer neuron IDs to link to neurons from previous loads:
+**Cross-file references:** Edge `from`/`to` accepts scoped neuron handles (`LOCAL-42`, `GLOBAL-42`) or bare integer IDs to link to neurons from previous loads:
 
 ```yaml
 neurons:
@@ -122,8 +192,11 @@ neurons:
 
 edges:
   - from: new-fact
-    to: 42                        # links to existing neuron #42
+    to: LOCAL-42                  # links to existing local neuron #42
     type: extends
+  - from: new-fact
+    to: GLOBAL-7                  # links to a global neuron
+    type: informed_by
 ```
 
 **Idempotent:** Loading the same file twice reuses existing neurons (matched by source + content) instead of creating duplicates.
