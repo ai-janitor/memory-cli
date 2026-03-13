@@ -295,23 +295,23 @@ class TestManifestoRegistration:
 class TestDefaultManifestoContent:
     """Verify the default manifesto contains expected sections."""
 
-    def test_contains_storing_memory(self):
-        assert "STORING MEMORY" in DEFAULT_MANIFESTO
+    def test_contains_when_to_store(self):
+        assert "WHEN TO STORE" in DEFAULT_MANIFESTO
 
-    def test_contains_what_not_to_store(self):
-        assert "WHAT NOT TO STORE" in DEFAULT_MANIFESTO
-
-    def test_contains_extracting_from_blobs(self):
-        assert "EXTRACTING FROM BLOBS" in DEFAULT_MANIFESTO
-
-    def test_contains_judging_value(self):
-        assert "JUDGING VALUE" in DEFAULT_MANIFESTO
-
-    def test_contains_user_preferences(self):
-        assert "USER PREFERENCES AND RULES" in DEFAULT_MANIFESTO
+    def test_contains_how_to_store(self):
+        assert "HOW TO STORE" in DEFAULT_MANIFESTO
 
     def test_contains_provenance(self):
         assert "PROVENANCE" in DEFAULT_MANIFESTO
 
+    def test_contains_before_acting(self):
+        assert "BEFORE ACTING" in DEFAULT_MANIFESTO
+
+    def test_contains_user_rule_search(self):
+        assert "user-rule" in DEFAULT_MANIFESTO
+
     def test_contains_evolution_note(self):
         assert "This manifesto evolves" in DEFAULT_MANIFESTO
+
+    def test_is_a_guide_not_rules(self):
+        assert "not a rule book" in DEFAULT_MANIFESTO

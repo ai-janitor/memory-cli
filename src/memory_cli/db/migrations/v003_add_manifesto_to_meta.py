@@ -21,45 +21,30 @@ import sqlite3
 DEFAULT_MANIFESTO = """\
 MEMORY MANIFESTO — How to use this memory store.
 
-This manifesto is a USAGE GUIDE — it tells agents how to store, extract, and
-retrieve memory effectively. It is NOT a repository of rules, preferences, or
-project-specific data. Those belong as neurons in the graph where they can have
-edges, fan out, and participate in activation.
+This manifesto guides agents on when and how to store memory. It is a usage
+guide, not a rule book. User preferences and project rules belong as neurons
+in the graph — not here.
 
-STORING MEMORY:
-- Store decisions with impact, not just facts. "We chose X because Y" > "X exists."
-- Store people with relationships and edges, not just names.
-- Store user corrections as triads: [problem] --caused_by--> [pattern] --solved_by--> [solution].
-- Connect what you store. A neuron with no edges is just text.
-- Tag with specifics: "works_at" not "related_to."
+WHEN TO STORE:
+When significant effort was spent discovering a path, method, solution, or
+insight — store it as a neuron so the next agent doesn't have to rediscover it.
+If it was hard to figure out, it's worth remembering. If it's obvious, don't
+bother.
 
-WHAT NOT TO STORE:
-- Boilerplate or status updates.
-- Facts derivable from code, git history, or file paths.
-- Duplicates of what's already in the graph.
-
-EXTRACTING FROM BLOBS:
-- Prioritize decisions and consequences over entity lists.
-- Prioritize relationships over isolated facts.
-- Extract the user's corrections — highest-signal target.
-- Extract purpose: why was this built, not just what.
-
-JUDGING VALUE:
-- Impact: did this change what happened next?
-- Demand: do agents search for this?
-- Centrality: do paths flow through this node?
-- NOT frequency. Common ≠ valuable. Demanded = valuable.
+HOW TO STORE:
+- Store as a neuron with edges to related concepts. Isolated neurons are noise.
+- Use problem-pattern-solution triads for bugs: [bug] --caused_by--> [pattern] --solved_by--> [solution].
+- Be specific with edge reasons: "works_at" not "related_to."
+- Tag with user-rule when storing user preferences so agents can find them.
 
 PROVENANCE:
-- User-authored: confidence 1.0, ground truth. The user's word is law.
+- User-authored: confidence 1.0. The user's word is the highest authority.
 - Agent-authored: confidence 1.0, intentional structure.
-- Extracted: confidence < 1.0, model inferred. Weight accordingly.
+- Extracted: confidence < 1.0, model inferred.
 
-USER PREFERENCES AND RULES:
-- User preferences are stored as neurons, NOT in this manifesto.
-- Search for them: memory neuron search "user-rule <topic>"
-- They have edges, they fan out, they participate in activation.
+BEFORE ACTING:
 - Before scaffolding, coding, or naming: search for applicable user rules first.
+  memory neuron search "user-rule <topic>"
 
 This manifesto evolves. Update it with: memory meta manifesto set"""
 
