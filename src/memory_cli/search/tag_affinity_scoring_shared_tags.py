@@ -305,7 +305,7 @@ def _discover_tag_neighbors(
                 "match_type": "tag_affinity",
                 "activation_score": 0.0,
                 "rrf_score": 0.0,
-                "hop_distance": None,
+                "hop_distance": 0,
                 "edge_reason": None,
             })
 
@@ -420,7 +420,7 @@ def _run_depth2_pass(
                 "tag_affinity_depth": 2,
                 "activation_score": 0.0,
                 "rrf_score": 0.0,
-                "hop_distance": None,
+                "hop_distance": 0,
                 "edge_reason": None,
             })
 

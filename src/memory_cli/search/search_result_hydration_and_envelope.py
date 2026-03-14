@@ -241,7 +241,7 @@ def _build_result_record(
         "status": neuron_row[6],
         "tags": neuron_tags,
         "match_type": candidate.get("match_type", "direct_match"),
-        "hop_distance": candidate.get("hop_distance", 0),
+        "hop_distance": candidate.get("hop_distance") or 0,
         "edge_reason": candidate.get("edge_reason"),
         "score": candidate.get("final_score", 0.0),
         "tag_affinity_depth": candidate.get("tag_affinity_depth"),
