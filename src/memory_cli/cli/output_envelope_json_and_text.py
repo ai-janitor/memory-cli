@@ -310,7 +310,7 @@ def _format_neuron_search(d: Dict[str, Any]) -> str:
 
     # Match info line
     match_type = d.get("match_type", "direct_match")
-    hop = d.get("hop_distance", 0)
+    hop = d.get("hop_distance") or 0
     edge_reason = d.get("edge_reason")
     match_parts = [match_type]
     if hop > 0:
