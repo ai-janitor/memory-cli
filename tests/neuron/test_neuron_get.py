@@ -103,7 +103,8 @@ class TestNeuronGetLookup:
         result = neuron_get(migrated_conn, neuron_id)
         assert result is not None
         expected_keys = {"id", "content", "created_at", "updated_at", "project",
-                         "source", "status", "embedding_updated_at", "tags", "attrs"}
+                         "source", "status", "embedding_updated_at", "tags", "attrs",
+                         "edges"}
         assert expected_keys.issubset(set(result.keys()))
 
     def test_get_nonexistent_id_returns_none(self, migrated_conn):
@@ -258,3 +259,110 @@ class TestNeuronGetArchived:
         neuron_id = _insert_neuron(migrated_conn, status="archived")
         result = neuron_get(migrated_conn, neuron_id)
         assert result["status"] == "archived"
+
+
+# -----------------------------------------------------------------------------
+# Edge hydration tests
+# -----------------------------------------------------------------------------
+
+def _insert_edge(conn, source_id, target_id, reason="related_to", weight=1.0):
+    """Helper: insert an edge directly with SQL for test setup."""
+    now_ms = int(time.time() * 1000)
+    conn.execute(
+        """INSERT INTO edges (source_id, target_id, reason, weight, created_at)
+           VALUES (?, ?, ?, ?, ?)""",
+        (source_id, target_id, reason, weight, now_ms)
+    )
+    conn.commit()
+
+
+class TestNeuronGetEdgeHydration:
+    """Test that edges are correctly hydrated into neuron get output."""
+
+    def test_edges_key_present(self, migrated_conn):
+        """Verify edges key is always present in neuron get output."""
+        from memory_cli.neuron.neuron_get_by_id import neuron_get
+
+        neuron_id = _insert_neuron(migrated_conn)
+        result = neuron_get(migrated_conn, neuron_id)
+        assert "edges" in result
+
+    def test_neuron_with_no_edges_returns_empty_list(self, migrated_conn):
+        """Verify neuron with no edges returns edges=[]."""
+        from memory_cli.neuron.neuron_get_by_id import neuron_get
+
+        neuron_id = _insert_neuron(migrated_conn)
+        result = neuron_get(migrated_conn, neuron_id)
+        assert result["edges"] == []
+
+    def test_outgoing_edge_hydrated(self, migrated_conn):
+        """Verify outgoing edges appear with direction='out' and target ID."""
+        from memory_cli.neuron.neuron_get_by_id import neuron_get
+
+        n1 = _insert_neuron(migrated_conn, content="source neuron")
+        n2 = _insert_neuron(migrated_conn, content="target neuron")
+        _insert_edge(migrated_conn, n1, n2, reason="deploys_with")
+
+        result = neuron_get(migrated_conn, n1)
+        assert len(result["edges"]) == 1
+        edge = result["edges"][0]
+        assert edge["direction"] == "out"
+        assert edge["target"] == n2
+        assert edge["reason"] == "deploys_with"
+
+    def test_incoming_edge_hydrated(self, migrated_conn):
+        """Verify incoming edges appear with direction='in' and source ID."""
+        from memory_cli.neuron.neuron_get_by_id import neuron_get
+
+        n1 = _insert_neuron(migrated_conn, content="source neuron")
+        n2 = _insert_neuron(migrated_conn, content="target neuron")
+        _insert_edge(migrated_conn, n1, n2, reason="references")
+
+        result = neuron_get(migrated_conn, n2)
+        assert len(result["edges"]) == 1
+        edge = result["edges"][0]
+        assert edge["direction"] == "in"
+        assert edge["source"] == n1
+        assert edge["reason"] == "references"
+
+    def test_both_directions_hydrated(self, migrated_conn):
+        """Verify neuron with both outgoing and incoming edges has all of them."""
+        from memory_cli.neuron.neuron_get_by_id import neuron_get
+
+        n1 = _insert_neuron(migrated_conn, content="neuron A")
+        n2 = _insert_neuron(migrated_conn, content="neuron B")
+        n3 = _insert_neuron(migrated_conn, content="neuron C")
+        _insert_edge(migrated_conn, n2, n1, reason="points_to")   # incoming to n1
+        _insert_edge(migrated_conn, n1, n3, reason="links_to")    # outgoing from n1
+
+        result = neuron_get(migrated_conn, n1)
+        assert len(result["edges"]) == 2
+        directions = {e["direction"] for e in result["edges"]}
+        assert directions == {"out", "in"}
+
+    def test_edge_weight_hydrated(self, migrated_conn):
+        """Verify edge weight is included in hydrated edge."""
+        from memory_cli.neuron.neuron_get_by_id import neuron_get
+
+        n1 = _insert_neuron(migrated_conn, content="source")
+        n2 = _insert_neuron(migrated_conn, content="target")
+        _insert_edge(migrated_conn, n1, n2, reason="related_to", weight=0.75)
+
+        result = neuron_get(migrated_conn, n1)
+        assert result["edges"][0]["weight"] == 0.75
+
+    def test_multiple_outgoing_edges(self, migrated_conn):
+        """Verify multiple outgoing edges are all hydrated."""
+        from memory_cli.neuron.neuron_get_by_id import neuron_get
+
+        n1 = _insert_neuron(migrated_conn, content="hub")
+        n2 = _insert_neuron(migrated_conn, content="spoke 1")
+        n3 = _insert_neuron(migrated_conn, content="spoke 2")
+        _insert_edge(migrated_conn, n1, n2, reason="link_a")
+        _insert_edge(migrated_conn, n1, n3, reason="link_b")
+
+        result = neuron_get(migrated_conn, n1)
+        out_edges = [e for e in result["edges"] if e["direction"] == "out"]
+        assert len(out_edges) == 2
+        targets = {e["target"] for e in out_edges}
+        assert targets == {n2, n3}

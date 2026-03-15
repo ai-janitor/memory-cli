@@ -1,15 +1,16 @@
 # =============================================================================
 # Module: neuron_get_by_id.py
-# Purpose: Single neuron lookup by ID with full tag and attribute hydration.
+# Purpose: Single neuron lookup by ID with full tag, attribute, and edge hydration.
 # Rationale: Get-by-ID is the most common read path — used by the CLI
 #   `memory neuron get <id>` command, by the edge module to validate link
 #   targets, and by the search pipeline to hydrate results. The hydration
-#   logic (joining tags and attrs) is non-trivial and must be consistent
+#   logic (joining tags, attrs, and edges) is non-trivial and must be consistent
 #   everywhere, so it lives in one place.
 # Responsibility:
 #   - Lookup neuron by integer ID
 #   - Hydrate tag names from neuron_tags junction + tags table
 #   - Hydrate attribute key-value pairs from neuron_attrs junction + attr_keys table
+#   - Hydrate edges (both outgoing and incoming) from edges table
 #   - Return None if not found (caller decides exit code)
 #   - Archived neurons ARE retrievable (no status filter)
 # Organization:
@@ -18,6 +19,7 @@
 #   3. neuron_get() — main entry point
 #   4. _hydrate_tags() — join neuron_tags to get tag names
 #   5. _hydrate_attrs() — join neuron_attrs to get key-value pairs
+#   6. _hydrate_edges() — query edges table for both directions
 # =============================================================================
 
 from __future__ import annotations
@@ -96,6 +98,7 @@ def neuron_get(conn: sqlite3.Connection, neuron_id: int) -> Optional[Dict[str, A
     neuron_dict = dict(row)
     neuron_dict["tags"] = _hydrate_tags(conn, neuron_id)
     neuron_dict["attrs"] = _hydrate_attrs(conn, neuron_id)
+    neuron_dict["edges"] = _hydrate_edges(conn, neuron_id)
     return neuron_dict
 
 
@@ -158,3 +161,64 @@ def _hydrate_attrs(conn: sqlite3.Connection, neuron_id: int) -> Dict[str, str]:
         (neuron_id,)
     ).fetchall()
     return {row[0]: row[1] for row in rows}
+
+
+def _hydrate_edges(conn: sqlite3.Connection, neuron_id: int) -> List[Dict[str, Any]]:
+    """Fetch all edges connected to a neuron (both outgoing and incoming).
+
+    Logic flow:
+    1. Query outgoing edges (source_id = neuron_id):
+       SELECT target_id, reason, weight FROM edges WHERE source_id = ?
+       For each: {"direction": "out", "target": target_id, "reason": reason, "weight": weight}
+    2. Query incoming edges (target_id = neuron_id):
+       SELECT source_id, reason, weight FROM edges WHERE target_id = ?
+       For each: {"direction": "in", "source": source_id, "reason": reason, "weight": weight}
+    3. Combine and return as a single list, outgoing first then incoming.
+
+    The edge list is intentionally lightweight — no content snippets, no
+    pagination. This is inline hydration for the neuron view, not a full
+    edge exploration command (use `memory edge list` for that).
+
+    Args:
+        conn: SQLite connection.
+        neuron_id: ID of the neuron.
+
+    Returns:
+        List of edge dicts with direction, connected neuron ID, reason, and weight.
+        Empty list if no edges exist.
+    """
+    edges: List[Dict[str, Any]] = []
+
+    # Outgoing edges: this neuron -> target
+    outgoing = conn.execute(
+        """SELECT target_id, reason, weight
+           FROM edges
+           WHERE source_id = ?
+           ORDER BY created_at DESC""",
+        (neuron_id,)
+    ).fetchall()
+    for row in outgoing:
+        edges.append({
+            "direction": "out",
+            "target": row[0],
+            "reason": row[1],
+            "weight": row[2],
+        })
+
+    # Incoming edges: source -> this neuron
+    incoming = conn.execute(
+        """SELECT source_id, reason, weight
+           FROM edges
+           WHERE target_id = ?
+           ORDER BY created_at DESC""",
+        (neuron_id,)
+    ).fetchall()
+    for row in incoming:
+        edges.append({
+            "direction": "in",
+            "source": row[0],
+            "reason": row[1],
+            "weight": row[2],
+        })
+
+    return edges

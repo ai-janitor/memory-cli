@@ -273,6 +273,17 @@ def _format_neuron(d: Dict[str, Any]) -> str:
         attr_parts = [f"{k}={v}" for k, v in attrs.items()]
         lines.append("    attrs: " + ", ".join(attr_parts))
 
+    # Edges line (suppress if empty)
+    edges = d.get("edges")
+    if edges and isinstance(edges, list) and len(edges) > 0:
+        edge_parts = []
+        for e in edges:
+            if e.get("direction") == "out":
+                edge_parts.append(f"->{e['target']} {e['reason']}")
+            else:
+                edge_parts.append(f"<-{e['source']} {e['reason']}")
+        lines.append("    edges: " + ", ".join(edge_parts))
+
     # Created timestamp (epoch ms -> ISO 8601)
     created = d.get("created_at")
     if created is not None:
