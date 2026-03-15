@@ -20,9 +20,12 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from typing import Any, Dict, List, Optional, Tuple, Union
+
+_logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -82,6 +85,11 @@ _HANDLE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Regex: fingerprint-prefixed handle — 8 hex chars followed by colon, then digits
+_FINGERPRINT_HANDLE_RE = re.compile(
+    r"^([0-9a-fA-F]{8}):(\d+)$",
+)
+
 # Short-form to long-form scope mapping
 _SCOPE_MAP = {
     "L": "LOCAL",
@@ -95,24 +103,35 @@ def parse_handle(handle: str) -> Tuple[Optional[str], int]:
     """Parse a scoped handle string into (scope, integer_id).
 
     Args:
-        handle: A string like "LOCAL-42", "L-42", "GLOBAL-42", "G-42", or "42".
+        handle: A string like "LOCAL-42", "L-42", "GLOBAL-42", "G-42", "42",
+                or "a1b2c3d4:42" (fingerprint-prefixed).
 
     Returns:
         Tuple of (scope_or_none, int_id).
-        scope is None for bare integer input, "LOCAL" or "GLOBAL" for prefixed.
+        scope is None for bare integer input, "LOCAL" or "GLOBAL" for prefixed,
+        or an 8-char hex fingerprint string for fingerprint-prefixed handles.
 
     Raises:
         ValueError: If handle cannot be parsed.
 
     Pseudo-logic:
     1. Strip whitespace
-    2. Match against regex: optional (LOCAL|GLOBAL|L|G)- prefix + digits
-    3. If no match -> raise ValueError
-    4. Extract scope group (may be None for bare int) and id group
-    5. Map short scope (L/G) to long form (LOCAL/GLOBAL)
-    6. Return (scope, int(id))
+    2. Try fingerprint prefix match: 8 hex chars + ":" + digits
+    3. Try scope prefix match: optional (LOCAL|GLOBAL|L|G)- prefix + digits
+    4. If no match -> raise ValueError
+    5. Extract scope group and id group
+    6. Map short scope (L/G) to long form (LOCAL/GLOBAL)
+    7. Return (scope, int(id))
     """
     handle = handle.strip()
+
+    # Try fingerprint-prefixed handle first (e.g., "a1b2c3d4:42")
+    fm = _FINGERPRINT_HANDLE_RE.match(handle)
+    if fm:
+        fingerprint = fm.group(1).lower()
+        nid = int(fm.group(2))
+        return (fingerprint, nid)
+
     m = _HANDLE_RE.match(handle)
     if not m:
         raise ValueError(f"Invalid neuron handle: {handle!r}")
@@ -189,6 +208,126 @@ def scope_ref_map(ref_map: Dict[str, Any], scope: str) -> Dict[str, Any]:
         k: format_handle(v, scope) if isinstance(v, int) else v
         for k, v in ref_map.items()
     }
+
+
+# =============================================================================
+# LEAN FIELD FILTERING — strip to essential fields for default output
+# =============================================================================
+
+# Fields returned by default (lean mode)
+_LEAN_NEURON_FIELDS = {"id", "content", "tags", "created_at", "source", "edges"}
+
+# Additional fields exposed by search results (always shown regardless of verbose)
+_SEARCH_EXTRA_FIELDS = {"score", "match_type", "hop_distance", "edge_reason",
+                        "score_breakdown", "tag_affinity_depth"}
+
+
+def lean_neuron_dict(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Strip a neuron dict to lean fields: id, content, tags, created_at, source.
+
+    Verbose fields (status, updated_at, project, attrs, embedding_updated_at)
+    are removed. This reduces token cost for AI agent consumers.
+
+    Args:
+        data: Full neuron dict from storage layer.
+
+    Returns:
+        New dict with only lean fields.
+    """
+    return {k: v for k, v in data.items() if k in _LEAN_NEURON_FIELDS}
+
+
+def lean_search_result(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Strip a search result dict to lean neuron fields plus search metadata.
+
+    Keeps id, content, tags, created_at, source, and search-specific fields
+    like score, match_type, hop_distance, edge_reason, score_breakdown.
+
+    Args:
+        data: Full search result dict.
+
+    Returns:
+        New dict with only lean + search fields.
+    """
+    allowed = _LEAN_NEURON_FIELDS | _SEARCH_EXTRA_FIELDS
+    return {k: v for k, v in data.items() if k in allowed}
+
+
+# =============================================================================
+# CONNECTION ROUTING — resolve a DB connection matching a handle's scope prefix
+# =============================================================================
+
+def _is_fingerprint_scope(scope: str) -> bool:
+    """Check if a scope string is a fingerprint (8 hex chars) vs LOCAL/GLOBAL.
+
+    Args:
+        scope: Scope string from parse_handle().
+
+    Returns:
+        True if scope looks like an 8-char hex fingerprint, False otherwise.
+    """
+    return len(scope) == 8 and all(c in "0123456789abcdef" for c in scope)
+
+
+def resolve_connection_by_scope(handle_scope: str, connections: List[Tuple[Any, str]]) -> Optional[Tuple[Any, str]]:
+    """Resolve a DB connection from the connections list matching handle_scope.
+
+    Shared routing utility used by all noun handlers. Given a handle scope
+    (LOCAL, GLOBAL, or 8-char hex fingerprint), finds the matching (conn, scope)
+    pair from the available connections list.
+
+    Args:
+        handle_scope: Scope string from parse_handle() — "LOCAL", "GLOBAL",
+                      or an 8-char hex fingerprint string.
+        connections: List of (conn, scope_str) tuples from get_layered_connections().
+
+    Returns:
+        (conn, scope) tuple if a match is found, None otherwise.
+
+    Pseudo-logic:
+    1. If handle_scope is NOT a fingerprint (i.e. LOCAL or GLOBAL):
+       a. Iterate connections; return first where scope == handle_scope
+       b. If none match, return None
+    2. If handle_scope IS a fingerprint:
+       a. For each connection, call get_fingerprint(conn)
+          - ValueError: log DEBUG (expected — store has no fingerprint), skip
+          - Other exception: log WARNING with traceback, skip
+       b. Return the (conn, scope) whose store fingerprint matches handle_scope
+       c. If none match, return None
+    """
+    if not _is_fingerprint_scope(handle_scope):
+        # Standard LOCAL/GLOBAL routing
+        for conn, scope in connections:
+            if scope == handle_scope:
+                return conn, scope
+        return None
+
+    # Fingerprint routing — check each store's fingerprint
+    from memory_cli.db.store_fingerprint_read_and_cache import get_fingerprint
+    for conn, scope in connections:
+        try:
+            store_fp = get_fingerprint(conn)
+            if store_fp == handle_scope:
+                return conn, scope
+        except ValueError:
+            # No fingerprint in this store's meta table — expected for
+            # un-initialised stores. Skip and try the next connection.
+            _logger.debug(
+                "Store %s has no fingerprint in meta table, skipping",
+                scope,
+            )
+            continue
+        except Exception:
+            # Unexpected error (DB corruption, connection failure, etc.).
+            # Log with traceback so the caller has diagnostic info, then
+            # skip this store rather than crashing the entire lookup.
+            _logger.warning(
+                "Fingerprint lookup failed for store %s during handle routing",
+                scope,
+                exc_info=True,
+            )
+            continue
+    return None
 
 
 def scope_list(items: List[Dict[str, Any]], scope: str, kind: str = "neuron") -> List[Dict[str, Any]]:
