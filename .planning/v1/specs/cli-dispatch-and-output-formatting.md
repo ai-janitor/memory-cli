@@ -298,3 +298,48 @@ If two handlers attempt to register the same noun, or if a handler registers an 
 **F-4:** Plain text format output structure per verb is described as "defined per noun handler spec" for `data` content, but the plain text representation of individual neuron or search result objects is not specified here. Each noun handler spec must define its own plain text rendering. This creates a dependency: the CLI dispatch spec cannot fully specify plain text output without the noun handler specs. The dispatcher's responsibility ends at calling the formatter with the noun handler's result object.
 
 **F-5:** The requirements do not specify whether `memory --help` (with a double-dash) should behave the same as `memory help`. This spec treats them as equivalent — `--help` as the first token triggers top-level help.
+
+---
+
+## v0.3.x Amendment (2026-03-14)
+
+The following changes shipped in v0.3.0-v0.3.2. They supersede the corresponding v1 spec sections above.
+
+### A-1: `--global` added as a global flag
+
+`--global` is now a global flag handled by the dispatcher, alongside `--format`, `--config`, and `--db`.
+
+**Supersedes:** Section 3.4 Global Flags table — add:
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--global` | boolean | false | Force global store, skip local |
+
+`--global` is consumed by the dispatcher and passed to noun handlers via the resolved context, same as `--config` and `--db`.
+
+### A-2: `tag list` verb gains `--sort count` and `--limit N`
+
+The `tag list` verb now accepts:
+- `--sort count` — sort tags by usage count (descending) instead of alphabetical
+- `--limit N` — return only the top N tags
+
+These are verb-level flags registered by the tag noun handler, not global flags.
+
+### A-3: `--verbose` flag on neuron verbs
+
+The `neuron get`, `neuron list`, and `neuron search` verbs now accept `--verbose` (boolean flag, default false).
+
+- Default (no `--verbose`): returns lean fields only — id, content, tags, created_at, source (plus score/match_type for search results)
+- With `--verbose`: returns full schema — all fields including status, updated_at, project, attributes, embedding_updated_at
+
+### A-4: Handle prefix auto-routing
+
+Neuron IDs now encode their store scope via prefixes: `GLOBAL-<id>`, `LOCAL-<id>`, or `<fingerprint>:<id>`.
+
+When a prefixed handle is provided to `neuron get`, `neuron update`, `neuron archive`, or `neuron restore`, the CLI auto-routes to the correct store without requiring `--global`. The prefix is parsed before dispatch.
+
+### A-5: JSON output envelope — `warnings` array
+
+The JSON output envelope now includes a `"warnings": []` array. Populated with string messages when degradation occurs (e.g., Haiku fallback, embedding unavailable). Empty array when clean.
+
+**Supersedes:** Section 4.2 — add `warnings` to the fixed keys table.

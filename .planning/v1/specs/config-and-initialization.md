@@ -264,3 +264,42 @@ The requirements specify this path explicitly. No XDG base dir support, no `MEMO
 
 ### Finding F-5: No `memory config get/set` subcommands specified
 The requirements describe `memory init` and the config file but do not define CLI subcommands for reading or writing individual config values. Users must edit the file manually. This is intentional per the requirements but flagged in case config sub-commands are desired without a full requirements change.
+
+---
+
+## v0.3.x Amendment (2026-03-14)
+
+The following changes shipped in v0.3.0-v0.3.2. They supersede the corresponding v1 spec sections above.
+
+### A-1: Init default flipped — local-first
+
+`memory init` now creates a **local** project store at `.memory/` in the current working directory (git-style). This is the default.
+
+`memory init --global` creates the global store at `~/.memory/`.
+
+The `--project` flag is **removed**. It was replaced by making local the default.
+
+**Supersedes:** Section 2.4 which described `memory init` as global-default and `memory init --project` as project-scoped.
+
+### A-2: `--global` flag added as global CLI flag
+
+`--global` is now a global flag (like `--config` and `--db`) available on all commands, not just `init`.
+
+When `--global` is passed on any command, the CLI skips the local store and operates against the global store only.
+
+**Supersedes:** Section 2.1 Global Flags table — add `--global` (boolean, default false, "Force global store, skip local").
+
+### A-3: Layered PATH-style search
+
+Writes go to the local store if `.memory/` exists, global otherwise.
+
+Reads/searches are **layered**: the CLI queries the local store first, then the global store, and merges results with local neurons ranked higher. Stores are no longer fully isolated on read.
+
+**Supersedes:** The v1 assumption that project-scoped memory is fully isolated.
+
+### A-4: Config schema additions
+
+The following keys were added to the config schema (Section 2.3):
+
+- `search.temporal_half_life_days` (integer, default 30) — half-life for exponential temporal decay
+- `haiku.model` (string, default "claude-haiku-4-5-20251001") — Haiku model name for runtime LLM calls

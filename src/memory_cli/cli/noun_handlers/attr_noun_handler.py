@@ -46,14 +46,23 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
     from memory_cli.cli.output_envelope_json_and_text import Result
     from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import require_positional
-    from memory_cli.cli.scoped_handle_format_and_parse import parse_handle, format_handle
+    from memory_cli.cli.scoped_handle_format_and_parse import (
+        parse_handle, format_handle, resolve_connection_by_scope,
+    )
     try:
         nid_raw, rest = require_positional(list(args), "neuron_id")
-        _scope, nid = parse_handle(nid_raw)
+        handle_scope, nid = parse_handle(nid_raw)
         key, rest = require_positional(rest, "key")
         value, rest = require_positional(rest, "value")
-        # Write to first (local-preferred) connection
-        conn, scope = get_layered_connections(global_flags)[0]
+        # Route by handle scope; default to first (local-preferred) connection
+        connections = get_layered_connections(global_flags)
+        conn, scope = connections[0]
+        if handle_scope is not None:
+            match = resolve_connection_by_scope(handle_scope, connections)
+            if match is not None:
+                conn, scope = match
+            else:
+                return Result(status="not_found", error=f"No {handle_scope} store available for {nid_raw}")
         from memory_cli.neuron import neuron_get, neuron_update
         neuron = neuron_get(conn, nid)
         if neuron is None:
@@ -88,12 +97,17 @@ def handle_list(args: List[str], global_flags: Any) -> Any:
     from memory_cli.cli.output_envelope_json_and_text import Result
     from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import require_positional
-    from memory_cli.cli.scoped_handle_format_and_parse import parse_handle
+    from memory_cli.cli.scoped_handle_format_and_parse import parse_handle, resolve_connection_by_scope
     try:
         nid_raw, rest = require_positional(list(args), "neuron_id")
-        _scope, nid = parse_handle(nid_raw)
-        # Neuron-scoped: find the neuron in whichever store has it
+        handle_scope, nid = parse_handle(nid_raw)
+        # Neuron-scoped: route to matching store by scope, then look up the neuron
         connections = get_layered_connections(global_flags)
+        if handle_scope is not None:
+            match = resolve_connection_by_scope(handle_scope, connections)
+            if match is None:
+                return Result(status="not_found", error=f"No {handle_scope} store available for {nid_raw}")
+            connections = [match]
         from memory_cli.neuron import neuron_get
         for conn, scope in connections:
             neuron = neuron_get(conn, nid)
@@ -128,13 +142,22 @@ def handle_remove(args: List[str], global_flags: Any) -> Any:
     from memory_cli.cli.output_envelope_json_and_text import Result
     from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import require_positional
-    from memory_cli.cli.scoped_handle_format_and_parse import parse_handle, format_handle
+    from memory_cli.cli.scoped_handle_format_and_parse import (
+        parse_handle, format_handle, resolve_connection_by_scope,
+    )
     try:
         nid_raw, rest = require_positional(list(args), "neuron_id")
-        _scope, nid = parse_handle(nid_raw)
+        handle_scope, nid = parse_handle(nid_raw)
         key, rest = require_positional(rest, "key")
-        # Write to first (local-preferred) connection
-        conn, scope = get_layered_connections(global_flags)[0]
+        # Route by handle scope; default to first (local-preferred) connection
+        connections = get_layered_connections(global_flags)
+        conn, scope = connections[0]
+        if handle_scope is not None:
+            match = resolve_connection_by_scope(handle_scope, connections)
+            if match is not None:
+                conn, scope = match
+            else:
+                return Result(status="not_found", error=f"No {handle_scope} store available for {nid_raw}")
         from memory_cli.neuron import neuron_get, neuron_update
         neuron = neuron_get(conn, nid)
         if neuron is None:

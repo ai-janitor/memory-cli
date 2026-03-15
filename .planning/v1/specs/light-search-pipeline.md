@@ -361,3 +361,62 @@ The cap on BM25 and vector candidates fed into RRF affects result quality. It sh
 
 **F-8: `--explain` in plain text mode.**
 Requirements specify `--explain` for debug output but only describe JSON structure. Behavior of `--explain` when `--format text` is active is unspecified. This spec notes it as "compact readable form" but the exact format is deferred to implementation.
+
+---
+
+## v0.3.x Amendment (2026-03-14)
+
+The following changes shipped in v0.3.0-v0.3.2. They supersede the corresponding v1 spec sections above.
+
+### A-1: Layered PATH-style search (local + global merge)
+
+Search is no longer single-store. The pipeline now queries the local store first, then the global store, and merges results.
+
+**Merge behavior:**
+- Local results are returned first, ranked higher than global results at equal relevance
+- Deduplication: if the same neuron exists in both stores, the local version wins
+- The `--global` flag skips the local store and searches global only
+
+**Supersedes:** The v1 assumption that search operates on a single DB. Stages 1-9 run independently per store, then results are merged before Stage 10 (output).
+
+### A-2: Tag-affinity scoring — Stage 5b
+
+A new scoring stage (5b) is inserted between spreading activation (Stage 5) and temporal decay (Stage 6):
+
+**Tag-affinity scoring** boosts neurons that share tags with the direct match set. The algorithm:
+1. Collect all tags from direct match neurons (the RRF output set)
+2. For each candidate neuron (direct matches + fan-out), count how many of its tags overlap with the direct match tag set
+3. Apply an affinity boost proportional to tag overlap
+
+This provides a "birds of a feather" signal — neurons tagged similarly to the direct hits get a relevance boost even if they were not in the BM25/vector candidate sets.
+
+Tag-affinity runs at depth=2 spreading activation, extending the fan-out reach for tag-related neurons.
+
+**Supersedes:** Stage ordering in the Overview. The full pipeline is now:
+1. Query embedding
+2. BM25 retrieval
+3. Vector retrieval (two-step)
+4. RRF fusion
+5. Spreading activation fan-out
+5b. Tag-affinity scoring
+6. Temporal decay
+7. Tag filtering
+8. Final score combination and ranking
+9. Pagination
+10. Result hydration and output
+
+### A-3: Temporal decay formula resolved
+
+The temporal decay formula is now exponential: `e^(-lambda * t)` where `t` = age in days and `lambda` is derived from a configurable half-life (default 30 days).
+
+Config key: `search.temporal_half_life_days` (integer, default 30).
+
+**Supersedes:** Finding F-1 — the formula is no longer unspecified.
+
+### A-4: Lean default response fields
+
+Search results now return lean fields by default: id, content, tags, created_at, source, score, match_type.
+
+Use `--verbose` to get the full schema (status, updated_at, project, attributes, embedding_updated_at).
+
+**Supersedes:** Stage 10 output structure — the default field set is reduced.

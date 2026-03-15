@@ -53,12 +53,16 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
         require_positional, extract_flag,
     )
-    from memory_cli.cli.scoped_handle_format_and_parse import parse_handle, scope_edge_dict
+    from memory_cli.cli.scoped_handle_format_and_parse import (
+        parse_handle, scope_edge_dict, resolve_connection_by_scope,
+    )
     try:
         source_raw, rest = require_positional(list(args), "source_id")
         target_raw, rest = require_positional(rest, "target_id")
-        _s1, source_id = parse_handle(source_raw)
-        _s2, target_id = parse_handle(target_raw)
+        handle_scope_s, source_id = parse_handle(source_raw)
+        handle_scope_t, target_id = parse_handle(target_raw)
+        # Use scope from either ID (both must be in the same store)
+        handle_scope = handle_scope_s or handle_scope_t
         reason, rest = extract_flag(rest, "--type", default=None)
         weight, rest = extract_flag(rest, "--weight", type_fn=float, default=None)
         # If --type was not provided, check for an optional 3rd positional arg as reason
@@ -66,8 +70,15 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
             reason = rest.pop(0)
         if reason is None:
             reason = "related_to"
-        # Write to first (local-preferred) connection
-        conn, scope = get_layered_connections(global_flags)[0]
+        # Route by handle scope; default to first (local-preferred) connection
+        connections = get_layered_connections(global_flags)
+        conn, scope = connections[0]
+        if handle_scope is not None:
+            match = resolve_connection_by_scope(handle_scope, connections)
+            if match is not None:
+                conn, scope = match
+            else:
+                return Result(status="not_found", error=f"No {handle_scope} store available")
         from memory_cli.edge import edge_add
         result = edge_add(conn, source_id, target_id, reason=reason, weight=weight)
         conn.commit()
@@ -107,7 +118,9 @@ def handle_list(args: List[str], global_flags: Any) -> Any:
     from memory_cli.cli.output_envelope_json_and_text import Result
     from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import extract_flag
-    from memory_cli.cli.scoped_handle_format_and_parse import parse_handle, scope_list
+    from memory_cli.cli.scoped_handle_format_and_parse import (
+        parse_handle, scope_list, resolve_connection_by_scope,
+    )
     try:
         rest = list(args)
         neuron_id_raw, rest = extract_flag(rest, "--neuron")
@@ -116,9 +129,14 @@ def handle_list(args: List[str], global_flags: Any) -> Any:
         offset, rest = extract_flag(rest, "--offset", type_fn=int, default=0)
         if neuron_id_raw is None:
             return Result(status="error", error="--neuron <id> is required for edge list")
-        _scope, neuron_id = parse_handle(neuron_id_raw)
-        # Layered: query all stores, merge results (local first)
+        handle_scope, neuron_id = parse_handle(neuron_id_raw)
+        # Resolve connections; if handle has explicit scope, route to that store only
         connections = get_layered_connections(global_flags)
+        if handle_scope is not None:
+            match = resolve_connection_by_scope(handle_scope, connections)
+            if match is None:
+                return Result(status="not_found", error=f"No {handle_scope} store available for {neuron_id_raw}")
+            connections = [match]
         from memory_cli.edge import edge_list
         # Map CLI direction names to internal names
         dir_map = {"in": "incoming", "out": "outgoing", "both": "both",
@@ -156,14 +174,23 @@ def handle_remove(args: List[str], global_flags: Any) -> Any:
     from memory_cli.cli.output_envelope_json_and_text import Result
     from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import require_positional
-    from memory_cli.cli.scoped_handle_format_and_parse import parse_handle
+    from memory_cli.cli.scoped_handle_format_and_parse import parse_handle, resolve_connection_by_scope
     try:
         source_raw, rest = require_positional(list(args), "source_id")
         target_raw, rest = require_positional(rest, "target_id")
-        _s1, source_id = parse_handle(source_raw)
-        _s2, target_id = parse_handle(target_raw)
-        # Write to first (local-preferred) connection
-        conn, scope = get_layered_connections(global_flags)[0]
+        handle_scope_s, source_id = parse_handle(source_raw)
+        handle_scope_t, target_id = parse_handle(target_raw)
+        # Use scope from either ID (both must be in the same store)
+        handle_scope = handle_scope_s or handle_scope_t
+        # Route by handle scope; default to first (local-preferred) connection
+        connections = get_layered_connections(global_flags)
+        conn, scope = connections[0]
+        if handle_scope is not None:
+            match = resolve_connection_by_scope(handle_scope, connections)
+            if match is not None:
+                conn, scope = match
+            else:
+                return Result(status="not_found", error=f"No {handle_scope} store available")
         from memory_cli.edge import edge_remove
         result = edge_remove(conn, source_id, target_id)
         conn.commit()

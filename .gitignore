@@ -32,6 +32,9 @@ target/
 # Work/scratch directory
 .work/
 
+# Minion swarm daemon logs and state
+.minion-swarm/
+
 # OS junk
 .DS_Store
 Thumbs.db

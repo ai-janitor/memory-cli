@@ -49,10 +49,12 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
         require_positional, extract_flag,
     )
-    from memory_cli.cli.scoped_handle_format_and_parse import parse_handle, format_handle
+    from memory_cli.cli.scoped_handle_format_and_parse import (
+        parse_handle, format_handle, resolve_connection_by_scope,
+    )
     try:
         nid_raw, rest = require_positional(list(args), "neuron_id")
-        _scope, nid = parse_handle(nid_raw)
+        handle_scope, nid = parse_handle(nid_raw)
         # Collect tag names from remaining positional args or --tags flag
         tags_flag, rest = extract_flag(rest, "--tags")
         tag_names = []
@@ -62,8 +64,15 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
         tag_names.extend([t for t in rest if not t.startswith("--")])
         if not tag_names:
             return Result(status="error", error="At least one tag name is required")
-        # Write to first (local-preferred) connection
-        conn, scope = get_layered_connections(global_flags)[0]
+        # Route by handle scope; default to first (local-preferred) connection
+        connections = get_layered_connections(global_flags)
+        conn, scope = connections[0]
+        if handle_scope is not None:
+            match = resolve_connection_by_scope(handle_scope, connections)
+            if match is not None:
+                conn, scope = match
+            else:
+                return Result(status="not_found", error=f"No {handle_scope} store available for {nid_raw}")
         from memory_cli.neuron import neuron_get, neuron_update, NeuronUpdateError
         neuron = neuron_get(conn, nid)
         if neuron is None:
@@ -102,7 +111,7 @@ def handle_list(args: List[str], global_flags: Any) -> Any:
     from memory_cli.cli.output_envelope_json_and_text import Result
     from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import extract_flag
-    from memory_cli.cli.scoped_handle_format_and_parse import parse_handle
+    from memory_cli.cli.scoped_handle_format_and_parse import parse_handle, resolve_connection_by_scope
     try:
         neuron_id_raw, rest = extract_flag(list(args), "--neuron")
         sort_value, rest = extract_flag(rest, "--sort")
@@ -111,8 +120,13 @@ def handle_list(args: List[str], global_flags: Any) -> Any:
         sort_by_count = sort_value == "count" if sort_value else False
         connections = get_layered_connections(global_flags)
         if neuron_id_raw is not None:
-            # Neuron-scoped: find the neuron in whichever store has it
-            _scope, neuron_id = parse_handle(neuron_id_raw)
+            # Neuron-scoped: route to matching store by scope, then look up the neuron
+            handle_scope, neuron_id = parse_handle(neuron_id_raw)
+            if handle_scope is not None:
+                match = resolve_connection_by_scope(handle_scope, connections)
+                if match is None:
+                    return Result(status="not_found", error=f"No {handle_scope} store available for {neuron_id_raw}")
+                connections = [match]
             from memory_cli.neuron import neuron_get
             for conn, scope in connections:
                 neuron = neuron_get(conn, neuron_id)
@@ -176,15 +190,24 @@ def handle_remove(args: List[str], global_flags: Any) -> Any:
     from memory_cli.cli.output_envelope_json_and_text import Result
     from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import require_positional
-    from memory_cli.cli.scoped_handle_format_and_parse import parse_handle, format_handle
+    from memory_cli.cli.scoped_handle_format_and_parse import (
+        parse_handle, format_handle, resolve_connection_by_scope,
+    )
     try:
         nid_raw, rest = require_positional(list(args), "neuron_id")
-        _scope, nid = parse_handle(nid_raw)
+        handle_scope, nid = parse_handle(nid_raw)
         tag_names = [t for t in rest if not t.startswith("--")]
         if not tag_names:
             return Result(status="error", error="At least one tag name is required")
-        # Write to first (local-preferred) connection
-        conn, scope = get_layered_connections(global_flags)[0]
+        # Route by handle scope; default to first (local-preferred) connection
+        connections = get_layered_connections(global_flags)
+        conn, scope = connections[0]
+        if handle_scope is not None:
+            match = resolve_connection_by_scope(handle_scope, connections)
+            if match is not None:
+                conn, scope = match
+            else:
+                return Result(status="not_found", error=f"No {handle_scope} store available for {nid_raw}")
         from memory_cli.neuron import neuron_get, neuron_update
         neuron = neuron_get(conn, nid)
         if neuron is None:

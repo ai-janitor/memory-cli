@@ -122,3 +122,41 @@
 **Finding:** Haiku fallback only signals via stderr.
 **Resolution:** Add `"warnings": []` array to the JSON output envelope (Spec #1). Populated with string messages when degradation occurs. Empty array when clean.
 **Status:** Resolved v2.
+
+## Source: v0.3.x shipped changes (2026-03-14)
+
+### R-11: Tag-affinity scoring in search pipeline
+**Layer:** Requirements (§4.1 Light Search)
+**Finding:** Search results improve when neurons sharing tags with direct matches get a relevance boost. Tag-affinity scoring inserted as Stage 5b in the light search pipeline, running at depth=2 spreading activation.
+**Impact:** New scoring stage between spreading activation and temporal decay. Boosts "birds of a feather" neurons that share tags with the direct hit set.
+**Status:** Shipped v0.2.9.
+
+### R-12: Layered PATH-style search (local + global merge)
+**Layer:** Requirements (§7.2 Init & Config, §4.1 Light Search)
+**Finding:** Users need both project-local and global memory accessible in a single search. Search now queries local store first, then global, merging results with local ranked higher. Init default flipped: `memory init` = local, `memory init --global` = global. `--project` flag removed.
+**Impact:** Search pipeline runs per-store then merges. Writes target local if `.memory/` exists, global otherwise. Stores are no longer isolated on read.
+**Status:** Shipped v0.3.0.
+
+### R-13: Tag list KeyError fix + `--sort count` / `--limit`
+**Layer:** Bug fix + feature (tag noun handler)
+**Finding:** `memory tag list` crashed with `KeyError: 'tag'` (column name was `'name'`, not `'tag'`). Additionally, users needed tag list sorted by usage count and limited to top N.
+**Impact:** Bug fix: column key corrected. Feature: `--sort count` (sort by usage count descending) and `--limit N` (top N tags) added to `tag list` verb.
+**Status:** Shipped v0.3.2.
+
+### R-14: `--global` flag on all handlers
+**Layer:** Requirements (§7.1 Grammar, §7.2 Init & Config)
+**Finding:** The `--global` flag was only wired to `memory init` initially. All noun handlers need it to force global-only operation (skip local store).
+**Impact:** `--global` is now a global CLI flag processed by the dispatcher and respected by all verb handlers via `get_connection_and_config()`.
+**Status:** Shipped v0.3.1.
+
+### R-15: Lean default neuron response fields + `--verbose`
+**Layer:** Requirements (§7.4 Output Format)
+**Finding:** Full neuron schema in every response is noisy for AI agents. Default output now returns lean fields only: id, content, tags, created_at, source. Search results add score and match_type.
+**Impact:** `--verbose` flag added to `neuron get`, `neuron list`, `neuron search`. Without it, output is lean. With it, full schema is returned (status, updated_at, project, attributes, embedding_updated_at).
+**Status:** Shipped v0.3.x (task #18).
+
+### R-16: Handle prefix auto-routing (GLOBAL-/LOCAL-/fingerprint:)
+**Layer:** Requirements (§7.1 Grammar)
+**Finding:** Neuron IDs encode store scope via prefixes (GLOBAL-42, LOCAL-42, a1b2c3d4:42). Commands should auto-route to the correct store without requiring `--global` when the handle already encodes the target.
+**Impact:** `parse_handle()` extended to recognize all prefix formats. neuron get/update/archive/restore auto-route by prefix. No `--global` needed when handle is prefixed.
+**Status:** Shipped v0.3.x (task #19).

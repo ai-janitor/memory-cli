@@ -25,6 +25,8 @@ from memory_cli.cli.scoped_handle_format_and_parse import (
     scope_neuron_id_value,
     scope_ref_map,
     scope_list,
+    lean_neuron_dict,
+    lean_search_result,
 )
 
 
@@ -234,3 +236,104 @@ class TestScopeList:
         items = [{"x": 1}]
         result = scope_list(items, "LOCAL", "unknown")
         assert result == items
+
+
+# =============================================================================
+# parse_handle fingerprint tests (Task 19)
+# =============================================================================
+
+class TestParseHandleFingerprint:
+    """Parse fingerprint-prefixed handle strings."""
+
+    def test_fingerprint_prefix(self):
+        """a1b2c3d4:42 -> ('a1b2c3d4', 42)."""
+        assert parse_handle("a1b2c3d4:42") == ("a1b2c3d4", 42)
+
+    def test_fingerprint_uppercase(self):
+        """A1B2C3D4:7 -> ('a1b2c3d4', 7) — lowercase normalized."""
+        assert parse_handle("A1B2C3D4:7") == ("a1b2c3d4", 7)
+
+    def test_fingerprint_whitespace(self):
+        """Whitespace stripped before parsing."""
+        assert parse_handle("  a1b2c3d4:42  ") == ("a1b2c3d4", 42)
+
+    def test_fingerprint_zero_id(self):
+        """a1b2c3d4:0 -> ('a1b2c3d4', 0)."""
+        assert parse_handle("a1b2c3d4:0") == ("a1b2c3d4", 0)
+
+    def test_short_hex_not_fingerprint(self):
+        """abc:42 is NOT a valid fingerprint (needs 8 hex chars)."""
+        with pytest.raises(ValueError):
+            parse_handle("abc:42")
+
+    def test_non_hex_not_fingerprint(self):
+        """zzzzzzzz:42 is NOT a valid fingerprint (not hex)."""
+        with pytest.raises(ValueError):
+            parse_handle("zzzzzzzz:42")
+
+
+# =============================================================================
+# lean_neuron_dict tests (Task 18)
+# =============================================================================
+
+class TestLeanNeuronDict:
+    """lean_neuron_dict strips to essential fields."""
+
+    def test_strips_verbose_fields(self):
+        full = {
+            "id": "LOCAL-42",
+            "content": "hello",
+            "tags": ["test"],
+            "created_at": "2024-01-01",
+            "source": "human",
+            "status": "active",
+            "updated_at": "2024-01-02",
+            "project": "myproj",
+            "attrs": {"type": "memory"},
+            "embedding_updated_at": "2024-01-01",
+        }
+        result = lean_neuron_dict(full)
+        assert set(result.keys()) == {"id", "content", "tags", "created_at", "source"}
+        assert result["id"] == "LOCAL-42"
+        assert result["content"] == "hello"
+        assert result["tags"] == ["test"]
+        assert result["source"] == "human"
+
+    def test_lean_with_missing_fields(self):
+        """Works even if some lean fields are missing."""
+        partial = {"id": "GLOBAL-1", "content": "test"}
+        result = lean_neuron_dict(partial)
+        assert result == {"id": "GLOBAL-1", "content": "test"}
+
+    def test_original_not_mutated(self):
+        full = {"id": "LOCAL-1", "content": "x", "status": "active"}
+        lean_neuron_dict(full)
+        assert "status" in full
+
+
+class TestLeanSearchResult:
+    """lean_search_result keeps lean fields + search metadata."""
+
+    def test_keeps_score_and_match_type(self):
+        full = {
+            "id": "LOCAL-1",
+            "content": "hello",
+            "tags": ["test"],
+            "created_at": "2024-01-01",
+            "source": "human",
+            "status": "active",
+            "updated_at": "2024-01-02",
+            "project": "myproj",
+            "score": 0.85,
+            "match_type": "direct_match",
+            "hop_distance": 0,
+            "edge_reason": None,
+        }
+        result = lean_search_result(full)
+        assert "score" in result
+        assert "match_type" in result
+        assert "hop_distance" in result
+        assert "edge_reason" in result
+        assert "status" not in result
+        assert "project" not in result
+        assert "updated_at" not in result

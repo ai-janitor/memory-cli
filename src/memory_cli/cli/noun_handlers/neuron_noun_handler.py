@@ -18,9 +18,16 @@
 
 from __future__ import annotations
 
+import logging
 from typing import List, Any
 
 from memory_cli.cli.entrypoint_and_argv_dispatch import register_noun
+
+logger = logging.getLogger(__name__)
+
+# resolve_connection_by_scope lives in scoped_handle_format_and_parse (shared by all
+# noun handlers). Import it here under the private alias used throughout this module.
+from memory_cli.cli.scoped_handle_format_and_parse import resolve_connection_by_scope as _resolve_connection_by_scope  # noqa: E402
 
 
 # =============================================================================
@@ -78,43 +85,53 @@ def handle_get(args: List[str], global_flags: Any) -> Any:
     """Retrieve a neuron by its ID.
 
     Args:
-        args: [neuron_id]
+        args: [neuron_id, --verbose]
         global_flags: Parsed global flags.
 
     Returns:
         Result with neuron data, or status="not_found" if ID doesn't exist.
+        Default: lean fields (id, content, tags, created_at, source).
+        With --verbose: full schema including status, updated_at, project, attrs, embedding_updated_at.
 
     Pseudo-logic:
     1. Parse positional arg: neuron_id (required)
-    2. Validate: neuron_id must be non-empty
-    3. Delegate to storage: neuron_store.get(neuron_id)
-    4. If not found: return Result(status="not_found", error="Neuron {id} not found")
-    5. If found: return Result(status="ok", data=neuron_dict)
+    2. Parse --verbose flag
+    3. Validate: neuron_id must be non-empty
+    4. Delegate to storage: neuron_store.get(neuron_id)
+    5. If not found: return Result(status="not_found", error="Neuron {id} not found")
+    6. If found: apply lean filter unless --verbose, return Result(status="ok", data=neuron_dict)
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
     from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
-    from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import require_positional
-    from memory_cli.cli.scoped_handle_format_and_parse import parse_handle, scope_neuron_dict
+    from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
+        require_positional, extract_bool_flag,
+    )
+    from memory_cli.cli.scoped_handle_format_and_parse import parse_handle, scope_neuron_dict, lean_neuron_dict
     try:
-        nid_raw, rest = require_positional(list(args), "neuron_id")
+        rest = list(args)
+        verbose, rest = extract_bool_flag(rest, "--verbose")
+        nid_raw, rest = require_positional(rest, "neuron_id")
         handle_scope, nid = parse_handle(nid_raw)
         connections = get_layered_connections(global_flags)
         from memory_cli.neuron import neuron_get
-        # If handle has an explicit scope prefix (LOCAL-42 or GLOBAL-42),
+        # If handle has an explicit scope prefix (LOCAL-42, GLOBAL-42, or fingerprint:42),
         # route directly to the matching store.
         if handle_scope is not None:
-            for conn, scope in connections:
-                if scope == handle_scope:
-                    neuron = neuron_get(conn, nid)
-                    if neuron is None:
-                        return Result(status="not_found", error=f"Neuron {nid_raw} not found")
-                    return Result(status="ok", data=scope_neuron_dict(neuron, scope))
+            match = _resolve_connection_by_scope(handle_scope, connections)
+            if match is not None:
+                conn, scope = match
+                neuron = neuron_get(conn, nid)
+                if neuron is None:
+                    return Result(status="not_found", error=f"Neuron {nid_raw} not found")
+                data = scope_neuron_dict(neuron, scope)
+                return Result(status="ok", data=data if verbose else lean_neuron_dict(data))
             return Result(status="not_found", error=f"No {handle_scope} store available for {nid_raw}")
         # No scope prefix — search local first, then global
         for conn, scope in connections:
             neuron = neuron_get(conn, nid)
             if neuron is not None:
-                return Result(status="ok", data=scope_neuron_dict(neuron, scope))
+                data = scope_neuron_dict(neuron, scope)
+                return Result(status="ok", data=data if verbose else lean_neuron_dict(data))
         return Result(status="not_found", error=f"Neuron {nid_raw} not found")
     except Exception as e:
         return Result(status="error", error=str(e))
@@ -151,13 +168,14 @@ def handle_list(args: List[str], global_flags: Any) -> Any:
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
         extract_flag, extract_bool_flag,
     )
-    from memory_cli.cli.scoped_handle_format_and_parse import scope_list
+    from memory_cli.cli.scoped_handle_format_and_parse import scope_list, lean_neuron_dict
     try:
         rest = list(args)
         tag, rest = extract_flag(rest, "--tag")
         limit, rest = extract_flag(rest, "--limit", type_fn=int, default=50)
         offset, rest = extract_flag(rest, "--offset", type_fn=int, default=0)
         archived, rest = extract_bool_flag(rest, "--archived")
+        verbose, rest = extract_bool_flag(rest, "--verbose")
         status = "all" if archived else "active"
         tags_and = [tag] if tag else None
         # Layered: query all stores, merge results (local first)
@@ -167,6 +185,8 @@ def handle_list(args: List[str], global_flags: Any) -> Any:
         for conn, scope in connections:
             neurons = neuron_list(conn, tags_and=tags_and, status=status, limit=limit, offset=offset)
             all_neurons.extend(scope_list(neurons, scope, "neuron"))
+        if not verbose:
+            all_neurons = [lean_neuron_dict(n) for n in all_neurons]
         return Result(status="ok", data=all_neurons, meta={"limit": limit, "offset": offset})
     except Exception as e:
         return Result(status="error", error=str(e))
@@ -211,10 +231,9 @@ def handle_update(args: List[str], global_flags: Any) -> Any:
         connections = get_layered_connections(global_flags)
         conn, scope = connections[0]
         if handle_scope is not None:
-            for c, s in connections:
-                if s == handle_scope:
-                    conn, scope = c, s
-                    break
+            match = _resolve_connection_by_scope(handle_scope, connections)
+            if match is not None:
+                conn, scope = match
         from memory_cli.neuron import neuron_update, NeuronUpdateError
         result = neuron_update(conn, nid, content=content, source=source, no_embed=True)
         return Result(status="ok", data=scope_neuron_dict(result, scope))
@@ -254,10 +273,9 @@ def handle_archive(args: List[str], global_flags: Any) -> Any:
         connections = get_layered_connections(global_flags)
         conn, scope = connections[0]
         if handle_scope is not None:
-            for c, s in connections:
-                if s == handle_scope:
-                    conn, scope = c, s
-                    break
+            match = _resolve_connection_by_scope(handle_scope, connections)
+            if match is not None:
+                conn, scope = match
         from memory_cli.neuron import neuron_archive, NeuronLifecycleError
         result = neuron_archive(conn, nid)
         return Result(status="ok", data=scope_neuron_dict(result, scope))
@@ -298,10 +316,9 @@ def handle_restore(args: List[str], global_flags: Any) -> Any:
         connections = get_layered_connections(global_flags)
         conn, scope = connections[0]
         if handle_scope is not None:
-            for c, s in connections:
-                if s == handle_scope:
-                    conn, scope = c, s
-                    break
+            match = _resolve_connection_by_scope(handle_scope, connections)
+            if match is not None:
+                conn, scope = match
         from memory_cli.neuron import neuron_restore, NeuronLifecycleError
         result = neuron_restore(conn, nid)
         return Result(status="ok", data=scope_neuron_dict(result, scope))
@@ -340,11 +357,13 @@ def handle_search(args: List[str], global_flags: Any) -> Any:
     from memory_cli.cli.output_envelope_json_and_text import Result
     from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
-        require_positional, extract_flag,
+        require_positional, extract_flag, extract_bool_flag,
     )
-    from memory_cli.cli.scoped_handle_format_and_parse import scope_list
+    from memory_cli.cli.scoped_handle_format_and_parse import scope_list, lean_search_result
     try:
-        query, rest = require_positional(list(args), "query")
+        rest = list(args)
+        verbose, rest = extract_bool_flag(rest, "--verbose")
+        query, rest = require_positional(rest, "query")
         limit, rest = extract_flag(rest, "--limit", type_fn=int, default=10)
         threshold, rest = extract_flag(rest, "--threshold", type_fn=float, default=0.0)
         # Layered: search all stores, merge results (local first)
@@ -363,6 +382,8 @@ def handle_search(args: List[str], global_flags: Any) -> Any:
             total += envelope.total_before_pagination
             if envelope.vector_unavailable:
                 vector_unavailable = True
+        if not verbose:
+            all_results = [lean_search_result(r) for r in all_results]
         return Result(
             status="ok",
             data=all_results,
@@ -408,13 +429,16 @@ _FLAG_DEFS = {
         {"name": "--source", "type": "str", "default": None, "desc": "Origin identifier"},
         {"name": "--tags", "type": "str", "default": None, "desc": "Comma-separated tags"},
     ],
-    "get": [],
+    "get": [
+        {"name": "--verbose", "type": "bool", "default": False, "desc": "Show all fields (status, updated_at, project, attrs, embedding_updated_at)"},
+    ],
     "list": [
         {"name": "--type", "type": "str", "default": None, "desc": "Filter by type"},
         {"name": "--tag", "type": "str", "default": None, "desc": "Filter by tag"},
         {"name": "--limit", "type": "int", "default": 50, "desc": "Max results"},
         {"name": "--offset", "type": "int", "default": 0, "desc": "Skip first N"},
         {"name": "--archived", "type": "bool", "default": False, "desc": "Include archived"},
+        {"name": "--verbose", "type": "bool", "default": False, "desc": "Show all fields (status, updated_at, project, attrs, embedding_updated_at)"},
     ],
     "update": [
         {"name": "--content", "type": "str", "default": None, "desc": "New content"},
@@ -427,6 +451,7 @@ _FLAG_DEFS = {
         {"name": "--limit", "type": "int", "default": 10, "desc": "Max results"},
         {"name": "--threshold", "type": "float", "default": 0.0, "desc": "Min similarity"},
         {"name": "--type", "type": "str", "default": None, "desc": "Filter by type"},
+        {"name": "--verbose", "type": "bool", "default": False, "desc": "Show all fields (status, updated_at, project, attrs)"},
     ],
 }
 
