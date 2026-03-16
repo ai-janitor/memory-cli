@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from typing import Any, Dict, List
 
 
@@ -104,18 +105,18 @@ def hydrate_results(
     for neuron_id, tag_name in tag_rows:
         tags_map.setdefault(neuron_id, []).append(tag_name)
 
-    # --- Build results in ranking order ---
-    # results = []
-    # for candidate in paginated_candidates:
-    #     nid = candidate["neuron_id"]
-    #     neuron_row = neuron_map.get(nid)
-    #     if neuron_row is None:
-    #         continue  # Neuron deleted between search and hydration
-    #     neuron_tags = sorted(tags_map.get(nid, []))
-    #     result = _build_result_record(candidate, neuron_row, neuron_tags)
-    #     results.append(result)
+    # --- Bump access tracking for all hydrated neurons ---
+    now_ms = int(time.time() * 1000)
+    hit_ids = [nid for nid in neuron_ids if nid in neuron_map]
+    if hit_ids:
+        hit_placeholders = ",".join("?" * len(hit_ids))
+        conn.execute(
+            f"UPDATE neurons SET access_count = access_count + 1, "
+            f"last_accessed_at = ? WHERE id IN ({hit_placeholders})",
+            [now_ms] + hit_ids,
+        )
 
-    # return results
+    # --- Build results in ranking order ---
     results = []
     for candidate in paginated_candidates:
         nid = candidate["neuron_id"]
