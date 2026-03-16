@@ -271,7 +271,7 @@ class TestLinkAtomicHappyPath:
             link_reason="reason",
         )
 
-        expected_keys = {"source_id", "target_id", "reason", "weight", "created_at"}
+        expected_keys = {"source_id", "target_id", "reason", "weight", "created_at", "provenance", "confidence"}
         assert expected_keys == set(edge_dict.keys())
 
 

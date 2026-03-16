@@ -134,7 +134,7 @@ class TestEdgeAddHappyPath:
 
         result = edge_add(migrated_conn, src, tgt, "some reason")
 
-        expected_keys = {"source_id", "target_id", "reason", "weight", "created_at"}
+        expected_keys = {"source_id", "target_id", "reason", "weight", "created_at", "provenance", "confidence"}
         assert expected_keys == set(result.keys())
 
     def test_add_edge_persisted_in_db(self, migrated_conn):

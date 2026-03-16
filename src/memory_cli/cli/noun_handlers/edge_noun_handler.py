@@ -65,6 +65,8 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
         handle_scope = handle_scope_s or handle_scope_t
         reason, rest = extract_flag(rest, "--type", default=None)
         weight, rest = extract_flag(rest, "--weight", type_fn=float, default=None)
+        provenance, rest = extract_flag(rest, "--provenance", default=None)
+        confidence, rest = extract_flag(rest, "--confidence", type_fn=float, default=None)
         # If --type was not provided, check for an optional 3rd positional arg as reason
         if reason is None and rest and not rest[0].startswith("--"):
             reason = rest.pop(0)
@@ -80,7 +82,10 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
             else:
                 return Result(status="not_found", error=f"No {handle_scope} store available")
         from memory_cli.edge import edge_add
-        result = edge_add(conn, source_id, target_id, reason=reason, weight=weight)
+        result = edge_add(
+            conn, source_id, target_id, reason=reason, weight=weight,
+            provenance=provenance, confidence=confidence,
+        )
         conn.commit()
         return Result(status="ok", data=scope_edge_dict(result, scope))
     except Exception as e:
@@ -286,6 +291,8 @@ def handle_update(args: List[str], global_flags: Any) -> Any:
         handle_scope = handle_scope_s or handle_scope_t
         reason, rest = extract_flag(rest, "--type", default=None)
         weight, rest = extract_flag(rest, "--weight", type_fn=float, default=None)
+        provenance, rest = extract_flag(rest, "--provenance", default=None)
+        confidence, rest = extract_flag(rest, "--confidence", type_fn=float, default=None)
         connections = get_layered_connections(global_flags)
         conn, scope = connections[0]
         if handle_scope is not None:
@@ -295,7 +302,10 @@ def handle_update(args: List[str], global_flags: Any) -> Any:
             else:
                 return Result(status="not_found", error=f"No {handle_scope} store available")
         from memory_cli.edge import edge_update
-        result = edge_update(conn, source_id, target_id, reason=reason, weight=weight)
+        result = edge_update(
+            conn, source_id, target_id, reason=reason, weight=weight,
+            provenance=provenance, confidence=confidence,
+        )
         conn.commit()
         return Result(status="ok", data=result)
     except Exception as e:
@@ -325,6 +335,8 @@ _FLAG_DEFS = {
     "add": [
         {"name": "--type", "type": "str", "default": "related_to", "desc": "Relationship type"},
         {"name": "--weight", "type": "float", "default": 1.0, "desc": "Edge weight"},
+        {"name": "--provenance", "type": "str", "default": "authored", "desc": "Edge provenance (authored|extracted)"},
+        {"name": "--confidence", "type": "float", "default": 1.0, "desc": "Confidence score (0.0, 1.0]"},
     ],
     "list": [
         {"name": "--neuron", "type": "str", "default": None, "desc": "Filter by neuron ID"},
@@ -346,6 +358,8 @@ _FLAG_DEFS = {
     "update": [
         {"name": "--type", "type": "str", "default": None, "desc": "New relationship type/reason"},
         {"name": "--weight", "type": "float", "default": None, "desc": "New edge weight"},
+        {"name": "--provenance", "type": "str", "default": None, "desc": "New provenance (authored|extracted)"},
+        {"name": "--confidence", "type": "float", "default": None, "desc": "New confidence score (0.0, 1.0]"},
     ],
 }
 

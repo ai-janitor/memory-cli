@@ -205,9 +205,9 @@ def _bfs_activate(
     #         continue
     #
     #     neighbors = _get_neighbors(conn, current_id)
-    #     for neighbor_id, edge_weight, edge_reason in neighbors:
+    #     for neighbor_id, edge_weight, edge_reason, edge_confidence in neighbors:
     #         new_activation = _compute_activation(
-    #             activation, depth, decay_rate, edge_weight
+    #             activation, depth, decay_rate, edge_weight, edge_confidence
     #         )
     #         if new_activation <= 0:
     #             continue
@@ -236,9 +236,9 @@ def _bfs_activate(
             continue
 
         neighbors = _get_neighbors(conn, current_id)
-        for neighbor_id, edge_weight, edge_reason in neighbors:
+        for neighbor_id, edge_weight, edge_reason, edge_confidence in neighbors:
             new_activation = _compute_activation(
-                activation, depth, decay_rate, edge_weight
+                activation, depth, decay_rate, edge_weight, edge_confidence
             )
             if new_activation <= 0:
                 continue
@@ -272,49 +272,58 @@ def _get_neighbors(
     - Edges WHERE source_id = neuron_id → target_id is a neighbor.
     - Edges WHERE target_id = neuron_id → source_id is a neighbor.
 
-    Logic flow:
-    1. Query outgoing edges:
-       SELECT target_id, weight, reason FROM edges WHERE source_id = ?
-    2. Query incoming edges:
-       SELECT source_id, weight, reason FROM edges WHERE target_id = ?
-    3. Combine results (may include duplicates if mutual edges exist,
-       but BFS visited set handles dedup).
-    4. Return list of (neighbor_id, edge_weight, edge_reason).
+    Returns (neighbor_id, weight, reason, confidence) tuples. The confidence
+    field enables provenance-weighted spreading activation — extracted edges
+    (confidence < 1.0) decay activation faster than authored edges (1.0).
 
     Args:
         conn: SQLite connection.
         neuron_id: The neuron to find neighbors for.
 
     Returns:
-        List of (neighbor_id, weight, reason) tuples.
+        List of (neighbor_id, weight, reason, confidence) tuples.
     """
+    # --- Detect if confidence column exists (provenance v004 migration) ---
+    has_confidence = _has_confidence_column(conn)
+
+    if has_confidence:
+        conf_expr = "confidence"
+    else:
+        conf_expr = "1.0"
+
     # --- Outgoing edges ---
-    # outgoing = conn.execute(
-    #     f"SELECT target_id, weight, reason FROM {EDGES_TABLE} "
-    #     f"WHERE source_id = ?",
-    #     (neuron_id,),
-    # ).fetchall()
     outgoing = conn.execute(
-        f"SELECT target_id, weight, reason FROM {EDGES_TABLE} "
+        f"SELECT target_id, weight, reason, {conf_expr} FROM {EDGES_TABLE} "
         f"WHERE source_id = ?",
         (neuron_id,),
     ).fetchall()
 
     # --- Incoming edges ---
-    # incoming = conn.execute(
-    #     f"SELECT source_id, weight, reason FROM {EDGES_TABLE} "
-    #     f"WHERE target_id = ?",
-    #     (neuron_id,),
-    # ).fetchall()
     incoming = conn.execute(
-        f"SELECT source_id, weight, reason FROM {EDGES_TABLE} "
+        f"SELECT source_id, weight, reason, {conf_expr} FROM {EDGES_TABLE} "
         f"WHERE target_id = ?",
         (neuron_id,),
     ).fetchall()
 
     # --- Combine ---
-    # return [(row[0], row[1], row[2]) for row in outgoing + incoming]
-    return [(row[0], row[1], row[2]) for row in outgoing + incoming]
+    # Returns (neighbor_id, weight, reason, confidence) tuples.
+    return [(row[0], row[1], row[2], row[3]) for row in outgoing + incoming]
+
+
+# Cache for column existence check per connection id
+_confidence_column_cache: Dict[int, bool] = {}
+
+
+def _has_confidence_column(conn: sqlite3.Connection) -> bool:
+    """Check if the edges table has a confidence column (v004 migration).
+
+    Result is cached per connection to avoid repeated PRAGMA queries.
+    """
+    conn_id = id(conn)
+    if conn_id not in _confidence_column_cache:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(edges)").fetchall()}
+        _confidence_column_cache[conn_id] = "confidence" in cols
+    return _confidence_column_cache[conn_id]
 
 
 def _compute_activation(
@@ -322,23 +331,16 @@ def _compute_activation(
     parent_depth: int,
     decay_rate: float,
     edge_weight: float,
+    edge_confidence: float = 1.0,
 ) -> float:
-    """Compute activation for a neighbor using linear decay + edge weight.
+    """Compute activation for a neighbor using linear decay + edge weight + confidence.
 
-    Formula (per spec):
-        activation = max(0, 1 - (depth + 1) * decay_rate)
+    Formula:
+        base = max(0, 1 - (depth + 1) * decay_rate)
+        activation = base * edge_weight * edge_confidence
 
-    Where depth is the CHILD's depth (parent_depth + 1). Seeds are depth=0
-    with activation=1.0 (set explicitly, not via this formula).
-
-    For child at depth=1 with decay_rate=0.3:
-        base = max(0, 1 - (1+1) * 0.3) = max(0, 0.4) = 0.4
-
-    Edge weight modulation:
-        modulated = base * edge_weight
-
-    This means low-weight edges (e.g., 0.2) significantly reduce
-    propagated activation, while high-weight edges (1.0) pass it through.
+    The confidence multiplier means extracted edges (confidence < 1.0) reduce
+    propagated activation compared to authored edges (confidence = 1.0).
 
     Args:
         parent_activation: Activation of the parent node. Not directly used
@@ -347,13 +349,12 @@ def _compute_activation(
         parent_depth: Depth of the parent node in BFS (0 for seeds).
         decay_rate: Linear decay rate per hop.
         edge_weight: Weight of the connecting edge (0.0 to 1.0).
+        edge_confidence: Provenance confidence of the edge (0.0 to 1.0].
+            Authored edges = 1.0, extracted edges < 1.0.
 
     Returns:
         Activation score for the child node (0.0 if fully decayed).
     """
-    # child_depth = parent_depth + 1
-    # base_activation = max(0.0, 1.0 - (child_depth + 1) * decay_rate)
-    # return base_activation * edge_weight
     child_depth = parent_depth + 1
     base_activation = max(0.0, 1.0 - (child_depth + 1) * decay_rate)
-    return base_activation * edge_weight
+    return base_activation * edge_weight * edge_confidence

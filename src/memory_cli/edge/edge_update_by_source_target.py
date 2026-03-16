@@ -47,22 +47,13 @@ def edge_update(
     target_id: int,
     reason: Optional[str] = None,
     weight: Optional[float] = None,
+    provenance: Optional[str] = None,
+    confidence: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Update fields on an existing edge.
 
-    CLI: `memory edge update <source> <target> [--type <text>] [--weight <float>]`
-
-    Logic flow:
-    1. Validate at least one of reason or weight is provided
-       - Neither -> EdgeUpdateError(exit_code=2)
-    2. Look up edge by (source_id, target_id)
-       - Not found -> EdgeUpdateError(exit_code=1)
-    3. Validate reason is non-empty if provided
-       - Empty after strip -> EdgeUpdateError(exit_code=2)
-    4. Validate weight > 0.0 if provided
-       - Zero or negative -> EdgeUpdateError(exit_code=2)
-    5. Build and execute UPDATE statement
-    6. Return the updated edge record
+    CLI: `memory edge update <source> <target> [--type <text>] [--weight <float>]
+          [--provenance authored|extracted] [--confidence <float>]`
 
     Args:
         conn: SQLite connection with edges table.
@@ -70,17 +61,20 @@ def edge_update(
         target_id: Target neuron ID of the edge to update.
         reason: New reason/type for the edge (optional).
         weight: New weight for the edge (optional).
+        provenance: New provenance — 'authored' or 'extracted' (optional).
+        confidence: New confidence in (0.0, 1.0] (optional).
 
     Returns:
-        Dict with updated edge: source_id, target_id, reason, weight, created_at.
+        Dict with updated edge record.
 
     Raises:
         EdgeUpdateError: On validation failure or edge not found.
     """
     # --- Step 1: At least one field must be provided ---
-    if reason is None and weight is None:
+    if reason is None and weight is None and provenance is None and confidence is None:
         raise EdgeUpdateError(
-            "At least one of --type or --weight must be provided", exit_code=2
+            "At least one of --type, --weight, --provenance, or --confidence must be provided",
+            exit_code=2,
         )
 
     # --- Step 2: Look up the edge ---
@@ -103,23 +97,55 @@ def edge_update(
             f"Weight must be greater than 0.0, got {weight}", exit_code=2
         )
 
-    # --- Step 5: Build and execute UPDATE ---
+    # --- Step 5: Validate provenance if provided ---
+    if provenance is not None and provenance not in ("authored", "extracted"):
+        raise EdgeUpdateError(
+            f"Provenance must be 'authored' or 'extracted', got '{provenance}'",
+            exit_code=2,
+        )
+
+    # --- Step 6: Validate confidence if provided ---
+    if confidence is not None and (confidence <= 0.0 or confidence > 1.0):
+        raise EdgeUpdateError(
+            f"Confidence must be in (0.0, 1.0], got {confidence}",
+            exit_code=2,
+        )
+
+    # --- Step 7: Build and execute UPDATE ---
+    has_prov = _has_provenance_columns(conn)
     set_parts = []
-    params = []
+    params: list = []
     if clean_reason is not None:
         set_parts.append("reason = ?")
         params.append(clean_reason)
     if weight is not None:
         set_parts.append("weight = ?")
         params.append(weight)
+    if provenance is not None and has_prov:
+        set_parts.append("provenance = ?")
+        params.append(provenance)
+    if confidence is not None and has_prov:
+        set_parts.append("confidence = ?")
+        params.append(confidence)
+
+    if not set_parts:
+        # Nothing to update (provenance/confidence requested but schema is pre-v004)
+        updated = _lookup_edge(conn, source_id, target_id)
+        return updated  # type: ignore[return-value]
 
     params.extend([source_id, target_id])
     sql = f"UPDATE edges SET {', '.join(set_parts)} WHERE source_id = ? AND target_id = ?"
     conn.execute(sql, params)
 
-    # --- Step 6: Return updated edge ---
+    # --- Step 8: Return updated edge ---
     updated = _lookup_edge(conn, source_id, target_id)
     return updated  # type: ignore[return-value]
+
+
+def _has_provenance_columns(conn: sqlite3.Connection) -> bool:
+    """Check if the edges table has provenance/confidence columns."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(edges)").fetchall()}
+    return "provenance" in cols
 
 
 def _lookup_edge(
@@ -135,8 +161,14 @@ def _lookup_edge(
     Returns:
         Dict with edge data if found, None otherwise.
     """
+    has_prov = _has_provenance_columns(conn)
+    if has_prov:
+        prov_clause = ", provenance, confidence"
+    else:
+        prov_clause = ", 'authored' AS provenance, 1.0 AS confidence"
     row = conn.execute(
-        "SELECT source_id, target_id, reason, weight, created_at FROM edges WHERE source_id = ? AND target_id = ?",
+        f"SELECT source_id, target_id, reason, weight, created_at{prov_clause} "
+        f"FROM edges WHERE source_id = ? AND target_id = ?",
         (source_id, target_id),
     ).fetchone()
     if row is None:

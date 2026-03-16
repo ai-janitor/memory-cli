@@ -1,25 +1,24 @@
-# Task 51 — LRU-based automatic archival command (`memory neuron prune`)
+# Task 46 — Provenance Tracking for Authored vs Extracted Edges
+
+## Goal
+Add provenance metadata to edges distinguishing **authored** (agent-created, confidence=1.0)
+from **extracted** (model-inferred, confidence < 1.0). Spreading activation decays faster
+through low-confidence edges.
 
 ## Checklist
 
-- [ ] **v004 migration**: Add `last_accessed_at INTEGER` and `access_count INTEGER DEFAULT 0` columns to `neurons` table
-- [ ] **Prune logic module**: `src/memory_cli/neuron/neuron_prune_by_lru_age.py`
-  - Query active neurons where `last_accessed_at` is NULL or older than threshold
-  - Prioritize `access_count=0` neurons first, then by `last_accessed_at` ASC
-  - Dry-run mode: return candidates without archiving
-  - Archive via existing `neuron_archive()` — neurons remain restorable
-  - Return report: count archived, total edge weight freed
-- [ ] **CLI verb**: `handle_prune()` in `neuron_noun_handler.py`
-  - Flags: `--days N` (default 30), `--dry-run`
-  - Register verb in `_VERB_MAP`, `_VERB_DESCRIPTIONS`, `_FLAG_DEFS`
-- [ ] **Package export**: Add `neuron_prune` to `neuron/__init__.py`
-- [ ] **Tests**: `tests/neuron/test_neuron_prune_lru.py`
-  - Prune archives neurons not accessed in N days
-  - `access_count=0` + old neurons pruned first
-  - Dry-run mode returns candidates without archiving
-  - Pruned neurons are restorable via `neuron_restore()`
-  - Report includes count and freed edge weight
-  - Recently accessed neurons are NOT pruned
-- [ ] **All tests pass**: `uv run pytest`
-- [ ] **Commit**
-- [ ] **Complete task phase**: `minion task complete-phase --task-id 51 --agent whitemage`
+- [ ] **v004 migration**: Add `provenance TEXT NOT NULL DEFAULT 'authored'` and
+      `confidence REAL NOT NULL DEFAULT 1.0` columns to edges table
+- [ ] **edge_add**: Accept optional `provenance` and `confidence` params;
+      defaults: provenance="authored", confidence=1.0. Validate confidence in (0.0, 1.0].
+- [ ] **spreading activation**: Multiply activation by `edge.confidence` in addition
+      to `edge.weight`. `_get_neighbors()` returns confidence; `_compute_activation()`
+      factors it in.
+- [ ] **edge_list**: Include provenance and confidence in returned edge dicts
+- [ ] **edge_update**: Allow updating provenance and confidence
+- [ ] **edge_splice**: New edges inherit provenance="authored", confidence=1.0 (splicing is an authored action)
+- [ ] **link_flag**: New edges get provenance="authored", confidence=1.0
+- [ ] **CLI handler**: Add `--provenance` and `--confidence` flags to `edge add` and `edge update`
+- [ ] **Tests**: Provenance stored/returned, confidence weighting in spreading activation,
+      extracted edges decay faster than authored
+- [ ] **Full test suite passes**: `uv run pytest`
