@@ -34,6 +34,7 @@ from .v002_add_store_fingerprint import apply as apply_v002
 from .v003_add_manifesto_to_meta import apply as apply_v003
 from .v004_add_access_tracking import apply as apply_v004
 from .v005_add_edge_provenance import apply as apply_v005
+from .v006_add_consolidated_column import apply as apply_v006
 
 MIGRATION_REGISTRY: dict[int, MigrationFn] = {
     1: apply_v001,
@@ -41,4 +42,5 @@ MIGRATION_REGISTRY: dict[int, MigrationFn] = {
     3: apply_v003,
     4: apply_v004,
     5: apply_v005,
+    6: apply_v006,
 }

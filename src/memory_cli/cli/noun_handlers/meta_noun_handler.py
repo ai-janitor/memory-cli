@@ -295,118 +295,63 @@ def handle_stores(args: List[str], global_flags: Any) -> Any:
 
 
 # =============================================================================
-# VERB: consolidate — extract entities/facts from unconsolidated neurons
+# VERB: consolidate — mark unconsolidated neurons as consolidated
 # =============================================================================
 def handle_consolidate(args: List[str], global_flags: Any) -> Any:
-    """Run entity extraction consolidation on neurons using Haiku.
+    """Process unconsolidated neurons and mark them with a consolidated timestamp.
 
-    Extracts entities, facts, and relationships from unconsolidated neuron
-    content blobs. Creates sub-neurons with provenance metadata and wires
-    edges with confidence < 1.0.
+    Queries active neurons where consolidated IS NULL, ordered by created_at ASC
+    (FIFO). Sets consolidated = current timestamp (ms UTC) for each.
 
-    Subcommands:
-        memory meta consolidate                  — consolidate all unconsolidated neurons
-        memory meta consolidate --neuron-id <id> — consolidate a single neuron
-        memory meta consolidate --dry-run        — show what would be consolidated
-        memory meta consolidate --limit <n>      — limit batch to n neurons
-        memory meta consolidate --force          — re-consolidate already-consolidated neurons
+    Also detects stale neurons: already-consolidated neurons whose updated_at
+    is greater than their consolidated timestamp (modified since last consolidation).
 
     Args:
-        args: Remaining tokens after "consolidate".
+        args: [] (no arguments).
         global_flags: Parsed global flags.
 
     Returns:
-        Result with consolidation summary.
+        Result with consolidation report dict:
+        - consolidated_count: number of neurons newly consolidated
+        - stale_count: number of already-consolidated neurons that are stale
+        - stale_ids: list of neuron IDs that are stale
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
     from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_config
+    import time
 
     try:
         conn, config = get_connection_and_config(global_flags)
+        now_ms = int(time.time() * 1000)
 
-        # --- Parse flags ---
-        neuron_id = None
-        dry_run = False
-        limit = None
-        force = False
+        # --- Step 1: Find and mark unconsolidated neurons (FIFO) ---
+        unconsolidated = conn.execute(
+            "SELECT id FROM neurons WHERE status = 'active' AND consolidated IS NULL ORDER BY created_at ASC"
+        ).fetchall()
 
-        i = 0
-        while i < len(args):
-            if args[i] == "--neuron-id" and i + 1 < len(args):
-                try:
-                    neuron_id = int(args[i + 1])
-                except ValueError:
-                    return Result(status="error", error=f"Invalid neuron ID: {args[i + 1]}")
-                i += 2
-            elif args[i] == "--dry-run":
-                dry_run = True
-                i += 1
-            elif args[i] == "--limit" and i + 1 < len(args):
-                try:
-                    limit = int(args[i + 1])
-                except ValueError:
-                    return Result(status="error", error=f"Invalid limit: {args[i + 1]}")
-                i += 2
-            elif args[i] == "--force":
-                force = True
-                i += 1
-            else:
-                return Result(status="error", error=f"Unknown argument: {args[i]}")
-
-        from memory_cli.ingestion.consolidation_orchestrator import (
-            consolidate_neuron,
-            consolidate_all,
-            find_unconsolidated_neurons,
-        )
-
-        # --- Dry run: just show what would be consolidated ---
-        if dry_run:
-            if neuron_id is not None:
-                from memory_cli.ingestion.consolidation_orchestrator import _is_consolidated
-                is_done = _is_consolidated(conn, neuron_id)
-                return Result(status="ok", data={
-                    "dry_run": True,
-                    "neuron_id": neuron_id,
-                    "already_consolidated": is_done,
-                    "would_process": not is_done or force,
-                })
-            else:
-                ids = find_unconsolidated_neurons(conn, limit=limit)
-                return Result(status="ok", data={
-                    "dry_run": True,
-                    "unconsolidated_count": len(ids),
-                    "neuron_ids": ids,
-                })
-
-        # --- Single neuron consolidation ---
-        if neuron_id is not None:
-            result = consolidate_neuron(conn, neuron_id, force=force)
-            return Result(
-                status="ok",
-                data={
-                    "neurons_processed": result.neurons_processed,
-                    "neurons_skipped": result.neurons_skipped,
-                    "sub_neurons_created": result.sub_neurons_created,
-                    "edges_created": result.edges_created,
-                    "errors": result.errors,
-                },
-                warnings=result.warnings,
+        for row in unconsolidated:
+            conn.execute(
+                "UPDATE neurons SET consolidated = ? WHERE id = ?",
+                (now_ms, row[0]),
             )
 
-        # --- Batch consolidation ---
-        result = consolidate_all(conn, limit=limit)
-        return Result(
-            status="ok",
-            data={
-                "neurons_processed": result.neurons_processed,
-                "neurons_skipped": result.neurons_skipped,
-                "sub_neurons_created": result.sub_neurons_created,
-                "edges_created": result.edges_created,
-                "errors": result.errors,
-            },
-            warnings=result.warnings,
-        )
+        consolidated_count = len(unconsolidated)
 
+        # --- Step 2: Detect stale neurons (updated after consolidation) ---
+        stale_rows = conn.execute(
+            "SELECT id FROM neurons WHERE status = 'active' AND consolidated IS NOT NULL AND updated_at > consolidated"
+        ).fetchall()
+
+        stale_ids = [r[0] for r in stale_rows]
+
+        if consolidated_count > 0 or stale_ids:
+            conn.commit()
+
+        return Result(status="ok", data={
+            "consolidated_count": consolidated_count,
+            "stale_count": len(stale_ids),
+            "stale_ids": stale_ids,
+        })
     except Exception as e:
         return Result(status="error", error=str(e))
 
@@ -429,7 +374,7 @@ _VERB_DESCRIPTIONS = {
     "manifesto": "Show or update the store's memory manifesto (usage guide, not data — rules belong as neurons)",
     "fingerprint": "Show this store's fingerprint, project name, and db_path",
     "stores": "List all known stores from ~/.memory/stores.json",
-    "consolidate": "Extract entities/facts from neurons via Haiku (--neuron-id <id>, --dry-run, --limit <n>, --force)",
+    "consolidate": "Mark unconsolidated neurons as consolidated (lifecycle trigger)",
 }
 
 _FLAG_DEFS = {
@@ -441,12 +386,7 @@ _FLAG_DEFS = {
     ],
     "fingerprint": [],
     "stores": [],
-    "consolidate": [
-        {"name": "--neuron-id", "type": "int", "default": None, "desc": "Consolidate a single neuron by ID"},
-        {"name": "--dry-run", "type": "bool", "default": False, "desc": "Show what would be consolidated without making changes"},
-        {"name": "--limit", "type": "int", "default": None, "desc": "Max number of neurons to process in batch mode"},
-        {"name": "--force", "type": "bool", "default": False, "desc": "Re-consolidate already-consolidated neurons"},
-    ],
+    "consolidate": [],
 }
 
 
