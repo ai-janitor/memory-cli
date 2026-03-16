@@ -227,6 +227,7 @@ def _build_extraction_prompt(transcript_chunk: str) -> List[Dict[str, str]]:
 def _call_haiku_api(
     api_key: str,
     messages: List[Dict[str, str]],
+    system_prompt: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Call the Anthropic API with Haiku model.
 
@@ -237,7 +238,7 @@ def _call_haiku_api(
     2. Call client.messages.create(
            model=HAIKU_MODEL,
            max_tokens=MAX_TOKENS,
-           system=EXTRACTION_SYSTEM_PROMPT,
+           system=system_prompt or EXTRACTION_SYSTEM_PROMPT,
            messages=messages
        )
     3. Extract text content from response
@@ -252,6 +253,8 @@ def _call_haiku_api(
     Args:
         api_key: Anthropic API key.
         messages: Messages list for the API.
+        system_prompt: Optional override for the system prompt.
+            Defaults to EXTRACTION_SYSTEM_PROMPT if not provided.
 
     Returns:
         Parsed JSON dict from Haiku's response.
@@ -267,13 +270,14 @@ def _call_haiku_api(
     #     system=EXTRACTION_SYSTEM_PROMPT, messages=messages
     # )
     import anthropic as _anthropic
+    effective_system_prompt = system_prompt if system_prompt is not None else EXTRACTION_SYSTEM_PROMPT
 
     def _do_call() -> Dict[str, Any]:
         client = _anthropic.Anthropic(api_key=api_key)
         response = client.messages.create(
             model=HAIKU_MODEL,
             max_tokens=MAX_TOKENS,
-            system=EXTRACTION_SYSTEM_PROMPT,
+            system=effective_system_prompt,
             messages=messages,
         )
         response_text = response.content[0].text

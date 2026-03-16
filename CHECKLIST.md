@@ -1,24 +1,41 @@
-# Task 46 — Provenance Tracking for Authored vs Extracted Edges
-
-## Goal
-Add provenance metadata to edges distinguishing **authored** (agent-created, confidence=1.0)
-from **extracted** (model-inferred, confidence < 1.0). Spreading activation decays faster
-through low-confidence edges.
+# Task 45: Entity Extraction Consolidation Pass with Haiku
 
 ## Checklist
 
-- [ ] **v004 migration**: Add `provenance TEXT NOT NULL DEFAULT 'authored'` and
-      `confidence REAL NOT NULL DEFAULT 1.0` columns to edges table
-- [ ] **edge_add**: Accept optional `provenance` and `confidence` params;
-      defaults: provenance="authored", confidence=1.0. Validate confidence in (0.0, 1.0].
-- [ ] **spreading activation**: Multiply activation by `edge.confidence` in addition
-      to `edge.weight`. `_get_neighbors()` returns confidence; `_compute_activation()`
-      factors it in.
-- [ ] **edge_list**: Include provenance and confidence in returned edge dicts
-- [ ] **edge_update**: Allow updating provenance and confidence
-- [ ] **edge_splice**: New edges inherit provenance="authored", confidence=1.0 (splicing is an authored action)
-- [ ] **link_flag**: New edges get provenance="authored", confidence=1.0
-- [ ] **CLI handler**: Add `--provenance` and `--confidence` flags to `edge add` and `edge update`
-- [ ] **Tests**: Provenance stored/returned, confidence weighting in spreading activation,
-      extracted edges decay faster than authored
-- [ ] **Full test suite passes**: `uv run pytest`
+- [ ] **Consolidation extraction module** (`src/memory_cli/ingestion/consolidation_extraction.py`)
+  - Haiku prompt tuned for neuron content (not conversation transcripts)
+  - Reuses `ExtractionResult` data classes from existing extraction
+  - Extracts entities, facts, relationships from neuron content blobs
+
+- [ ] **Consolidation orchestrator** (`src/memory_cli/ingestion/consolidation_orchestrator.py`)
+  - Find unconsolidated neurons (no `consolidated_at` attr)
+  - For each: call Haiku extraction on neuron content
+  - Create sub-neurons with provenance attrs: `extracted_by=haiku`, `extraction_method=consolidation`, `parent_neuron_id=<id>`
+  - Wire edges: parent→child with reason, weight < 1.0 (confidence)
+  - Set `consolidated_at` timestamp attr on parent neuron
+  - Idempotent: skip neurons that already have `consolidated_at`
+
+- [ ] **Meta consolidate verb** (modify `meta_noun_handler.py`)
+  - `memory meta consolidate` — run consolidation on all unconsolidated neurons
+  - `memory meta consolidate --neuron-id <id>` — consolidate a single neuron
+  - `memory meta consolidate --dry-run` — show what would be consolidated
+
+- [ ] **Tests**
+  - `tests/ingestion/test_consolidation_extraction.py` — Haiku call mocked, response parsing
+  - `tests/ingestion/test_consolidation_orchestrator.py` — end-to-end with mocked Haiku
+
+- [ ] **Acceptance criteria verification**
+  - Haiku extracts entities and relationships from neuron content
+  - Sub-neurons created with `extracted_by` provenance metadata
+  - Extracted edges carry confidence < 1.0 (via weight)
+  - Authored edges (batch load) retain confidence 1.0
+  - Parent neuron `consolidated_at` timestamp set after extraction
+  - Re-running on already-consolidated neurons is idempotent
+
+## Design Decisions
+
+- **Edge confidence**: Use existing `weight` field. Extracted edges get `weight=0.85`, authored edges keep `weight=1.0`
+- **Sub-neuron provenance**: Store via `neuron_attrs`: `extracted_by`, `extraction_method`, `parent_neuron_id`
+- **Consolidation timestamp**: `consolidated_at` attr on parent neuron (ISO 8601)
+- **Idempotency**: Check for `consolidated_at` attr presence before processing
+- **Haiku model**: Same `claude-haiku-4-20250414` as ingestion extraction
