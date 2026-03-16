@@ -1,25 +1,27 @@
-# Task 51 — LRU-based automatic archival command (`memory neuron prune`)
+# Task 43 — Add consolidated column and memory meta consolidate command
 
 ## Checklist
 
-- [ ] **v004 migration**: Add `last_accessed_at INTEGER` and `access_count INTEGER DEFAULT 0` columns to `neurons` table
-- [ ] **Prune logic module**: `src/memory_cli/neuron/neuron_prune_by_lru_age.py`
-  - Query active neurons where `last_accessed_at` is NULL or older than threshold
-  - Prioritize `access_count=0` neurons first, then by `last_accessed_at` ASC
-  - Dry-run mode: return candidates without archiving
-  - Archive via existing `neuron_archive()` — neurons remain restorable
-  - Return report: count archived, total edge weight freed
-- [ ] **CLI verb**: `handle_prune()` in `neuron_noun_handler.py`
-  - Flags: `--days N` (default 30), `--dry-run`
-  - Register verb in `_VERB_MAP`, `_VERB_DESCRIPTIONS`, `_FLAG_DEFS`
-- [ ] **Package export**: Add `neuron_prune` to `neuron/__init__.py`
-- [ ] **Tests**: `tests/neuron/test_neuron_prune_lru.py`
-  - Prune archives neurons not accessed in N days
-  - `access_count=0` + old neurons pruned first
-  - Dry-run mode returns candidates without archiving
-  - Pruned neurons are restorable via `neuron_restore()`
-  - Report includes count and freed edge weight
-  - Recently accessed neurons are NOT pruned
-- [ ] **All tests pass**: `uv run pytest`
-- [ ] **Commit**
-- [ ] **Complete task phase**: `minion task complete-phase --task-id 51 --agent whitemage`
+- [ ] **v005 migration**: `src/memory_cli/db/migrations/v005_add_consolidated_column.py`
+  - ALTER TABLE neurons ADD COLUMN consolidated INTEGER (nullable, ms epoch UTC)
+  - No BEGIN/COMMIT — caller owns the transaction
+  - Register in `__init__.py` MIGRATION_REGISTRY as version 5
+
+- [ ] **meta consolidate verb**: Add to `src/memory_cli/cli/noun_handlers/meta_noun_handler.py`
+  - Query: `WHERE status = 'active' AND consolidated IS NULL ORDER BY created_at ASC`
+  - Mark each: `UPDATE neurons SET consolidated = ? WHERE id = ?`
+  - Detect stale: neurons where `updated_at > consolidated`
+  - Return: `{consolidated_count, skipped_count, stale_count, stale_ids}`
+  - Idempotent — already-consolidated neurons skipped by WHERE clause
+
+- [ ] **Tests**: `tests/db/test_consolidated_migration_v005.py`
+  - Migration adds nullable column
+  - Existing neurons get consolidated = NULL
+  - Runner migrates v4→v5 and v0→v5
+  - Consolidate processes unconsolidated FIFO
+  - Already-consolidated skipped
+  - Stale neurons flagged
+
+- [ ] Run `uv run pytest`
+- [ ] Commit
+- [ ] `minion task complete-phase --task-id 43 --agent fighter`

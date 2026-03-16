@@ -295,6 +295,68 @@ def handle_stores(args: List[str], global_flags: Any) -> Any:
 
 
 # =============================================================================
+# VERB: consolidate — mark unconsolidated neurons as consolidated
+# =============================================================================
+def handle_consolidate(args: List[str], global_flags: Any) -> Any:
+    """Process unconsolidated neurons and mark them with a consolidated timestamp.
+
+    Queries active neurons where consolidated IS NULL, ordered by created_at ASC
+    (FIFO). Sets consolidated = current timestamp (ms UTC) for each.
+
+    Also detects stale neurons: already-consolidated neurons whose updated_at
+    is greater than their consolidated timestamp (modified since last consolidation).
+
+    Args:
+        args: [] (no arguments).
+        global_flags: Parsed global flags.
+
+    Returns:
+        Result with consolidation report dict:
+        - consolidated_count: number of neurons newly consolidated
+        - stale_count: number of already-consolidated neurons that are stale
+        - stale_ids: list of neuron IDs that are stale
+    """
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_config
+    import time
+
+    try:
+        conn, config = get_connection_and_config(global_flags)
+        now_ms = int(time.time() * 1000)
+
+        # --- Step 1: Find and mark unconsolidated neurons (FIFO) ---
+        unconsolidated = conn.execute(
+            "SELECT id FROM neurons WHERE status = 'active' AND consolidated IS NULL ORDER BY created_at ASC"
+        ).fetchall()
+
+        for row in unconsolidated:
+            conn.execute(
+                "UPDATE neurons SET consolidated = ? WHERE id = ?",
+                (now_ms, row[0]),
+            )
+
+        consolidated_count = len(unconsolidated)
+
+        # --- Step 2: Detect stale neurons (updated after consolidation) ---
+        stale_rows = conn.execute(
+            "SELECT id FROM neurons WHERE status = 'active' AND consolidated IS NOT NULL AND updated_at > consolidated"
+        ).fetchall()
+
+        stale_ids = [r[0] for r in stale_rows]
+
+        if consolidated_count > 0 or stale_ids:
+            conn.commit()
+
+        return Result(status="ok", data={
+            "consolidated_count": consolidated_count,
+            "stale_count": len(stale_ids),
+            "stale_ids": stale_ids,
+        })
+    except Exception as e:
+        return Result(status="error", error=str(e))
+
+
+# =============================================================================
 # NOUN REGISTRATION
 # =============================================================================
 _VERB_MAP = {
@@ -303,6 +365,7 @@ _VERB_MAP = {
     "manifesto": handle_manifesto,
     "fingerprint": handle_fingerprint,
     "stores": handle_stores,
+    "consolidate": handle_consolidate,
 }
 
 _VERB_DESCRIPTIONS = {
@@ -311,6 +374,7 @@ _VERB_DESCRIPTIONS = {
     "manifesto": "Show or update the store's memory manifesto (usage guide, not data — rules belong as neurons)",
     "fingerprint": "Show this store's fingerprint, project name, and db_path",
     "stores": "List all known stores from ~/.memory/stores.json",
+    "consolidate": "Mark unconsolidated neurons as consolidated (lifecycle trigger)",
 }
 
 _FLAG_DEFS = {
@@ -322,6 +386,7 @@ _FLAG_DEFS = {
     ],
     "fingerprint": [],
     "stores": [],
+    "consolidate": [],
 }
 
 
