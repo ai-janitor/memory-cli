@@ -44,12 +44,16 @@ def migrated_conn():
     )
     from memory_cli.db.connection_setup_wal_fk_busy import open_connection
     from memory_cli.db.extension_loader_sqlite_vec import load_and_verify_extensions
-    from memory_cli.db.migrations.v001_baseline_all_tables_indexes_triggers import apply
+    from memory_cli.db.migrations.v001_baseline_all_tables_indexes_triggers import apply as apply_v001
+    from memory_cli.db.migrations.v004_add_access_tracking import apply as apply_v004
 
     conn = open_connection(":memory:")
     load_and_verify_extensions(conn)
     conn.execute("BEGIN")
-    apply(conn)
+    apply_v001(conn)
+    conn.execute("COMMIT")
+    conn.execute("BEGIN")
+    apply_v004(conn)
     conn.execute("COMMIT")
     yield conn
     conn.close()

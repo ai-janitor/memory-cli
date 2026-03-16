@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from typing import Any, Dict, List, Optional
 
 
@@ -94,6 +95,13 @@ def neuron_get(conn: sqlite3.Connection, neuron_id: int) -> Optional[Dict[str, A
 
     if row is None:
         return None
+
+    # --- Bump access tracking ---
+    now_ms = int(time.time() * 1000)
+    conn.execute(
+        "UPDATE neurons SET access_count = access_count + 1, last_accessed_at = ? WHERE id = ?",
+        (now_ms, neuron_id),
+    )
 
     neuron_dict = dict(row)
     neuron_dict["tags"] = _hydrate_tags(conn, neuron_id)

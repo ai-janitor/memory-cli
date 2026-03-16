@@ -291,8 +291,8 @@ class TestNeuronListMergesStores:
             conn = open_connection(":memory:")
             load_sqlite_vec(conn)
             v = read_schema_version(conn)
-            if v < 3:
-                run_pending_migrations(conn, v, 3)
+            if v < 4:
+                run_pending_migrations(conn, v, 4)
             return conn
 
         local_conn = make_conn()
@@ -331,8 +331,8 @@ class TestNeuronListMergesStores:
             conn = open_connection(":memory:")
             load_sqlite_vec(conn)
             v = read_schema_version(conn)
-            if v < 3:
-                run_pending_migrations(conn, v, 3)
+            if v < 4:
+                run_pending_migrations(conn, v, 4)
             return conn
 
         local_conn = make_conn()
@@ -377,8 +377,8 @@ class TestNeuronWriteDefaultsToLocal:
             conn = open_connection(":memory:")
             load_sqlite_vec(conn)
             v = read_schema_version(conn)
-            if v < 3:
-                run_pending_migrations(conn, v, 3)
+            if v < 4:
+                run_pending_migrations(conn, v, 4)
             return conn
 
         local_conn = make_conn()
@@ -421,8 +421,8 @@ class TestGetByScopedHandle:
             conn = open_connection(":memory:")
             load_sqlite_vec(conn)
             v = read_schema_version(conn)
-            if v < 3:
-                run_pending_migrations(conn, v, 3)
+            if v < 4:
+                run_pending_migrations(conn, v, 4)
             return conn
 
         local_conn = make_conn()
@@ -459,8 +459,8 @@ class TestGetByScopedHandle:
             conn = open_connection(":memory:")
             load_sqlite_vec(conn)
             v = read_schema_version(conn)
-            if v < 3:
-                run_pending_migrations(conn, v, 3)
+            if v < 4:
+                run_pending_migrations(conn, v, 4)
             return conn
 
         local_conn = make_conn()
@@ -497,8 +497,8 @@ class TestGetByScopedHandle:
             conn = open_connection(":memory:")
             load_sqlite_vec(conn)
             v = read_schema_version(conn)
-            if v < 3:
-                run_pending_migrations(conn, v, 3)
+            if v < 4:
+                run_pending_migrations(conn, v, 4)
             return conn
 
         local_conn = make_conn()
@@ -536,8 +536,8 @@ class TestGetByScopedHandle:
             conn = open_connection(":memory:")
             load_sqlite_vec(conn)
             v = read_schema_version(conn)
-            if v < 3:
-                run_pending_migrations(conn, v, 3)
+            if v < 4:
+                run_pending_migrations(conn, v, 4)
             return conn
 
         local_conn = make_conn()
@@ -610,8 +610,8 @@ class TestNeuronSearchMergesStores:
             conn = open_connection(":memory:")
             load_sqlite_vec(conn)
             v = read_schema_version(conn)
-            if v < 3:
-                run_pending_migrations(conn, v, 3)
+            if v < 4:
+                run_pending_migrations(conn, v, 4)
             return conn
 
         local_conn = make_conn()

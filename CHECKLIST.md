@@ -1,15 +1,11 @@
-# Task 50 — Tag Hierarchy Conventions Documentation
+# Task 42 — Access Tracking Checklist
 
-## Checklist
-
-- [ ] Add `_TAG_CONVENTIONS` content constant to manpage_noun_handler.py
-  - Structural types: category, pipeline, system-rule, feedback, contact, person
-  - Domain groupings: career, email, cli, infra, tooling
-  - Temporal: auto-generated YYYY-MM-DD, manual YYYY-MM ranges
-  - Good vs bad tag examples
-  - Revisit thresholds / tag hygiene recommendations
-- [ ] Create handler and register in verb map, descriptions, flag defs
-- [ ] Update `_OVERVIEW` manpage to list `tag-conventions` in the topic index
-- [ ] Run `uv run pytest` — all tests pass
+- [x] v004 migration: add `last_accessed_at` (INTEGER, nullable) and `access_count` (INTEGER DEFAULT 0) to neurons
+- [x] Register v004 in migration registry (`__init__.py`)
+- [x] Bump `EXPECTED_SCHEMA_VERSION` to 4 in `schema_version_reader.py`
+- [x] `neuron_get_by_id.py`: bump `access_count` and set `last_accessed_at` on read
+- [x] `search_result_hydration_and_envelope.py`: bump access tracking on search hits
+- [x] Tests: migration adds columns, get increments counters, search hits update tracking
+- [x] `uv run pytest` passes (1586 passed)
 - [ ] Commit
-- [ ] Run `minion task complete-phase --task-id 50 --agent thief`
+- [ ] `minion task complete-phase --task-id 42 --agent fighter`
