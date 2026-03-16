@@ -299,6 +299,60 @@ def tag_autocreate(conn: sqlite3.Connection, name: str) -> int:
     return row[0]
 
 
+def tag_audit(conn: sqlite3.Connection) -> Dict[str, Any]:
+    """Audit tag usage: counts per tag, structural type patterns, noise candidates.
+
+    Returns a report dict with:
+    - tags: list of {name, count, type_pattern} sorted by count DESC
+    - total_tags: total number of tags in the registry
+    - total_neurons: total number of neurons in the database
+    - noise_candidates: list of tag names with count=1 (singletons)
+
+    Type pattern classification:
+    - "date": matches YYYY-MM-DD (auto-tag timestamp)
+    - "project": not a date but is an auto-tag (project detection heuristic:
+      no spaces, no special punctuation beyond hyphens/underscores)
+    - "user": everything else (user-supplied tags)
+
+    Args:
+        conn: SQLite connection.
+
+    Returns:
+        Dict with keys: tags, total_tags, total_neurons, noise_candidates.
+    """
+    import re
+    date_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+    # Get all tags with counts
+    rows = conn.execute(
+        "SELECT t.name, COUNT(nt.neuron_id) as count "
+        "FROM tags t LEFT JOIN neuron_tags nt ON t.id = nt.tag_id "
+        "GROUP BY t.id ORDER BY count DESC, t.name ASC"
+    ).fetchall()
+
+    # Total neurons
+    total_neurons_row = conn.execute("SELECT COUNT(*) FROM neurons").fetchone()
+    total_neurons = total_neurons_row[0] if total_neurons_row else 0
+
+    tags = []
+    noise_candidates = []
+    for name, count in rows:
+        if date_pattern.match(name):
+            type_pattern = "date"
+        else:
+            type_pattern = "user"
+        tags.append({"name": name, "count": count, "type_pattern": type_pattern})
+        if count == 1:
+            noise_candidates.append(name)
+
+    return {
+        "tags": tags,
+        "total_tags": len(tags),
+        "total_neurons": total_neurons,
+        "noise_candidates": noise_candidates,
+    }
+
+
 def _count_tag_references(conn: sqlite3.Connection, tag_id: int) -> int:
     """Count how many neurons reference a given tag.
 

@@ -219,18 +219,70 @@ def handle_remove(args: List[str], global_flags: Any) -> Any:
 
 
 # =============================================================================
+# VERB: audit — report tag usage statistics and noise candidates
+# =============================================================================
+def handle_audit(args: List[str], global_flags: Any) -> Any:
+    """Audit tag usage: counts per tag, type patterns, noise candidates.
+
+    Args:
+        args: [] (no arguments required)
+        global_flags: Parsed global flags.
+
+    Returns:
+        Result with audit report dict.
+    """
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
+    try:
+        connections = get_layered_connections(global_flags)
+        from memory_cli.registries import tag_audit
+        # Merge audit data across layered connections
+        merged_tags: dict = {}  # name -> {count, type_pattern}
+        total_neurons = 0
+        for conn, scope in connections:
+            report = tag_audit(conn)
+            total_neurons += report["total_neurons"]
+            for t in report["tags"]:
+                name = t["name"]
+                if name in merged_tags:
+                    merged_tags[name]["count"] += t["count"]
+                else:
+                    merged_tags[name] = {"count": t["count"], "type_pattern": t["type_pattern"]}
+
+        tags = [
+            {"name": k, "count": v["count"], "type_pattern": v["type_pattern"]}
+            for k, v in merged_tags.items()
+        ]
+        tags.sort(key=lambda x: (-x["count"], x["name"]))
+
+        noise_candidates = [t["name"] for t in tags if t["count"] == 1]
+
+        result = {
+            "tags": tags,
+            "total_tags": len(tags),
+            "total_neurons": total_neurons,
+            "noise_candidates": noise_candidates,
+        }
+        return Result(status="ok", data=result)
+    except Exception as e:
+        return Result(status="error", error=str(e))
+
+
+# =============================================================================
 # NOUN REGISTRATION
 # =============================================================================
 _VERB_MAP = {
     "add": handle_add,
     "list": handle_list,
     "remove": handle_remove,
+    "audit": handle_audit,
 }
 
 _VERB_DESCRIPTIONS = {
     "add": "Attach tag(s) to a neuron",
     "list": "List tags (all or per neuron)",
     "remove": "Remove tag(s) from a neuron",
+    "audit": "Report tag usage statistics and noise candidates",
 }
 
 _FLAG_DEFS = {
@@ -241,6 +293,7 @@ _FLAG_DEFS = {
         {"name": "--neuron", "type": "str", "default": None, "desc": "Filter by neuron ID"},
     ],
     "remove": [],
+    "audit": [],
 }
 
 
