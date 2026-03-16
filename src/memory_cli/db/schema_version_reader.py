@@ -37,7 +37,7 @@ class SchemaAction(enum.Enum):
 # --- Expected schema version constant ---
 # This is the version that this CLI release expects.
 # Bump this when adding new migrations.
-EXPECTED_SCHEMA_VERSION: int = 6
+EXPECTED_SCHEMA_VERSION: int = 7
 
 
 def read_schema_version(conn: sqlite3.Connection) -> int:

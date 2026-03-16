@@ -1,27 +1,21 @@
-# Task 43 — Add consolidated column and memory meta consolidate command
+# Task 47: Edge Type Normalization Janitor Pass
 
 ## Checklist
 
-- [ ] **v005 migration**: `src/memory_cli/db/migrations/v005_add_consolidated_column.py`
-  - ALTER TABLE neurons ADD COLUMN consolidated INTEGER (nullable, ms epoch UTC)
-  - No BEGIN/COMMIT — caller owns the transaction
-  - Register in `__init__.py` MIGRATION_REGISTRY as version 5
+- [ ] **v006 migration** — `edge_types` table (id, name, parent_id, description) + `canonical_reason` column on `edges`
+- [ ] **Synonym mapping** — Built-in synonym clusters (e.g., has_interviewer/interviewed_by/interviewer → interviewer)
+- [ ] **Janitor logic** — `edge_normalize_janitor_pass.py` in `src/memory_cli/edge/` — scans edges, clusters synonyms, writes canonical_reason
+- [ ] **Original reason preserved** — `reason` column untouched (provenance); `canonical_reason` is the normalized form
+- [ ] **CLI verb** — `memory edge normalize` triggers the janitor pass
+- [ ] **Query support** — edge list returns canonical_reason when present
+- [ ] **Tests** — migration, janitor logic, CLI handler
+- [ ] **Run pytest** — all green
+- [ ] **Commit**
 
-- [ ] **meta consolidate verb**: Add to `src/memory_cli/cli/noun_handlers/meta_noun_handler.py`
-  - Query: `WHERE status = 'active' AND consolidated IS NULL ORDER BY created_at ASC`
-  - Mark each: `UPDATE neurons SET consolidated = ? WHERE id = ?`
-  - Detect stale: neurons where `updated_at > consolidated`
-  - Return: `{consolidated_count, skipped_count, stale_count, stale_ids}`
-  - Idempotent — already-consolidated neurons skipped by WHERE clause
+## Design Decisions
 
-- [ ] **Tests**: `tests/db/test_consolidated_migration_v005.py`
-  - Migration adds nullable column
-  - Existing neurons get consolidated = NULL
-  - Runner migrates v4→v5 and v0→v5
-  - Consolidate processes unconsolidated FIFO
-  - Already-consolidated skipped
-  - Stale neurons flagged
-
-- [ ] Run `uv run pytest`
-- [ ] Commit
-- [ ] `minion task complete-phase --task-id 43 --agent fighter`
+- **canonical_reason** is nullable — NULL means "not yet normalized"
+- **edge_types** has parent_id for hierarchy (e.g., `interviewer` parent of `has_interviewer`)
+- **Synonym resolution** is deterministic: lowercase, strip whitespace, lookup in synonym map
+- **Original reason preserved** as provenance — janitor never modifies `reason` column
+- **edge_types seeded** with common relationship types during migration

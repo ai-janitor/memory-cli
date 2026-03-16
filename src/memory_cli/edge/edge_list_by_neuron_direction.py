@@ -45,6 +45,7 @@ VALID_DIRECTIONS = {"outgoing", "incoming", "both"}
 
 # Cache for column existence check per connection id
 _provenance_column_cache: Dict[int, bool] = {}
+_canonical_reason_column_cache: Dict[int, bool] = {}
 
 
 def _has_provenance_columns(conn: sqlite3.Connection) -> bool:
@@ -57,6 +58,18 @@ def _has_provenance_columns(conn: sqlite3.Connection) -> bool:
         cols = {row[1] for row in conn.execute("PRAGMA table_info(edges)").fetchall()}
         _provenance_column_cache[conn_id] = "provenance" in cols
     return _provenance_column_cache[conn_id]
+
+
+def _has_canonical_reason_column(conn: sqlite3.Connection) -> bool:
+    """Check if the edges table has canonical_reason column (v006 migration).
+
+    Result is cached per connection to avoid repeated PRAGMA queries.
+    """
+    conn_id = id(conn)
+    if conn_id not in _canonical_reason_column_cache:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(edges)").fetchall()}
+        _canonical_reason_column_cache[conn_id] = "canonical_reason" in cols
+    return _canonical_reason_column_cache[conn_id]
 
 
 class EdgeListError(Exception):
@@ -208,9 +221,16 @@ def _query_outgoing(
         if has_prov
         else "'authored' AS provenance, 1.0 AS confidence,"
     )
+    has_canonical = _has_canonical_reason_column(conn)
+    canonical_col = (
+        "e.canonical_reason AS canonical_reason,"
+        if has_canonical
+        else "NULL AS canonical_reason,"
+    )
     return conn.execute(
         f"""SELECT e.source_id, e.target_id, e.reason, e.weight, e.created_at,
                   {prov_cols}
+                  {canonical_col}
                   n.id AS connected_neuron_id, n.content AS connected_content
            FROM edges e
            JOIN neurons n ON n.id = e.target_id
@@ -255,9 +275,16 @@ def _query_incoming(
         if has_prov
         else "'authored' AS provenance, 1.0 AS confidence,"
     )
+    has_canonical = _has_canonical_reason_column(conn)
+    canonical_col = (
+        "e.canonical_reason AS canonical_reason,"
+        if has_canonical
+        else "NULL AS canonical_reason,"
+    )
     return conn.execute(
         f"""SELECT e.source_id, e.target_id, e.reason, e.weight, e.created_at,
                   {prov_cols}
+                  {canonical_col}
                   n.id AS connected_neuron_id, n.content AS connected_content
            FROM edges e
            JOIN neurons n ON n.id = e.source_id
@@ -318,13 +345,20 @@ def _query_both(
         if has_prov
         else "'authored' AS provenance, 1.0 AS confidence,"
     )
+    has_canonical = _has_canonical_reason_column(conn)
+    canonical_col = (
+        "e.canonical_reason AS canonical_reason,"
+        if has_canonical
+        else "NULL AS canonical_reason,"
+    )
     return conn.execute(
         f"""SELECT source_id, target_id, reason, weight, created_at,
-                  provenance, confidence,
+                  provenance, confidence, canonical_reason,
                   connected_neuron_id, connected_content
            FROM (
                SELECT e.source_id, e.target_id, e.reason, e.weight, e.created_at,
                       {prov_cols}
+                      {canonical_col}
                       n.id AS connected_neuron_id, n.content AS connected_content
                FROM edges e
                JOIN neurons n ON n.id = e.target_id
@@ -332,6 +366,7 @@ def _query_both(
                UNION ALL
                SELECT e.source_id, e.target_id, e.reason, e.weight, e.created_at,
                       {prov_cols}
+                      {canonical_col}
                       n.id AS connected_neuron_id, n.content AS connected_content
                FROM edges e
                JOIN neurons n ON n.id = e.source_id
@@ -358,7 +393,7 @@ def _build_edge_row(row: sqlite3.Row) -> Dict[str, Any]:
     Returns:
         Dict with edge fields and connected neuron snippet.
     """
-    return {
+    result = {
         "source_id": row["source_id"],
         "target_id": row["target_id"],
         "reason": row["reason"],
@@ -369,6 +404,12 @@ def _build_edge_row(row: sqlite3.Row) -> Dict[str, Any]:
         "connected_neuron_id": row["connected_neuron_id"],
         "connected_neuron_snippet": _truncate_content(row["connected_content"]),
     }
+    # Include canonical_reason if the column exists in the query result
+    try:
+        result["canonical_reason"] = row["canonical_reason"]
+    except (IndexError, KeyError):
+        pass
+    return result
 
 
 def _truncate_content(content: str, max_length: int = SNIPPET_MAX_LENGTH) -> str:
