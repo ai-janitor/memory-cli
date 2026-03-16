@@ -224,18 +224,93 @@ def handle_manifesto(args: List[str], global_flags: Any) -> Any:
 
 
 # =============================================================================
+# VERB: fingerprint — show this store's identity
+# =============================================================================
+def handle_fingerprint(args: List[str], global_flags: Any) -> Any:
+    """Show the current store's fingerprint, project name, and db_path.
+
+    Output:
+        {"fingerprint": "a3f2b7c1", "project": "my-project", "db_path": "/path/to/memory.db"}
+
+    Args:
+        args: [] (no arguments).
+        global_flags: Parsed global flags.
+
+    Returns:
+        Result with fingerprint identity dict.
+    """
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_config
+
+    try:
+        conn, config = get_connection_and_config(global_flags)
+        from memory_cli.db.store_fingerprint_read_and_cache import get_fingerprint
+
+        fingerprint = get_fingerprint(conn)
+        row = conn.execute(
+            "SELECT value FROM meta WHERE key = 'project'"
+        ).fetchone()
+        project_name = row[0] if row else None
+
+        return Result(status="ok", data={
+            "fingerprint": fingerprint,
+            "project": project_name,
+            "db_path": config.db_path,
+        })
+    except ValueError as e:
+        from memory_cli.cli.output_envelope_json_and_text import Result
+        return Result(
+            status="error",
+            error=str(e),
+        )
+    except Exception as e:
+        from memory_cli.cli.output_envelope_json_and_text import Result
+        return Result(status="error", error=str(e))
+
+
+# =============================================================================
+# VERB: stores — list all registered stores from ~/.memory/stores.json
+# =============================================================================
+def handle_stores(args: List[str], global_flags: Any) -> Any:
+    """List all stores registered in the global ~/.memory/stores.json registry.
+
+    Output:
+        List of {"fingerprint": ..., "db_path": ..., "project": ..., "registered_at": ...}
+
+    Args:
+        args: [] (no arguments).
+        global_flags: Parsed global flags.
+
+    Returns:
+        Result with list of store entries.
+    """
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.config.store_registry import list_stores
+
+    try:
+        stores = list_stores()
+        return Result(status="ok", data=stores)
+    except Exception as e:
+        return Result(status="error", error=str(e))
+
+
+# =============================================================================
 # NOUN REGISTRATION
 # =============================================================================
 _VERB_MAP = {
     "info": handle_info,
     "stats": handle_stats,
     "manifesto": handle_manifesto,
+    "fingerprint": handle_fingerprint,
+    "stores": handle_stores,
 }
 
 _VERB_DESCRIPTIONS = {
     "info": "Show database identity and configuration",
     "stats": "Show database statistics (counts, sizes)",
     "manifesto": "Show or update the store's memory manifesto (usage guide, not data — rules belong as neurons)",
+    "fingerprint": "Show this store's fingerprint, project name, and db_path",
+    "stores": "List all known stores from ~/.memory/stores.json",
 }
 
 _FLAG_DEFS = {
@@ -245,6 +320,8 @@ _FLAG_DEFS = {
         {"name": "set", "type": "subcommand", "default": None, "desc": "Replace manifesto: memory meta manifesto set \"<text>\""},
         {"name": "--file", "type": "str", "default": None, "desc": "Read new manifesto from file: memory meta manifesto set --file <path>"},
     ],
+    "fingerprint": [],
+    "stores": [],
 }
 
 

@@ -266,6 +266,19 @@ Cross-store edges:
   Edges can connect neurons across stores using scoped handles.
   Example: link a LOCAL project neuron to a GLOBAL contact.
 
+Store fingerprints and cross-store references:
+  Each store gets a unique 8-char hex fingerprint at init time (UUID prefix).
+  Fingerprints enable cross-store neuron references without knowing file paths:
+    a3f2b7c1:42   Neuron 42 in store with fingerprint a3f2b7c1
+
+  Discover fingerprints:
+    memory meta fingerprint          Show this store's fingerprint
+    memory meta stores               List all known stores and fingerprints
+
+  All stores auto-register in ~/.memory/stores.json at init time.
+  The CLI resolves fingerprint:id handles by looking up the fingerprint
+  in the registry to find the store's database path.
+
 Init commands:
   memory init                     Create LOCAL store in current dir
   memory init --global            Create GLOBAL store in ~/.memory/

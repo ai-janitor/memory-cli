@@ -146,6 +146,9 @@ def init_memory_store(
     # fingerprint, project name, and db_path into meta table.
     _bootstrap_schema_and_fingerprint(db_path, base, project)
 
+    # 5c. Auto-register in global stores.json registry
+    _auto_register_in_store_registry(db_path)
+
     # 6. Print post-init instructions
     _print_post_init_instructions(store_path, project=project)
 
@@ -246,6 +249,36 @@ def _bootstrap_schema_and_fingerprint(
     except Exception:
         # Non-fatal: init still succeeds even if fingerprint stamping fails.
         # The migration will handle it on first real use.
+        pass
+
+
+def _auto_register_in_store_registry(db_path: Path) -> None:
+    """Register this store in the global ~/.memory/stores.json registry.
+
+    Reads the fingerprint and project name from the DB's meta table,
+    then writes an entry to stores.json. Non-fatal: if anything fails,
+    the store is still usable — it just won't be discoverable via the
+    global registry until manually registered.
+
+    Args:
+        db_path: Absolute path to the store's SQLite DB file.
+    """
+    try:
+        from memory_cli.db import open_connection
+        from memory_cli.db.store_fingerprint_read_and_cache import get_fingerprint
+        from memory_cli.config.store_registry import register_store
+
+        conn = open_connection(db_path)
+        fingerprint = get_fingerprint(conn)
+        row = conn.execute(
+            "SELECT value FROM meta WHERE key = 'project'"
+        ).fetchone()
+        project_name = row[0] if row else "unknown"
+        conn.close()
+
+        register_store(fingerprint, str(db_path.resolve()), project_name)
+    except Exception:
+        # Non-fatal: init still succeeds even if registry write fails.
         pass
 
 
