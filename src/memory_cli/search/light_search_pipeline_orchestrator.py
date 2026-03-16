@@ -34,6 +34,7 @@ from .rrf_fusion_rank_based_k60 import fuse_rrf
 from .spreading_activation_bfs_linear_decay import spread
 from .temporal_decay_exponential_halflife import apply_temporal_decay
 from .tag_affinity_scoring_shared_tags import apply_tag_affinity
+from .salience_scoring_access_metrics import apply_salience_scoring
 from .tag_filter_post_activation import filter_by_tags
 from .final_score_combine_and_rank import compute_final_scores
 from .explain_scoring_breakdown import build_explain_breakdowns
@@ -103,6 +104,9 @@ class PipelineState:
 
     # Stage 6: Temporal weights applied
     temporally_weighted: List[Dict[str, Any]] = field(default_factory=list)
+
+    # Stage 6b: Salience-boosted candidates (after temporal, before tag filter)
+    salience_boosted: List[Dict[str, Any]] = field(default_factory=list)
 
     # Stage 7: Tag-filtered candidates
     tag_filtered: List[Dict[str, Any]] = field(default_factory=list)
@@ -371,13 +375,18 @@ def _run_scoring_stage(
     # --- Stage 6: Temporal decay ---
     state.temporally_weighted = apply_temporal_decay(conn, state.tag_affinity_boosted)
 
+    # --- Stage 6b: Salience scoring (access metrics boost) ---
+    # Boosts neurons that are frequently and/or recently accessed.
+    # Zero-access neurons get neutral weight (1.0) — no penalty.
+    state.salience_boosted = apply_salience_scoring(conn, state.temporally_weighted)
+
     # --- Stage 7: Tag filtering (only if tags specified) ---
     if options.tags:
         state.tag_filtered = filter_by_tags(
-            conn, state.temporally_weighted, options.tags, options.tag_mode
+            conn, state.salience_boosted, options.tags, options.tag_mode
         )
     else:
-        state.tag_filtered = state.temporally_weighted
+        state.tag_filtered = state.salience_boosted
 
     # --- Stage 8: Final score computation and ranking ---
     state.final_ranked = compute_final_scores(state.tag_filtered)

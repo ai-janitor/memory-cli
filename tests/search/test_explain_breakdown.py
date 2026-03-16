@@ -95,7 +95,7 @@ EXPECTED_FIELDS = {
     "vector_distance", "vector_rank",
     "rrf_score", "activation_score", "hop_distance",
     "tag_affinity_score", "tag_affinity_depth",
-    "temporal_weight", "final_score",
+    "temporal_weight", "salience_weight", "final_score",
     "vector_unavailable", "match_type", "match_source",
 }
 
