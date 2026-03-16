@@ -1,0 +1,26 @@
+You are worker blackbelt, a coder in the memory-cli project. Read CLAUDE.md first.
+
+Task 45: Entity extraction consolidation pass with Haiku.
+
+Implement core extraction logic for memory meta consolidate. Use Haiku to extract entities and relationships from unconsolidated neuron content blobs. Create sub-neurons for extracted entities and wire edges with provenance (extraction_method, extracted_by, confidence less than 1.0). Parent neuron gets consolidated timestamp set.
+
+Files to create/modify:
+- src/memory_cli/ingestion/ — new extraction module using Haiku
+- src/memory_cli/neuron/ — sub-neuron creation with parent linkage
+- src/memory_cli/edge/ — extracted edges with confidence and provenance
+
+Acceptance criteria:
+- Haiku extracts entities and relationships from neuron content
+- Sub-neurons created with extracted_by provenance metadata
+- Extracted edges carry confidence less than 1.0
+- Authored edges (batch load) retain confidence 1.0
+- Parent neuron consolidated timestamp set after extraction
+- Re-running on already-consolidated neurons is idempotent
+
+Protocol:
+1. Write CHECKLIST.md first
+2. Read existing code to understand patterns
+3. Implement the feature
+4. Run uv run pytest when done
+5. Commit your work
+6. Then run: minion task complete-phase --task-id 45 --agent blackbelt

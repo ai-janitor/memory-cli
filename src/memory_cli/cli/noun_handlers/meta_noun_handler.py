@@ -295,6 +295,123 @@ def handle_stores(args: List[str], global_flags: Any) -> Any:
 
 
 # =============================================================================
+# VERB: consolidate — extract entities/facts from unconsolidated neurons
+# =============================================================================
+def handle_consolidate(args: List[str], global_flags: Any) -> Any:
+    """Run entity extraction consolidation on neurons using Haiku.
+
+    Extracts entities, facts, and relationships from unconsolidated neuron
+    content blobs. Creates sub-neurons with provenance metadata and wires
+    edges with confidence < 1.0.
+
+    Subcommands:
+        memory meta consolidate                  — consolidate all unconsolidated neurons
+        memory meta consolidate --neuron-id <id> — consolidate a single neuron
+        memory meta consolidate --dry-run        — show what would be consolidated
+        memory meta consolidate --limit <n>      — limit batch to n neurons
+        memory meta consolidate --force          — re-consolidate already-consolidated neurons
+
+    Args:
+        args: Remaining tokens after "consolidate".
+        global_flags: Parsed global flags.
+
+    Returns:
+        Result with consolidation summary.
+    """
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_config
+
+    try:
+        conn, config = get_connection_and_config(global_flags)
+
+        # --- Parse flags ---
+        neuron_id = None
+        dry_run = False
+        limit = None
+        force = False
+
+        i = 0
+        while i < len(args):
+            if args[i] == "--neuron-id" and i + 1 < len(args):
+                try:
+                    neuron_id = int(args[i + 1])
+                except ValueError:
+                    return Result(status="error", error=f"Invalid neuron ID: {args[i + 1]}")
+                i += 2
+            elif args[i] == "--dry-run":
+                dry_run = True
+                i += 1
+            elif args[i] == "--limit" and i + 1 < len(args):
+                try:
+                    limit = int(args[i + 1])
+                except ValueError:
+                    return Result(status="error", error=f"Invalid limit: {args[i + 1]}")
+                i += 2
+            elif args[i] == "--force":
+                force = True
+                i += 1
+            else:
+                return Result(status="error", error=f"Unknown argument: {args[i]}")
+
+        from memory_cli.ingestion.consolidation_orchestrator import (
+            consolidate_neuron,
+            consolidate_all,
+            find_unconsolidated_neurons,
+        )
+
+        # --- Dry run: just show what would be consolidated ---
+        if dry_run:
+            if neuron_id is not None:
+                from memory_cli.ingestion.consolidation_orchestrator import _is_consolidated
+                is_done = _is_consolidated(conn, neuron_id)
+                return Result(status="ok", data={
+                    "dry_run": True,
+                    "neuron_id": neuron_id,
+                    "already_consolidated": is_done,
+                    "would_process": not is_done or force,
+                })
+            else:
+                ids = find_unconsolidated_neurons(conn, limit=limit)
+                return Result(status="ok", data={
+                    "dry_run": True,
+                    "unconsolidated_count": len(ids),
+                    "neuron_ids": ids,
+                })
+
+        # --- Single neuron consolidation ---
+        if neuron_id is not None:
+            result = consolidate_neuron(conn, neuron_id, force=force)
+            return Result(
+                status="ok",
+                data={
+                    "neurons_processed": result.neurons_processed,
+                    "neurons_skipped": result.neurons_skipped,
+                    "sub_neurons_created": result.sub_neurons_created,
+                    "edges_created": result.edges_created,
+                    "errors": result.errors,
+                },
+                warnings=result.warnings,
+            )
+
+        # --- Batch consolidation ---
+        result = consolidate_all(conn, limit=limit)
+        return Result(
+            status="ok",
+            data={
+                "neurons_processed": result.neurons_processed,
+                "neurons_skipped": result.neurons_skipped,
+                "sub_neurons_created": result.sub_neurons_created,
+                "edges_created": result.edges_created,
+                "errors": result.errors,
+            },
+            warnings=result.warnings,
+        )
+
+    except Exception as e:
+        return Result(status="error", error=str(e))
+
+
+# =============================================================================
 # NOUN REGISTRATION
 # =============================================================================
 _VERB_MAP = {
@@ -303,6 +420,7 @@ _VERB_MAP = {
     "manifesto": handle_manifesto,
     "fingerprint": handle_fingerprint,
     "stores": handle_stores,
+    "consolidate": handle_consolidate,
 }
 
 _VERB_DESCRIPTIONS = {
@@ -311,6 +429,7 @@ _VERB_DESCRIPTIONS = {
     "manifesto": "Show or update the store's memory manifesto (usage guide, not data — rules belong as neurons)",
     "fingerprint": "Show this store's fingerprint, project name, and db_path",
     "stores": "List all known stores from ~/.memory/stores.json",
+    "consolidate": "Extract entities/facts from neurons via Haiku (--neuron-id <id>, --dry-run, --limit <n>, --force)",
 }
 
 _FLAG_DEFS = {
@@ -322,6 +441,12 @@ _FLAG_DEFS = {
     ],
     "fingerprint": [],
     "stores": [],
+    "consolidate": [
+        {"name": "--neuron-id", "type": "int", "default": None, "desc": "Consolidate a single neuron by ID"},
+        {"name": "--dry-run", "type": "bool", "default": False, "desc": "Show what would be consolidated without making changes"},
+        {"name": "--limit", "type": "int", "default": None, "desc": "Max number of neurons to process in batch mode"},
+        {"name": "--force", "type": "bool", "default": False, "desc": "Re-consolidate already-consolidated neurons"},
+    ],
 }
 
 
