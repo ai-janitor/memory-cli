@@ -139,17 +139,22 @@ def edge_splice(
             (source_id, target_id),
         )
 
-        # Insert A->C
-        conn.execute(
-            "INSERT INTO edges (source_id, target_id, reason, weight, created_at) VALUES (?, ?, ?, ?, ?)",
-            (source_id, through_id, resolved_reason_a_c.strip(), resolved_weight_a_c, now),
-        )
+        # Insert A->C (splicing is an authored action)
+        has_prov = _has_provenance_columns(conn)
+        if has_prov:
+            insert_sql = (
+                "INSERT INTO edges (source_id, target_id, reason, weight, created_at, provenance, confidence) "
+                "VALUES (?, ?, ?, ?, ?, 'authored', 1.0)"
+            )
+        else:
+            insert_sql = (
+                "INSERT INTO edges (source_id, target_id, reason, weight, created_at) "
+                "VALUES (?, ?, ?, ?, ?)"
+            )
+        conn.execute(insert_sql, (source_id, through_id, resolved_reason_a_c.strip(), resolved_weight_a_c, now))
 
-        # Insert C->B
-        conn.execute(
-            "INSERT INTO edges (source_id, target_id, reason, weight, created_at) VALUES (?, ?, ?, ?, ?)",
-            (through_id, target_id, resolved_reason_c_b.strip(), resolved_weight_c_b, now),
-        )
+        # Insert C->B (splicing is an authored action)
+        conn.execute(insert_sql, (through_id, target_id, resolved_reason_c_b.strip(), resolved_weight_c_b, now))
 
         edge_a_c = {
             "source_id": source_id,
@@ -157,6 +162,8 @@ def edge_splice(
             "reason": resolved_reason_a_c.strip(),
             "weight": resolved_weight_a_c,
             "created_at": now,
+            "provenance": "authored",
+            "confidence": 1.0,
         }
         edge_c_b = {
             "source_id": through_id,
@@ -164,6 +171,8 @@ def edge_splice(
             "reason": resolved_reason_c_b.strip(),
             "weight": resolved_weight_c_b,
             "created_at": now,
+            "provenance": "authored",
+            "confidence": 1.0,
         }
 
         return {
@@ -181,6 +190,12 @@ def edge_splice(
         ) from exc
 
 
+def _has_provenance_columns(conn: sqlite3.Connection) -> bool:
+    """Check if the edges table has provenance/confidence columns."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(edges)").fetchall()}
+    return "provenance" in cols
+
+
 def _validate_edge_exists(
     conn: sqlite3.Connection, source_id: int, target_id: int
 ) -> Dict[str, Any]:
@@ -192,13 +207,19 @@ def _validate_edge_exists(
         target_id: Target neuron ID.
 
     Returns:
-        Dict with edge data: source_id, target_id, reason, weight, created_at.
+        Dict with edge data including provenance and confidence.
 
     Raises:
         EdgeSpliceError: If edge not found (exit_code=1).
     """
+    has_prov = _has_provenance_columns(conn)
+    if has_prov:
+        prov_clause = ", provenance, confidence"
+    else:
+        prov_clause = ", 'authored' AS provenance, 1.0 AS confidence"
     row = conn.execute(
-        "SELECT source_id, target_id, reason, weight, created_at FROM edges WHERE source_id = ? AND target_id = ?",
+        f"SELECT source_id, target_id, reason, weight, created_at{prov_clause} "
+        f"FROM edges WHERE source_id = ? AND target_id = ?",
         (source_id, target_id),
     ).fetchone()
     if row is None:

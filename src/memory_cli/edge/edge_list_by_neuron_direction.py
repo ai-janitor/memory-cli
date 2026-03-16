@@ -43,6 +43,21 @@ DEFAULT_OFFSET = 0
 SNIPPET_MAX_LENGTH = 100
 VALID_DIRECTIONS = {"outgoing", "incoming", "both"}
 
+# Cache for column existence check per connection id
+_provenance_column_cache: Dict[int, bool] = {}
+
+
+def _has_provenance_columns(conn: sqlite3.Connection) -> bool:
+    """Check if the edges table has provenance/confidence columns (v004 migration).
+
+    Result is cached per connection to avoid repeated PRAGMA queries.
+    """
+    conn_id = id(conn)
+    if conn_id not in _provenance_column_cache:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(edges)").fetchall()}
+        _provenance_column_cache[conn_id] = "provenance" in cols
+    return _provenance_column_cache[conn_id]
+
 
 class EdgeListError(Exception):
     """Raised when edge listing fails (neuron not found or invalid direction).
@@ -187,8 +202,15 @@ def _query_outgoing(
     Returns:
         List of Row objects from the query.
     """
+    has_prov = _has_provenance_columns(conn)
+    prov_cols = (
+        "e.provenance AS provenance, e.confidence AS confidence,"
+        if has_prov
+        else "'authored' AS provenance, 1.0 AS confidence,"
+    )
     return conn.execute(
-        """SELECT e.source_id, e.target_id, e.reason, e.weight, e.created_at,
+        f"""SELECT e.source_id, e.target_id, e.reason, e.weight, e.created_at,
+                  {prov_cols}
                   n.id AS connected_neuron_id, n.content AS connected_content
            FROM edges e
            JOIN neurons n ON n.id = e.target_id
@@ -227,8 +249,15 @@ def _query_incoming(
     Returns:
         List of Row objects from the query.
     """
+    has_prov = _has_provenance_columns(conn)
+    prov_cols = (
+        "e.provenance AS provenance, e.confidence AS confidence,"
+        if has_prov
+        else "'authored' AS provenance, 1.0 AS confidence,"
+    )
     return conn.execute(
-        """SELECT e.source_id, e.target_id, e.reason, e.weight, e.created_at,
+        f"""SELECT e.source_id, e.target_id, e.reason, e.weight, e.created_at,
+                  {prov_cols}
                   n.id AS connected_neuron_id, n.content AS connected_content
            FROM edges e
            JOIN neurons n ON n.id = e.source_id
@@ -283,17 +312,26 @@ def _query_both(
     Returns:
         List of Row objects from the UNION query.
     """
+    has_prov = _has_provenance_columns(conn)
+    prov_cols = (
+        "e.provenance AS provenance, e.confidence AS confidence,"
+        if has_prov
+        else "'authored' AS provenance, 1.0 AS confidence,"
+    )
     return conn.execute(
-        """SELECT source_id, target_id, reason, weight, created_at,
+        f"""SELECT source_id, target_id, reason, weight, created_at,
+                  provenance, confidence,
                   connected_neuron_id, connected_content
            FROM (
                SELECT e.source_id, e.target_id, e.reason, e.weight, e.created_at,
+                      {prov_cols}
                       n.id AS connected_neuron_id, n.content AS connected_content
                FROM edges e
                JOIN neurons n ON n.id = e.target_id
                WHERE e.source_id = ?
                UNION ALL
                SELECT e.source_id, e.target_id, e.reason, e.weight, e.created_at,
+                      {prov_cols}
                       n.id AS connected_neuron_id, n.content AS connected_content
                FROM edges e
                JOIN neurons n ON n.id = e.source_id
@@ -326,6 +364,8 @@ def _build_edge_row(row: sqlite3.Row) -> Dict[str, Any]:
         "reason": row["reason"],
         "weight": row["weight"],
         "created_at": row["created_at"],
+        "provenance": row["provenance"],
+        "confidence": row["confidence"],
         "connected_neuron_id": row["connected_neuron_id"],
         "connected_neuron_snippet": _truncate_content(row["connected_content"]),
     }

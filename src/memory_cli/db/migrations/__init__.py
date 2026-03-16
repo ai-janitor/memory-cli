@@ -32,9 +32,11 @@ MigrationFn = Callable[[sqlite3.Connection], None]
 from .v001_baseline_all_tables_indexes_triggers import apply as apply_v001
 from .v002_add_store_fingerprint import apply as apply_v002
 from .v003_add_manifesto_to_meta import apply as apply_v003
+from .v004_add_edge_provenance import apply as apply_v004
 
 MIGRATION_REGISTRY: dict[int, MigrationFn] = {
     1: apply_v001,
     2: apply_v002,
     3: apply_v003,
+    4: apply_v004,
 }

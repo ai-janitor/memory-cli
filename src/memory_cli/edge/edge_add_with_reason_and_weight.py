@@ -40,6 +40,9 @@ from typing import Any, Dict, Optional
 # -----------------------------------------------------------------------------
 EDGES_TABLE = "edges"
 DEFAULT_WEIGHT = 1.0
+DEFAULT_PROVENANCE = "authored"
+DEFAULT_CONFIDENCE = 1.0
+VALID_PROVENANCES = ("authored", "extracted")
 
 
 class EdgeAddError(Exception):
@@ -61,29 +64,13 @@ def edge_add(
     target_id: int,
     reason: str,
     weight: Optional[float] = None,
+    provenance: Optional[str] = None,
+    confidence: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Create a directed edge from source neuron to target neuron.
 
-    CLI: `memory edge add --source <id> --target <id> --reason <text> [--weight <float>]`
-
-    Validation order (matches spec #7):
-    1. Validate source neuron exists via _validate_neuron_exists(conn, source_id)
-       - Not found -> EdgeAddError(exit_code=1)
-    2. Validate target neuron exists via _validate_neuron_exists(conn, target_id)
-       - Not found -> EdgeAddError(exit_code=1)
-    3. Validate reason non-empty via _validate_reason(reason)
-       - Empty or whitespace-only -> EdgeAddError(exit_code=2)
-    4. Resolve weight: use provided value or DEFAULT_WEIGHT (1.0)
-    5. Validate weight > 0.0 via _validate_weight(weight)
-       - Zero or negative -> EdgeAddError(exit_code=2)
-    6. Check duplicate via _check_duplicate(conn, source_id, target_id)
-       - Exists -> EdgeAddError(exit_code=2, message includes existing reason)
-    7. Insert edge via _insert_edge(conn, source_id, target_id, reason, weight)
-    8. Return created edge as dict
-
-    Note: self-loops (source_id == target_id) are intentionally allowed.
-    Note: circular graphs (A->B and B->A) are intentionally allowed —
-    they are two distinct edges with distinct reasons.
+    CLI: `memory edge add --source <id> --target <id> --reason <text> [--weight <float>]
+          [--provenance authored|extracted] [--confidence <float>]`
 
     Args:
         conn: SQLite connection with edges and neurons tables.
@@ -91,48 +78,36 @@ def edge_add(
         target_id: ID of the target neuron (must exist).
         reason: Human-readable reason for the relationship (required, non-empty).
         weight: Optional edge weight (default 1.0, must be > 0.0).
+        provenance: 'authored' (agent-created) or 'extracted' (model-inferred).
+            Default 'authored'.
+        confidence: Confidence score in (0.0, 1.0]. Default 1.0 for authored,
+            must be < 1.0 for extracted edges.
 
     Returns:
-        Dict with edge record: source_id, target_id, reason, weight, created_at.
+        Dict with edge record including provenance and confidence.
 
     Raises:
         EdgeAddError: On validation failure or duplicate edge.
     """
-    # --- Step 1: Validate source neuron exists ---
-    # _validate_neuron_exists(conn, source_id)
-    # Raises EdgeAddError(exit_code=1) if not found
     _validate_neuron_exists(conn, source_id)
-
-    # --- Step 2: Validate target neuron exists ---
-    # _validate_neuron_exists(conn, target_id)
-    # Raises EdgeAddError(exit_code=1) if not found
     _validate_neuron_exists(conn, target_id)
-
-    # --- Step 3: Validate reason non-empty ---
-    # _validate_reason(reason)
-    # Raises EdgeAddError(exit_code=2) if empty/whitespace
     clean_reason = _validate_reason(reason)
 
-    # --- Step 4: Resolve weight ---
-    # resolved_weight = weight if weight is not None else DEFAULT_WEIGHT
     resolved_weight = weight if weight is not None else DEFAULT_WEIGHT
-
-    # --- Step 5: Validate weight > 0.0 ---
-    # _validate_weight(resolved_weight)
-    # Raises EdgeAddError(exit_code=2) if <= 0.0
     _validate_weight(resolved_weight)
 
-    # --- Step 6: Check duplicate ---
-    # _check_duplicate(conn, source_id, target_id)
-    # Raises EdgeAddError(exit_code=2) with existing reason if duplicate
+    resolved_provenance = provenance if provenance is not None else DEFAULT_PROVENANCE
+    _validate_provenance(resolved_provenance)
+
+    resolved_confidence = confidence if confidence is not None else DEFAULT_CONFIDENCE
+    _validate_confidence(resolved_confidence)
+
     _check_duplicate(conn, source_id, target_id)
 
-    # --- Step 7: Insert edge ---
-    # edge_dict = _insert_edge(conn, source_id, target_id, reason, resolved_weight)
-    edge_dict = _insert_edge(conn, source_id, target_id, clean_reason, resolved_weight)
-
-    # --- Step 8: Return created edge ---
-    # return edge_dict
+    edge_dict = _insert_edge(
+        conn, source_id, target_id, clean_reason, resolved_weight,
+        resolved_provenance, resolved_confidence,
+    )
     return edge_dict
 
 
@@ -197,6 +172,38 @@ def _validate_weight(weight: float) -> None:
         raise EdgeAddError(f"Weight must be greater than 0.0, got {weight}", exit_code=2)
 
 
+def _validate_provenance(provenance: str) -> None:
+    """Validate that provenance is one of the allowed values.
+
+    Args:
+        provenance: The provenance string to validate.
+
+    Raises:
+        EdgeAddError: If provenance is not in VALID_PROVENANCES (exit_code=2).
+    """
+    if provenance not in VALID_PROVENANCES:
+        raise EdgeAddError(
+            f"Provenance must be one of {VALID_PROVENANCES}, got '{provenance}'",
+            exit_code=2,
+        )
+
+
+def _validate_confidence(confidence: float) -> None:
+    """Validate that confidence is in the range (0.0, 1.0].
+
+    Args:
+        confidence: The confidence value to validate.
+
+    Raises:
+        EdgeAddError: If confidence is not in (0.0, 1.0] (exit_code=2).
+    """
+    if confidence <= 0.0 or confidence > 1.0:
+        raise EdgeAddError(
+            f"Confidence must be in (0.0, 1.0], got {confidence}",
+            exit_code=2,
+        )
+
+
 def _check_duplicate(
     conn: sqlite3.Connection, source_id: int, target_id: int
 ) -> None:
@@ -233,14 +240,10 @@ def _insert_edge(
     target_id: int,
     reason: str,
     weight: float,
+    provenance: str = DEFAULT_PROVENANCE,
+    confidence: float = DEFAULT_CONFIDENCE,
 ) -> Dict[str, Any]:
     """Insert the edge row into the edges table.
-
-    Logic:
-    1. Generate created_at = current UTC milliseconds: int(time.time() * 1000)
-    2. INSERT INTO edges (source_id, target_id, reason, weight, created_at)
-       VALUES (?, ?, ?, ?, ?)
-    3. Build and return dict: {source_id, target_id, reason, weight, created_at}
 
     Args:
         conn: SQLite connection.
@@ -248,19 +251,33 @@ def _insert_edge(
         target_id: Target neuron ID.
         reason: Validated, stripped reason string.
         weight: Validated positive weight.
+        provenance: 'authored' or 'extracted'.
+        confidence: Confidence score in (0.0, 1.0].
 
     Returns:
         Dict with the created edge record.
     """
     created_at = int(time.time() * 1000)
-    conn.execute(
-        "INSERT INTO edges (source_id, target_id, reason, weight, created_at) VALUES (?, ?, ?, ?, ?)",
-        (source_id, target_id, reason, weight, created_at),
-    )
+    # Check if provenance columns exist (v004 migration)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(edges)").fetchall()}
+    if "provenance" in cols:
+        conn.execute(
+            "INSERT INTO edges (source_id, target_id, reason, weight, created_at, provenance, confidence) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (source_id, target_id, reason, weight, created_at, provenance, confidence),
+        )
+    else:
+        conn.execute(
+            "INSERT INTO edges (source_id, target_id, reason, weight, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (source_id, target_id, reason, weight, created_at),
+        )
     return {
         "source_id": source_id,
         "target_id": target_id,
         "reason": reason,
         "weight": weight,
         "created_at": created_at,
+        "provenance": provenance,
+        "confidence": confidence,
     }

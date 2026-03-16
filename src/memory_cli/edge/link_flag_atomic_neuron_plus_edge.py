@@ -281,12 +281,21 @@ def _create_neuron_and_edge(
             attr_dict[key] = value
 
         # 6. INSERT edge (source=new neuron, target=existing linked neuron)
+        #    Link-flag edges are always authored with confidence 1.0
         edge_created_at = int(time.time() * 1000)
-        conn.execute(
-            "INSERT INTO edges (source_id, target_id, reason, weight, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (neuron_id, link_target_id, clean_reason, link_weight, edge_created_at),
-        )
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(edges)").fetchall()}
+        if "provenance" in cols:
+            conn.execute(
+                "INSERT INTO edges (source_id, target_id, reason, weight, created_at, provenance, confidence) "
+                "VALUES (?, ?, ?, ?, ?, 'authored', 1.0)",
+                (neuron_id, link_target_id, clean_reason, link_weight, edge_created_at),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO edges (source_id, target_id, reason, weight, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (neuron_id, link_target_id, clean_reason, link_weight, edge_created_at),
+            )
 
         # 7. COMMIT — sqlite3 with isolation_level=None would require explicit commit,
         #    but with default isolation_level conn auto-manages. Use conn.commit() to be safe.
@@ -311,6 +320,8 @@ def _create_neuron_and_edge(
             "reason": clean_reason,
             "weight": link_weight,
             "created_at": edge_created_at,
+            "provenance": "authored",
+            "confidence": 1.0,
         }
 
         return (neuron_dict, edge_dict)
