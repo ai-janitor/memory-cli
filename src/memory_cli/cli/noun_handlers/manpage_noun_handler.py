@@ -40,7 +40,7 @@ Nouns and their verbs:
   attr      add, get, list, delete
   batch     load
   meta      stats, version
-  manpage   overview, people, search, graph-docs, stores, recipes
+  manpage   overview, people, search, graph-docs, stores, recipes, front-door
 
 Global flags (go BEFORE the noun):
   --format <json|text>   Output format (default: json)
@@ -59,6 +59,7 @@ Quick examples:
   memory tag add 42 --tags project,ops
   memory edge add 42 99 --type relates_to
   memory batch load graph.yaml
+  memory gate show                        (find the front door)
   memory --format text neuron list
 
 Output:
@@ -72,7 +73,7 @@ Help at every level:
   memory neuron add --help        Flags for neuron add
 
 For topic-specific guides, run: memory manpage <topic>
-Topics: people, search, graph-docs, stores, recipes"""
+Topics: people, search, graph-docs, stores, recipes, front-door"""
 
 _PEOPLE = """\
 People as Neurons
@@ -335,6 +336,55 @@ Common Patterns and Workflows
      # Later, find all standup entries:
      memory neuron list --tag standup"""
 
+_FRONT_DOOR = """\
+The Memory Mansion — Front Door and Graph Navigation
+
+Your memory graph is a mansion. Neurons are rooms, edges are hallways,
+and the gate neuron is the front door — the most connected neuron in
+your store, the natural entry point for navigating the graph.
+
+Key concepts:
+
+  Front door (gate neuron):
+    The neuron with the most edges. It connects to the main topic
+    clusters in your store. Find it with:
+      memory gate show
+
+  Houses:
+    Neurons directly connected to the gate. Each house is a topic
+    cluster — a group of related memories. gate show lists the top
+    houses with their edge reasons and weights.
+
+  Hallways (edges):
+    Connections between neurons. Build new hallways with edge add.
+    Insert a room between two existing rooms with edge splice:
+      memory edge add 42 99 --type relates_to
+      memory edge splice 42 99 --through 77 --type refines
+
+  Cross-store navigation:
+    Each store has a unique fingerprint (8-char hex). Reference neurons
+    in other projects using fingerprint:id handles:
+      memory neuron get a3f2b7c1:42
+    Run `memory meta fingerprint` to see your store's fingerprint.
+    Run `memory meta stores` to list all known stores.
+
+  Registering in the global directory:
+    Announce your project store to the global memory mansion:
+      memory gate register       (from a local project store)
+      memory gate deregister     (remove the announcement)
+    This creates a representative neuron in ~/.memory/ so cross-project
+    search can discover your project.
+
+Practical workflow:
+  1. memory gate show                     Find your front door
+  2. memory neuron get <gate-id>          Read the gate neuron
+  3. memory edge list <gate-id>           See all houses (topic clusters)
+  4. memory neuron get <house-id>         Explore a house
+  5. memory neuron search "topic"         Search within the mansion
+
+The mansion grows organically. As you add neurons and edges, the gate
+may shift to a new most-connected neuron. That is expected — the front
+door moves to where the action is."""
 
 # =============================================================================
 # TOPIC HANDLERS — each prints its content and returns a Result
@@ -361,6 +411,7 @@ handle_search = _make_topic_handler(_SEARCH)
 handle_graph_docs = _make_topic_handler(_GRAPH_DOCS)
 handle_stores = _make_topic_handler(_STORES)
 handle_recipes = _make_topic_handler(_RECIPES)
+handle_front_door = _make_topic_handler(_FRONT_DOOR)
 
 
 # =============================================================================
@@ -373,6 +424,7 @@ _VERB_MAP = {
     "graph-docs": handle_graph_docs,
     "stores": handle_stores,
     "recipes": handle_recipes,
+    "front-door": handle_front_door,
 }
 
 _VERB_DESCRIPTIONS = {
@@ -382,6 +434,7 @@ _VERB_DESCRIPTIONS = {
     "graph-docs": "YAML graph document format, batch load, inline/stdin",
     "stores": "Memory stores — LOCAL, GLOBAL, foreign, scoped handles",
     "recipes": "Common patterns and workflows",
+    "front-door": "The memory mansion — gate neurons, houses, graph navigation",
 }
 
 _FLAG_DEFS = {
@@ -391,6 +444,7 @@ _FLAG_DEFS = {
     "graph-docs": [],
     "stores": [],
     "recipes": [],
+    "front-door": [],
 }
 
 

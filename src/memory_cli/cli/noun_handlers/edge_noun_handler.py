@@ -317,7 +317,7 @@ _VERB_DESCRIPTIONS = {
     "add": "Create a directed edge between two neurons",
     "list": "List edges (filtered by neuron, direction, type)",
     "remove": "Remove an edge between two neurons",
-    "splice": "Insert a neuron between an existing edge (A->B becomes A->C->B)",
+    "splice": "Insert a neuron between an existing edge (A->B becomes A->C->B) — build hallways in your memory mansion",
     "update": "Update reason/weight on an existing edge",
 }
 

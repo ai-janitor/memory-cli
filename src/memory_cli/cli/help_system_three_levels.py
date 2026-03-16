@@ -84,6 +84,12 @@ def show_top_level_help(registry: Dict[str, Any]) -> str:
         "batch load is the filing cabinet — multiple facts with edges between them.",
         "Edges make search work: spreading activation traverses connections.",
         "",
+        "Graph navigation:",
+        "  Your memory graph is a mansion. The gate neuron is the front door —",
+        "  the most connected neuron, your entry point to navigate the graph.",
+        "  Run `memory gate show` to find your front door.",
+        "  Run `memory manpage front-door` to learn the mansion pattern.",
+        "",
     ]
     special_section = _format_section(
         "Special commands:",
