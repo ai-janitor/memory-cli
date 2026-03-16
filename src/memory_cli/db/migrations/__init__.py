@@ -36,6 +36,7 @@ from .v004_add_access_tracking import apply as apply_v004
 from .v005_add_edge_provenance import apply as apply_v005
 from .v006_add_consolidated_column import apply as apply_v006
 from .v007_add_edge_types_and_canonical_reason import apply as apply_v007
+from .v008_add_search_latency_table import apply as apply_v008
 
 MIGRATION_REGISTRY: dict[int, MigrationFn] = {
     1: apply_v001,
@@ -45,4 +46,5 @@ MIGRATION_REGISTRY: dict[int, MigrationFn] = {
     5: apply_v005,
     6: apply_v006,
     7: apply_v007,
+    8: apply_v008,
 }

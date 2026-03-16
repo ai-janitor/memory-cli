@@ -60,6 +60,7 @@ CONFIG_DEFAULTS: Dict[str, Any] = {
         "fan_out_depth": 1,
         "decay_rate": 0.25,
         "temporal_decay_enabled": True,
+        "latency_threshold_ms": 500.0,
     },
     "haiku": {
         "api_key_env_var": "ANTHROPIC_API_KEY",
@@ -127,6 +128,10 @@ VALIDATION_RULES: Dict[str, Dict[str, Any]] = {
     "search.temporal_decay_enabled": {
         "type": bool,
     },
+    "search.latency_threshold_ms": {
+        "type": float,
+        "min_exclusive": 0.0,
+    },
     "haiku.api_key_env_var": {
         "type": str,
         "non_empty": True,
@@ -166,6 +171,7 @@ class SearchConfig:
     fan_out_depth: int
     decay_rate: float
     temporal_decay_enabled: bool
+    latency_threshold_ms: float
 
 
 @dataclass
@@ -390,6 +396,7 @@ def dict_to_config_schema(config: Dict[str, Any]) -> ConfigSchema:
         fan_out_depth=srch["fan_out_depth"],
         decay_rate=float(srch["decay_rate"]),
         temporal_decay_enabled=srch["temporal_decay_enabled"],
+        latency_threshold_ms=float(srch.get("latency_threshold_ms", 500.0)),
     )
 
     haiku_sec = config["haiku"]

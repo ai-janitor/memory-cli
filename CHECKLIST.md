@@ -1,24 +1,11 @@
-# Task 44: Salience Scoring Pass — Access Metrics
+# Task 52: Search Response Time Instrumentation & Reporting
 
 ## Checklist
 
-- [ ] Create `src/memory_cli/search/salience_scoring_access_metrics.py`
-  - Batch-fetch `access_count` and `last_accessed_at` from neurons table
-  - Compute frequency boost: `log2(1 + access_count) * freq_scale`
-  - Compute recency-of-access boost: exponential decay on `last_accessed_at`
-  - Combined salience_weight = `1.0 + frequency_boost + recency_boost`
-  - Zero-access neurons get salience_weight = 1.0 (neutral, no penalty)
-  - Attach `salience_weight` to each candidate dict
-
-- [ ] Modify `src/memory_cli/search/final_score_combine_and_rank.py`
-  - Multiply final_score by `salience_weight` (default 1.0 if missing)
-  - Apply to all match types: direct_match, fan_out, tag_affinity
-
-- [ ] Modify `src/memory_cli/search/light_search_pipeline_orchestrator.py`
-  - Import salience scoring module
-  - Add salience pass between temporal decay (stage 6) and tag filtering (stage 7)
-  - Add `salience_boosted` field to PipelineState
-
-- [ ] Run `uv run pytest` — all tests pass
+- [ ] **v007 migration** — `search_latency` table (total_ms, retrieval_ms, scoring_ms, output_ms, result_count, recorded_at)
+- [ ] **Timing instrumentation** — `light_search_pipeline_orchestrator.py` wraps retrieval/scoring/output stages with `time.perf_counter()`, records to `search_latency` table
+- [ ] **Config** — `search.latency_threshold_ms` default (500ms p95 threshold)
+- [ ] **`memory meta health`** — new verb: queries `search_latency`, computes p50/p95/p99, warns if p95 > threshold, suggests `memory neuron prune`
+- [ ] **Tests pass** — `uv run pytest`
 - [ ] Commit
-- [ ] `minion task complete-phase --task-id 44 --agent fighter`
+- [ ] `minion task complete-phase --task-id 52 --agent redwiz`

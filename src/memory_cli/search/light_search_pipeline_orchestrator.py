@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -209,77 +210,34 @@ def light_search(conn: sqlite3.Connection, options: SearchOptions) -> SearchResu
         SearchResultEnvelope with results, pagination, and metadata.
     """
     # --- Initialize pipeline state ---
-    # state = PipelineState()
     state = PipelineState()
+    t_start = time.perf_counter()
 
     try:
-        # --- Stage 1: Query Embedding ---
-        # Try to embed the query with "search_query:" prefix.
-        # On failure: set state.vector_unavailable = True, log warning.
+        # --- Stages 1-3: Retrieval (embedding, BM25, vector) ---
+        t0 = time.perf_counter()
         _run_retrieval_stage(conn, state, options)
+        retrieval_ms = (time.perf_counter() - t0) * 1000
 
-        # --- Stage 2: BM25 Retrieval ---
-        # state.bm25_candidates = bm25_retrieval.retrieve_bm25(conn, options.query)
-
-        # --- Stage 3: Vector Retrieval ---
-        # if not state.vector_unavailable:
-        #     state.vector_candidates = vector_retrieval.retrieve_vectors(
-        #         conn, state.query_embedding
-        #     )
-        # else:
-        #     state.vector_candidates = []
-
-        # --- Stage 4: RRF Fusion ---
-        # state.rrf_candidates = rrf_fusion.fuse_rrf(
-        #     state.bm25_candidates, state.vector_candidates
-        # )
-
-        # --- Stage 5: Spreading Activation ---
-        # state.activated_candidates = spreading_activation.spread(
-        #     conn, state.rrf_candidates, fan_out_depth=options.fan_out_depth
-        # )
-
-        # --- Stage 6: Temporal Decay ---
-        # state.temporally_weighted = temporal_decay.apply_temporal_decay(
-        #     conn, state.activated_candidates
-        # )
-
-        # --- Stage 7: Tag Filtering ---
-        # if options.tags:
-        #     state.tag_filtered = tag_filter.filter_by_tags(
-        #         conn, state.temporally_weighted, options.tags, options.tag_mode
-        #     )
-        # else:
-        #     state.tag_filtered = state.temporally_weighted
-
-        # --- Stage 8: Final Score ---
-        # state.final_ranked = final_score.compute_final_scores(state.tag_filtered)
+        # --- Stages 4-8: Scoring (RRF, activation, temporal, tag filter, final) ---
+        t0 = time.perf_counter()
         _run_scoring_stage(conn, state, options)
+        scoring_ms = (time.perf_counter() - t0) * 1000
 
-        # --- Stage 9: Pagination ---
-        # total = len(state.final_ranked)
-        # state.paginated = state.final_ranked[options.offset:options.offset + options.limit]
+        # --- Stages 9-10: Output (pagination, hydration, envelope) ---
+        t0 = time.perf_counter()
+        envelope = _run_output_stage(conn, state, options)
+        output_ms = (time.perf_counter() - t0) * 1000
 
-        # --- Stage 10: Hydration & Output ---
-        # if options.explain:
-        #     explain_breakdown.build_explain_breakdowns(
-        #         state.paginated, vector_unavailable=state.vector_unavailable
-        #     )
-        # state.results = hydration.hydrate_results(
-        #     conn, state.paginated, explain=options.explain
-        # )
+        total_ms = (time.perf_counter() - t_start) * 1000
 
-        # --- Build envelope ---
-        # envelope = SearchResultEnvelope(
-        #     results=state.results,
-        #     total_before_pagination=total,
-        #     limit=options.limit,
-        #     offset=options.offset,
-        #     vector_unavailable=state.vector_unavailable,
-        #     exit_code=0 if state.results else 1,
-        # )
-        # return envelope
-        return _run_output_stage(conn, state, options)
+        # --- Record latency ---
+        _record_latency(
+            conn, total_ms, retrieval_ms, scoring_ms, output_ms,
+            len(envelope.results),
+        )
+
+        return envelope
 
     except Exception:
         # Database or pipeline error → exit code 2
@@ -450,3 +408,29 @@ def _run_output_stage(
         vector_unavailable=state.vector_unavailable,
         exit_code=0 if state.results else 1,
     )
+
+
+def _record_latency(
+    conn: sqlite3.Connection,
+    total_ms: float,
+    retrieval_ms: float,
+    scoring_ms: float,
+    output_ms: float,
+    result_count: int,
+) -> None:
+    """Persist a search latency record to the search_latency table.
+
+    Best-effort: silently ignores errors (table may not exist on older schemas).
+    """
+    try:
+        recorded_at = int(time.time() * 1000)
+        conn.execute(
+            "INSERT INTO search_latency "
+            "(total_ms, retrieval_ms, scoring_ms, output_ms, result_count, recorded_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (total_ms, retrieval_ms, scoring_ms, output_ms, result_count, recorded_at),
+        )
+        conn.commit()
+    except Exception:
+        # Table may not exist on older schema versions — don't break search
+        pass
