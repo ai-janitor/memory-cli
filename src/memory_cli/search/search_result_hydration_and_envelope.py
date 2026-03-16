@@ -105,6 +105,11 @@ def hydrate_results(
     for neuron_id, tag_name in tag_rows:
         tags_map.setdefault(neuron_id, []).append(tag_name)
 
+    # --- Batch-fetch edge topology summaries ---
+    from memory_cli.edge.edge_list_by_neuron_direction import edge_type_summary
+
+    edge_summaries = edge_type_summary(conn, neuron_ids)
+
     # --- Bump access tracking for all hydrated neurons ---
     now_ms = int(time.time() * 1000)
     hit_ids = [nid for nid in neuron_ids if nid in neuron_map]
@@ -124,7 +129,8 @@ def hydrate_results(
         if neuron_row is None:
             continue  # Neuron deleted between search and hydration
         neuron_tags = sorted(tags_map.get(nid, []))
-        result = _build_result_record(candidate, neuron_row, neuron_tags)
+        edge_summary = edge_summaries.get(nid, {"top_types": [], "total": 0})
+        result = _build_result_record(candidate, neuron_row, neuron_tags, edge_summary)
         results.append(result)
 
     return results
@@ -180,6 +186,7 @@ def _build_result_record(
     candidate: Dict[str, Any],
     neuron_row: tuple,
     neuron_tags: List[str],
+    edge_summary: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     """Combine neuron fields with search metadata into a result record.
 
@@ -251,6 +258,10 @@ def _build_result_record(
     # Only include breakdown if --explain was used (it's pre-attached)
     if "score_breakdown" in candidate:
         result["score_breakdown"] = candidate["score_breakdown"]
+
+    # Attach edge topology summary
+    if edge_summary is not None:
+        result["edges"] = edge_summary
 
     return result
 

@@ -463,3 +463,71 @@ class TestEdgeListEmpty:
         results = edge_list(migrated_conn, src, direction="incoming")
 
         assert results == []
+
+
+# -----------------------------------------------------------------------------
+# Edge type summary tests
+# -----------------------------------------------------------------------------
+
+class TestEdgeTypeSummary:
+    """Test edge_type_summary() batch topology query."""
+
+    def test_empty_neuron_ids_returns_empty(self, migrated_conn):
+        """Empty input returns empty dict."""
+        from memory_cli.edge.edge_list_by_neuron_direction import edge_type_summary
+
+        result = edge_type_summary(migrated_conn, [])
+        assert result == {}
+
+    def test_neuron_with_no_edges(self, graph_conn):
+        """Isolated neuron returns top_types=[] and total=0."""
+        from memory_cli.edge.edge_list_by_neuron_direction import edge_type_summary
+
+        conn, n1, n2, n3, n4 = graph_conn
+        result = edge_type_summary(conn, [n4])
+        assert result[n4]["top_types"] == []
+        assert result[n4]["total"] == 0
+
+    def test_summary_counts_both_directions(self, graph_conn):
+        """Neuron 1 has outgoing (1->2, 1->3) and incoming (2->1) = 3 total."""
+        from memory_cli.edge.edge_list_by_neuron_direction import edge_type_summary
+
+        conn, n1, n2, n3, n4 = graph_conn
+        result = edge_type_summary(conn, [n1])
+        assert result[n1]["total"] == 3
+
+    def test_summary_type_counts(self, graph_conn):
+        """Verify per-type counts are correct."""
+        from memory_cli.edge.edge_list_by_neuron_direction import edge_type_summary
+
+        conn, n1, n2, n3, n4 = graph_conn
+        result = edge_type_summary(conn, [n1])
+        types_map = {t["type"]: t["count"] for t in result[n1]["top_types"]}
+        assert "alpha-to-beta" in types_map
+        assert "alpha-to-gamma" in types_map
+        assert "beta-to-alpha" in types_map
+
+    def test_batch_multiple_neurons(self, graph_conn):
+        """Batch query returns summaries for all requested neurons."""
+        from memory_cli.edge.edge_list_by_neuron_direction import edge_type_summary
+
+        conn, n1, n2, n3, n4 = graph_conn
+        result = edge_type_summary(conn, [n1, n2, n4])
+        assert n1 in result
+        assert n2 in result
+        assert n4 in result
+        assert result[n4]["total"] == 0
+        assert result[n2]["total"] > 0
+
+    def test_top_n_limits_types(self, migrated_conn):
+        """top_n parameter limits the number of type entries returned."""
+        from memory_cli.edge.edge_list_by_neuron_direction import edge_type_summary
+
+        src = _create_test_neuron(migrated_conn, "source")
+        targets = [_create_test_neuron(migrated_conn, f"target-{i}") for i in range(6)]
+        for i, tgt in enumerate(targets):
+            _create_test_edge(migrated_conn, src, tgt, f"type-{i}")
+
+        result = edge_type_summary(migrated_conn, [src], top_n=3)
+        assert len(result[src]["top_types"]) == 3
+        assert result[src]["total"] == 6
