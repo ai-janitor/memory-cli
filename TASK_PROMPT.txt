@@ -1,26 +1,23 @@
-You are worker blackbelt, a coder in the memory-cli project. Read CLAUDE.md first.
+You are worker redwiz, a coder in the memory-cli project. Read CLAUDE.md first.
 
-Task 45: Entity extraction consolidation pass with Haiku.
+Task 52: Search response time instrumentation and reporting.
 
-Implement core extraction logic for memory meta consolidate. Use Haiku to extract entities and relationships from unconsolidated neuron content blobs. Create sub-neurons for extracted entities and wire edges with provenance (extraction_method, extracted_by, confidence less than 1.0). Parent neuron gets consolidated timestamp set.
+Add response time instrumentation to the search pipeline. Track and report p50/p95/p99 search latencies. When response time degrades past a threshold, suggest pruning.
 
 Files to create/modify:
-- src/memory_cli/ingestion/ — new extraction module using Haiku
-- src/memory_cli/neuron/ — sub-neuron creation with parent linkage
-- src/memory_cli/edge/ — extracted edges with confidence and provenance
+- src/memory_cli/search/light_search_pipeline_orchestrator.py — timing instrumentation
+- src/memory_cli/cli/ — memory meta health or memory search stats subcommand
 
 Acceptance criteria:
-- Haiku extracts entities and relationships from neuron content
-- Sub-neurons created with extracted_by provenance metadata
-- Extracted edges carry confidence less than 1.0
-- Authored edges (batch load) retain confidence 1.0
-- Parent neuron consolidated timestamp set after extraction
-- Re-running on already-consolidated neurons is idempotent
+- Search operations record response time
+- memory meta health (or similar) reports search latency statistics
+- Warning when p95 exceeds configurable threshold
+- Suggests memory neuron prune when latency degrades
 
 Protocol:
 1. Write CHECKLIST.md first
-2. Read existing code to understand patterns
+2. Read existing search pipeline and meta noun handler code
 3. Implement the feature
 4. Run uv run pytest when done
 5. Commit your work
-6. Then run: minion task complete-phase --task-id 45 --agent blackbelt
+6. Then run: minion task complete-phase --task-id 52 --agent redwiz

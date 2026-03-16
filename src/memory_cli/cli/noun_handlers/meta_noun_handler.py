@@ -357,6 +357,123 @@ def handle_consolidate(args: List[str], global_flags: Any) -> Any:
 
 
 # =============================================================================
+# VERB: health — search latency statistics and degradation warnings
+# =============================================================================
+def handle_health(args: List[str], global_flags: Any) -> Any:
+    """Report search latency statistics (p50/p95/p99) and suggest pruning.
+
+    Reads the last N search latency records (default 100, configurable via
+    --window flag) and computes percentile statistics. If p95 exceeds the
+    configured threshold (search.latency_threshold_ms), emits a warning
+    and suggests running `memory neuron prune`.
+
+    Args:
+        args: [--window N] optional window size for latency records.
+        global_flags: Parsed global flags.
+
+    Returns:
+        Result with latency stats dict and optional warning.
+    """
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_config
+
+    try:
+        conn, config = get_connection_and_config(global_flags)
+
+        # Parse --window flag
+        window = 100
+        rest = list(args)
+        if "--window" in rest:
+            idx = rest.index("--window")
+            if idx + 1 < len(rest):
+                window = int(rest[idx + 1])
+
+        # Check if search_latency table exists
+        table_check = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='search_latency'"
+        ).fetchone()
+        if not table_check:
+            return Result(
+                status="ok",
+                data={
+                    "message": "No search latency data available. Run some searches first.",
+                    "sample_count": 0,
+                },
+            )
+
+        # Fetch recent latency records
+        rows = conn.execute(
+            "SELECT total_ms, retrieval_ms, scoring_ms, output_ms, result_count "
+            "FROM search_latency ORDER BY recorded_at DESC LIMIT ?",
+            (window,),
+        ).fetchall()
+
+        if not rows:
+            return Result(
+                status="ok",
+                data={
+                    "message": "No search latency data recorded yet.",
+                    "sample_count": 0,
+                },
+            )
+
+        # Compute percentiles
+        totals = sorted(r[0] for r in rows)
+        retrievals = sorted(r[1] for r in rows)
+        scorings = sorted(r[2] for r in rows)
+        outputs = sorted(r[3] for r in rows)
+
+        def percentile(sorted_vals: list, pct: float) -> float:
+            idx = int(len(sorted_vals) * pct / 100)
+            idx = min(idx, len(sorted_vals) - 1)
+            return round(sorted_vals[idx], 2)
+
+        threshold_ms = config.search.latency_threshold_ms
+        p50 = percentile(totals, 50)
+        p95 = percentile(totals, 95)
+        p99 = percentile(totals, 99)
+
+        stats = {
+            "sample_count": len(rows),
+            "total_ms": {"p50": p50, "p95": p95, "p99": p99},
+            "retrieval_ms": {
+                "p50": percentile(retrievals, 50),
+                "p95": percentile(retrievals, 95),
+                "p99": percentile(retrievals, 99),
+            },
+            "scoring_ms": {
+                "p50": percentile(scorings, 50),
+                "p95": percentile(scorings, 95),
+                "p99": percentile(scorings, 99),
+            },
+            "output_ms": {
+                "p50": percentile(outputs, 50),
+                "p95": percentile(outputs, 95),
+                "p99": percentile(outputs, 99),
+            },
+            "threshold_ms": threshold_ms,
+        }
+
+        # Check for degradation
+        warning = None
+        if p95 > threshold_ms:
+            warning = (
+                f"WARNING: p95 search latency ({p95:.1f}ms) exceeds threshold "
+                f"({threshold_ms:.1f}ms). Consider running `memory neuron prune` "
+                f"to archive unused neurons and improve search performance."
+            )
+            stats["warning"] = warning
+            stats["degraded"] = True
+        else:
+            stats["degraded"] = False
+
+        return Result(status="ok", data=stats)
+
+    except Exception as e:
+        return Result(status="error", error=str(e))
+
+
+# =============================================================================
 # NOUN REGISTRATION
 # =============================================================================
 _VERB_MAP = {
@@ -366,6 +483,7 @@ _VERB_MAP = {
     "fingerprint": handle_fingerprint,
     "stores": handle_stores,
     "consolidate": handle_consolidate,
+    "health": handle_health,
 }
 
 _VERB_DESCRIPTIONS = {
@@ -375,6 +493,7 @@ _VERB_DESCRIPTIONS = {
     "fingerprint": "Show this store's fingerprint, project name, and db_path",
     "stores": "List all known stores from ~/.memory/stores.json",
     "consolidate": "Mark unconsolidated neurons as consolidated (lifecycle trigger)",
+    "health": "Search latency stats (p50/p95/p99) with degradation warnings",
 }
 
 _FLAG_DEFS = {
@@ -387,6 +506,9 @@ _FLAG_DEFS = {
     "fingerprint": [],
     "stores": [],
     "consolidate": [],
+    "health": [
+        {"name": "--window", "type": "int", "default": 100, "desc": "Number of recent searches to analyze (default 100)"},
+    ],
 }
 
 
