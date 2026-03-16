@@ -34,6 +34,7 @@ from .neuron_get_by_id import neuron_get
 from .neuron_list_filtered_paginated import neuron_list
 from .neuron_update_content_tags_attrs import neuron_update, NeuronUpdateError
 from .neuron_archive_and_restore import neuron_archive, neuron_restore, NeuronLifecycleError
+from .neuron_prune_by_lru_age import neuron_prune
 from .auto_tag_capture_timestamp_and_project import capture_auto_tags
 from .project_detection_git_or_cwd import detect_project
 
@@ -47,6 +48,7 @@ __all__ = [
     "neuron_archive",
     "neuron_restore",
     "NeuronLifecycleError",
+    "neuron_prune",
     "capture_auto_tags",
     "detect_project",
 ]

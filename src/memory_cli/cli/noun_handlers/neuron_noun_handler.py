@@ -398,6 +398,36 @@ def handle_search(args: List[str], global_flags: Any) -> Any:
 
 
 # =============================================================================
+# VERB: prune — LRU-based automatic archival
+# =============================================================================
+def handle_prune(args: List[str], global_flags: Any) -> Any:
+    """Archive neurons not accessed within a configurable time window.
+
+    Args:
+        args: [--days N, --dry-run]
+        global_flags: Parsed global flags.
+
+    Returns:
+        Result with prune report: count, candidates, freed weight.
+    """
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
+    from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
+        extract_flag, extract_bool_flag,
+    )
+    try:
+        rest = list(args)
+        days, rest = extract_flag(rest, "--days", type_fn=int, default=30)
+        dry_run, rest = extract_bool_flag(rest, "--dry-run")
+        conn, scope = get_layered_connections(global_flags)[0]
+        from memory_cli.neuron import neuron_prune
+        report = neuron_prune(conn, days=days, dry_run=dry_run)
+        return Result(status="ok", data=report)
+    except Exception as e:
+        return Result(status="error", error=str(e))
+
+
+# =============================================================================
 # NOUN REGISTRATION — executed at import time
 # =============================================================================
 # Verb map: verb name -> handler function
@@ -409,6 +439,7 @@ _VERB_MAP = {
     "archive": handle_archive,
     "restore": handle_restore,
     "search": handle_search,
+    "prune": handle_prune,
 }
 
 # Verb descriptions for help system
@@ -420,6 +451,7 @@ _VERB_DESCRIPTIONS = {
     "archive": "Soft-delete (archive) a neuron",
     "restore": "Restore an archived neuron",
     "search": "Search neurons by similarity or keyword",
+    "prune": "Archive stale neurons by LRU access metrics",
 }
 
 # Flag definitions for help system (verb -> list of flag specs)
@@ -447,6 +479,10 @@ _FLAG_DEFS = {
     ],
     "archive": [],
     "restore": [],
+    "prune": [
+        {"name": "--days", "type": "int", "default": 30, "desc": "Days since last access to consider stale"},
+        {"name": "--dry-run", "type": "bool", "default": False, "desc": "Show candidates without archiving"},
+    ],
     "search": [
         {"name": "--limit", "type": "int", "default": 10, "desc": "Max results"},
         {"name": "--threshold", "type": "float", "default": 0.0, "desc": "Min similarity"},

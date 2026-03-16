@@ -1,11 +1,25 @@
-# Task 42 — Access Tracking Checklist
+# Task 51 — LRU-based automatic archival command (`memory neuron prune`)
 
-- [x] v004 migration: add `last_accessed_at` (INTEGER, nullable) and `access_count` (INTEGER DEFAULT 0) to neurons
-- [x] Register v004 in migration registry (`__init__.py`)
-- [x] Bump `EXPECTED_SCHEMA_VERSION` to 4 in `schema_version_reader.py`
-- [x] `neuron_get_by_id.py`: bump `access_count` and set `last_accessed_at` on read
-- [x] `search_result_hydration_and_envelope.py`: bump access tracking on search hits
-- [x] Tests: migration adds columns, get increments counters, search hits update tracking
-- [x] `uv run pytest` passes (1586 passed)
-- [ ] Commit
-- [ ] `minion task complete-phase --task-id 42 --agent fighter`
+## Checklist
+
+- [ ] **v004 migration**: Add `last_accessed_at INTEGER` and `access_count INTEGER DEFAULT 0` columns to `neurons` table
+- [ ] **Prune logic module**: `src/memory_cli/neuron/neuron_prune_by_lru_age.py`
+  - Query active neurons where `last_accessed_at` is NULL or older than threshold
+  - Prioritize `access_count=0` neurons first, then by `last_accessed_at` ASC
+  - Dry-run mode: return candidates without archiving
+  - Archive via existing `neuron_archive()` — neurons remain restorable
+  - Return report: count archived, total edge weight freed
+- [ ] **CLI verb**: `handle_prune()` in `neuron_noun_handler.py`
+  - Flags: `--days N` (default 30), `--dry-run`
+  - Register verb in `_VERB_MAP`, `_VERB_DESCRIPTIONS`, `_FLAG_DEFS`
+- [ ] **Package export**: Add `neuron_prune` to `neuron/__init__.py`
+- [ ] **Tests**: `tests/neuron/test_neuron_prune_lru.py`
+  - Prune archives neurons not accessed in N days
+  - `access_count=0` + old neurons pruned first
+  - Dry-run mode returns candidates without archiving
+  - Pruned neurons are restorable via `neuron_restore()`
+  - Report includes count and freed edge weight
+  - Recently accessed neurons are NOT pruned
+- [ ] **All tests pass**: `uv run pytest`
+- [ ] **Commit**
+- [ ] **Complete task phase**: `minion task complete-phase --task-id 51 --agent whitemage`
