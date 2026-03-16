@@ -373,3 +373,83 @@ class TestHydrationEdgeCases:
         result_ids = [r["id"] for r in results]
         candidate_ids = [c["neuron_id"] for c in candidates]
         assert result_ids == candidate_ids
+
+
+# -----------------------------------------------------------------------------
+# Edge topology summary tests
+# -----------------------------------------------------------------------------
+
+class TestEdgeTopologySummary:
+    """Test edges topology summary attached to search results."""
+
+    def test_edges_key_present_in_result(self, hydration_db):
+        """Verify each hydrated result has an 'edges' dict."""
+        conn, nids = hydration_db
+        candidates = [_make_candidate(nids[0], final_score=0.9)]
+        results = hydrate_results(conn, candidates)
+        assert "edges" in results[0]
+        assert isinstance(results[0]["edges"], dict)
+
+    def test_edges_has_top_types_and_total(self, hydration_db):
+        """Verify edges dict has top_types list and total int."""
+        conn, nids = hydration_db
+        candidates = [_make_candidate(nids[0], final_score=0.9)]
+        results = hydrate_results(conn, candidates)
+        edges = results[0]["edges"]
+        assert "top_types" in edges
+        assert "total" in edges
+        assert isinstance(edges["top_types"], list)
+        assert isinstance(edges["total"], int)
+
+    def test_neuron_with_no_edges_has_empty_summary(self, hydration_db):
+        """Verify neuron with no edges gets top_types=[] and total=0."""
+        conn, nids = hydration_db
+        # nids[0..2] have no edges in hydration_db fixture
+        candidates = [_make_candidate(nids[0], final_score=0.9)]
+        results = hydrate_results(conn, candidates)
+        assert results[0]["edges"]["top_types"] == []
+        assert results[0]["edges"]["total"] == 0
+
+    def test_edges_summary_counts_correct(self, hydration_db):
+        """Verify edge type counts are correct when edges exist."""
+        conn, nids = hydration_db
+        now_ms = int(time.time() * 1000)
+        # Add edges: nids[0] -> nids[1] (related_to), nids[0] -> nids[2] (related_to),
+        #            nids[1] -> nids[0] (depends_on)
+        conn.execute(
+            "INSERT INTO edges (source_id, target_id, reason, weight, created_at) "
+            "VALUES (?, ?, ?, ?, ?)", (nids[0], nids[1], "related_to", 1.0, now_ms))
+        conn.execute(
+            "INSERT INTO edges (source_id, target_id, reason, weight, created_at) "
+            "VALUES (?, ?, ?, ?, ?)", (nids[0], nids[2], "related_to", 1.0, now_ms))
+        conn.execute(
+            "INSERT INTO edges (source_id, target_id, reason, weight, created_at) "
+            "VALUES (?, ?, ?, ?, ?)", (nids[1], nids[0], "depends_on", 1.0, now_ms))
+
+        candidates = [_make_candidate(nids[0], final_score=0.9)]
+        results = hydrate_results(conn, candidates)
+        edges = results[0]["edges"]
+
+        assert edges["total"] == 3
+        types_map = {t["type"]: t["count"] for t in edges["top_types"]}
+        assert types_map["related_to"] == 2
+        assert types_map["depends_on"] == 1
+
+    def test_top_types_ordered_by_count_desc(self, hydration_db):
+        """Verify top_types are ordered by count descending."""
+        conn, nids = hydration_db
+        now_ms = int(time.time() * 1000)
+        # 3 related_to, 1 depends_on
+        for target in [nids[1], nids[2], nids[1]]:
+            conn.execute(
+                "INSERT INTO edges (source_id, target_id, reason, weight, created_at) "
+                "VALUES (?, ?, ?, ?, ?)", (nids[0], target, "related_to", 1.0, now_ms))
+        conn.execute(
+            "INSERT INTO edges (source_id, target_id, reason, weight, created_at) "
+            "VALUES (?, ?, ?, ?, ?)", (nids[1], nids[0], "depends_on", 1.0, now_ms))
+
+        candidates = [_make_candidate(nids[0], final_score=0.9)]
+        results = hydrate_results(conn, candidates)
+        top_types = results[0]["edges"]["top_types"]
+        assert top_types[0]["type"] == "related_to"
+        assert top_types[0]["count"] >= top_types[1]["count"]

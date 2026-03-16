@@ -412,6 +412,72 @@ def _build_edge_row(row: sqlite3.Row) -> Dict[str, Any]:
     return result
 
 
+def edge_type_summary(
+    conn: sqlite3.Connection,
+    neuron_ids: List[int],
+    top_n: int = 5,
+) -> Dict[int, Dict[str, Any]]:
+    """Batch-fetch edge type topology summary for multiple neurons.
+
+    For each neuron, returns the top edge types by count and total edge count.
+    Uses COALESCE(canonical_reason, reason) as the display type.
+
+    Args:
+        conn: SQLite connection with edges table.
+        neuron_ids: List of neuron IDs to summarize.
+        top_n: Max number of top types to return per neuron.
+
+    Returns:
+        Dict mapping neuron_id -> {"top_types": [{"type": str, "count": int}, ...],
+                                    "total": int}
+    """
+    if not neuron_ids:
+        return {}
+
+    has_canonical = _has_canonical_reason_column(conn)
+    type_expr = (
+        "COALESCE(e.canonical_reason, e.reason)"
+        if has_canonical
+        else "e.reason"
+    )
+
+    placeholders = ",".join("?" * len(neuron_ids))
+
+    # Query: for each neuron, get edge type counts (both directions)
+    sql = f"""
+        SELECT neuron_id, edge_type, SUM(cnt) AS total_cnt
+        FROM (
+            SELECT e.source_id AS neuron_id, {type_expr} AS edge_type, COUNT(*) AS cnt
+            FROM edges e
+            WHERE e.source_id IN ({placeholders})
+            GROUP BY e.source_id, edge_type
+            UNION ALL
+            SELECT e.target_id AS neuron_id, {type_expr} AS edge_type, COUNT(*) AS cnt
+            FROM edges e
+            WHERE e.target_id IN ({placeholders})
+            GROUP BY e.target_id, edge_type
+        )
+        GROUP BY neuron_id, edge_type
+        ORDER BY neuron_id, total_cnt DESC
+    """
+    rows = conn.execute(sql, neuron_ids + neuron_ids).fetchall()
+
+    # Build per-neuron summaries
+    summaries: Dict[int, Dict[str, Any]] = {}
+    for nid in neuron_ids:
+        summaries[nid] = {"top_types": [], "total": 0}
+
+    for row in rows:
+        nid, edge_type, count = row[0], row[1], row[2]
+        if nid not in summaries:
+            continue
+        summaries[nid]["total"] += count
+        if len(summaries[nid]["top_types"]) < top_n:
+            summaries[nid]["top_types"].append({"type": edge_type, "count": count})
+
+    return summaries
+
+
 def _truncate_content(content: str, max_length: int = SNIPPET_MAX_LENGTH) -> str:
     """Truncate content to approximately max_length characters with ellipsis.
 
