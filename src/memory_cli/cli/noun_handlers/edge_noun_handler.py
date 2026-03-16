@@ -313,6 +313,49 @@ def handle_update(args: List[str], global_flags: Any) -> Any:
 
 
 # =============================================================================
+# VERB: normalize — run janitor pass to normalize edge reasons
+# =============================================================================
+def handle_normalize(args: List[str], global_flags: Any) -> Any:
+    """Run the janitor pass to normalize free-text edge reasons to canonical types.
+
+    Args:
+        args: [--dry-run]
+        global_flags: Parsed global flags.
+
+    Returns:
+        Result with normalization summary.
+
+    Pseudo-logic:
+    1. Parse optional flag: --dry-run (compute but don't write)
+    2. Open DB connection
+    3. Delegate to edge_normalize() janitor pass
+    4. Return Result with normalization stats
+    """
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
+    from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import extract_flag
+    try:
+        rest = list(args)
+        dry_run = "--dry-run" in rest
+        if dry_run:
+            rest.remove("--dry-run")
+        connections = get_layered_connections(global_flags)
+        all_results = []
+        for conn, scope in connections:
+            from memory_cli.edge import edge_normalize
+            result = edge_normalize(conn, dry_run=dry_run)
+            if not dry_run:
+                conn.commit()
+            result["scope"] = scope
+            all_results.append(result)
+        # Flatten if single store
+        data = all_results[0] if len(all_results) == 1 else all_results
+        return Result(status="ok", data=data)
+    except Exception as e:
+        return Result(status="error", error=str(e))
+
+
+# =============================================================================
 # NOUN REGISTRATION
 # =============================================================================
 _VERB_MAP = {
@@ -321,6 +364,7 @@ _VERB_MAP = {
     "remove": handle_remove,
     "splice": handle_splice,
     "update": handle_update,
+    "normalize": handle_normalize,
 }
 
 _VERB_DESCRIPTIONS = {
@@ -329,6 +373,7 @@ _VERB_DESCRIPTIONS = {
     "remove": "Remove an edge between two neurons",
     "splice": "Insert a neuron between an existing edge (A->B becomes A->C->B) — build hallways in your memory mansion",
     "update": "Update reason/weight on an existing edge",
+    "normalize": "Run janitor pass to normalize edge reasons to canonical types",
 }
 
 _FLAG_DEFS = {
@@ -360,6 +405,9 @@ _FLAG_DEFS = {
         {"name": "--weight", "type": "float", "default": None, "desc": "New edge weight"},
         {"name": "--provenance", "type": "str", "default": None, "desc": "New provenance (authored|extracted)"},
         {"name": "--confidence", "type": "float", "default": None, "desc": "New confidence score (0.0, 1.0]"},
+    ],
+    "normalize": [
+        {"name": "--dry-run", "type": "bool", "default": False, "desc": "Show what would be normalized without writing"},
     ],
 }
 

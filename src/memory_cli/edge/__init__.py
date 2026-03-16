@@ -30,3 +30,4 @@ from .edge_list_by_neuron_direction import edge_list
 from .link_flag_atomic_neuron_plus_edge import link_flag_atomic_create
 from .edge_splice_atomic_insert_between import edge_splice
 from .edge_update_by_source_target import edge_update
+from .edge_normalize_janitor_pass import edge_normalize
