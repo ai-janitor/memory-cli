@@ -17,6 +17,8 @@
 #   edge_remove_by_source_target.py — Lookup + delete edge
 #   edge_list_by_neuron_direction.py — List edges with direction filter, snippets, pagination
 #   link_flag_atomic_neuron_plus_edge.py — Atomic neuron+edge creation for --link flag
+#   edge_splice_atomic_insert_between.py — Atomic splice: insert neuron between existing edge
+#   edge_update_by_source_target.py — Update reason/weight on existing edge in place
 # =============================================================================
 
 # --- Public API exports ---
@@ -26,3 +28,5 @@ from .edge_add_with_reason_and_weight import edge_add
 from .edge_remove_by_source_target import edge_remove
 from .edge_list_by_neuron_direction import edge_list
 from .link_flag_atomic_neuron_plus_edge import link_flag_atomic_create
+from .edge_splice_atomic_insert_between import edge_splice
+from .edge_update_by_source_target import edge_update

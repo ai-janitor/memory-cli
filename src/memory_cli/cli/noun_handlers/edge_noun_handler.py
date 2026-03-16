@@ -200,18 +200,125 @@ def handle_remove(args: List[str], global_flags: Any) -> Any:
 
 
 # =============================================================================
+# VERB: splice — atomically insert a neuron between an existing edge
+# =============================================================================
+def handle_splice(args: List[str], global_flags: Any) -> Any:
+    """Splice a neuron into an existing edge: A->B becomes A->C->B.
+
+    Args:
+        args: [source_id, target_id, --through <middle_id>,
+               --type-ac <text>, --type-cb <text>,
+               --weight-ac <float>, --weight-cb <float>]
+        global_flags: Parsed global flags.
+
+    Returns:
+        Result with removed_edge, edge_a_c, edge_c_b.
+    """
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
+    from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
+        require_positional, extract_flag,
+    )
+    from memory_cli.cli.scoped_handle_format_and_parse import (
+        parse_handle, resolve_connection_by_scope,
+    )
+    try:
+        source_raw, rest = require_positional(list(args), "source_id")
+        target_raw, rest = require_positional(rest, "target_id")
+        handle_scope_s, source_id = parse_handle(source_raw)
+        handle_scope_t, target_id = parse_handle(target_raw)
+        handle_scope = handle_scope_s or handle_scope_t
+        through_raw, rest = extract_flag(rest, "--through")
+        if through_raw is None:
+            return Result(status="error", error="--through <neuron_id> is required for edge splice")
+        handle_scope_m, through_id = parse_handle(through_raw)
+        handle_scope = handle_scope or handle_scope_m
+        reason_ac, rest = extract_flag(rest, "--type-ac", default=None)
+        reason_cb, rest = extract_flag(rest, "--type-cb", default=None)
+        weight_ac, rest = extract_flag(rest, "--weight-ac", type_fn=float, default=None)
+        weight_cb, rest = extract_flag(rest, "--weight-cb", type_fn=float, default=None)
+        connections = get_layered_connections(global_flags)
+        conn, scope = connections[0]
+        if handle_scope is not None:
+            match = resolve_connection_by_scope(handle_scope, connections)
+            if match is not None:
+                conn, scope = match
+            else:
+                return Result(status="not_found", error=f"No {handle_scope} store available")
+        from memory_cli.edge import edge_splice
+        result = edge_splice(
+            conn, source_id, target_id, through_id,
+            reason_a_c=reason_ac, reason_c_b=reason_cb,
+            weight_a_c=weight_ac, weight_c_b=weight_cb,
+        )
+        conn.commit()
+        return Result(status="ok", data=result)
+    except Exception as e:
+        return Result(status="error", error=str(e))
+
+
+# =============================================================================
+# VERB: update — modify fields on an existing edge
+# =============================================================================
+def handle_update(args: List[str], global_flags: Any) -> Any:
+    """Update reason/weight on an existing edge.
+
+    Args:
+        args: [source_id, target_id, --type <text>, --weight <float>]
+        global_flags: Parsed global flags.
+
+    Returns:
+        Result with updated edge record.
+    """
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
+    from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
+        require_positional, extract_flag,
+    )
+    from memory_cli.cli.scoped_handle_format_and_parse import (
+        parse_handle, resolve_connection_by_scope,
+    )
+    try:
+        source_raw, rest = require_positional(list(args), "source_id")
+        target_raw, rest = require_positional(rest, "target_id")
+        handle_scope_s, source_id = parse_handle(source_raw)
+        handle_scope_t, target_id = parse_handle(target_raw)
+        handle_scope = handle_scope_s or handle_scope_t
+        reason, rest = extract_flag(rest, "--type", default=None)
+        weight, rest = extract_flag(rest, "--weight", type_fn=float, default=None)
+        connections = get_layered_connections(global_flags)
+        conn, scope = connections[0]
+        if handle_scope is not None:
+            match = resolve_connection_by_scope(handle_scope, connections)
+            if match is not None:
+                conn, scope = match
+            else:
+                return Result(status="not_found", error=f"No {handle_scope} store available")
+        from memory_cli.edge import edge_update
+        result = edge_update(conn, source_id, target_id, reason=reason, weight=weight)
+        conn.commit()
+        return Result(status="ok", data=result)
+    except Exception as e:
+        return Result(status="error", error=str(e))
+
+
+# =============================================================================
 # NOUN REGISTRATION
 # =============================================================================
 _VERB_MAP = {
     "add": handle_add,
     "list": handle_list,
     "remove": handle_remove,
+    "splice": handle_splice,
+    "update": handle_update,
 }
 
 _VERB_DESCRIPTIONS = {
     "add": "Create a directed edge between two neurons",
     "list": "List edges (filtered by neuron, direction, type)",
     "remove": "Remove an edge between two neurons",
+    "splice": "Insert a neuron between an existing edge (A->B becomes A->C->B)",
+    "update": "Update reason/weight on an existing edge",
 }
 
 _FLAG_DEFS = {
@@ -228,6 +335,17 @@ _FLAG_DEFS = {
     ],
     "remove": [
         {"name": "--type", "type": "str", "default": None, "desc": "Relationship type (if ambiguous)"},
+    ],
+    "splice": [
+        {"name": "--through", "type": "str", "default": None, "desc": "Neuron ID to insert between (required)"},
+        {"name": "--type-ac", "type": "str", "default": None, "desc": "Reason for A->C edge (default: inherit)"},
+        {"name": "--type-cb", "type": "str", "default": None, "desc": "Reason for C->B edge (default: inherit)"},
+        {"name": "--weight-ac", "type": "float", "default": None, "desc": "Weight for A->C edge (default: inherit)"},
+        {"name": "--weight-cb", "type": "float", "default": None, "desc": "Weight for C->B edge (default: inherit)"},
+    ],
+    "update": [
+        {"name": "--type", "type": "str", "default": None, "desc": "New relationship type/reason"},
+        {"name": "--weight", "type": "float", "default": None, "desc": "New edge weight"},
     ],
 }
 
