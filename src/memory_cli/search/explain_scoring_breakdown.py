@@ -116,6 +116,7 @@ def _build_single_breakdown(
         "tag_affinity_score": candidate.get("tag_affinity_score", 0.0),
         "tag_affinity_depth": candidate.get("tag_affinity_depth"),
         "temporal_weight": candidate.get("temporal_weight", 1.0),
+        "salience_weight": candidate.get("salience_weight", 1.0),
         "final_score": candidate.get("final_score", 0.0),
         "vector_unavailable": vector_unavailable,
         "match_type": candidate.get("match_type", "direct_match"),

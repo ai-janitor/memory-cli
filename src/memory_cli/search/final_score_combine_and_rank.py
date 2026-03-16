@@ -92,7 +92,8 @@ def _score_direct_match(candidate: Dict[str, Any]) -> float:
     rrf_score = candidate.get("rrf_score", 0.0)
     temporal_weight = candidate.get("temporal_weight", 1.0)
     tag_affinity_score = candidate.get("tag_affinity_score", 0.0)
-    return (rrf_score + tag_affinity_score) * temporal_weight
+    salience_weight = candidate.get("salience_weight", 1.0)
+    return (rrf_score + tag_affinity_score) * temporal_weight * salience_weight
 
 
 def _score_fan_out(candidate: Dict[str, Any]) -> float:
@@ -118,7 +119,8 @@ def _score_fan_out(candidate: Dict[str, Any]) -> float:
     activation_score = candidate.get("activation_score", 0.0)
     temporal_weight = candidate.get("temporal_weight", 1.0)
     tag_affinity_score = candidate.get("tag_affinity_score", 0.0)
-    return (activation_score + tag_affinity_score) * temporal_weight
+    salience_weight = candidate.get("salience_weight", 1.0)
+    return (activation_score + tag_affinity_score) * temporal_weight * salience_weight
 
 
 def _score_tag_affinity(candidate: Dict[str, Any]) -> float:
@@ -139,4 +141,5 @@ def _score_tag_affinity(candidate: Dict[str, Any]) -> float:
     """
     tag_affinity_score = candidate.get("tag_affinity_score", 0.0)
     temporal_weight = candidate.get("temporal_weight", 1.0)
-    return tag_affinity_score * temporal_weight
+    salience_weight = candidate.get("salience_weight", 1.0)
+    return tag_affinity_score * temporal_weight * salience_weight

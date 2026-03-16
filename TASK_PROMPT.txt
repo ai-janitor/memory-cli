@@ -1,26 +1,24 @@
-You are worker blackbelt, a coder in the memory-cli project. Read CLAUDE.md first.
+You are worker fighter, a coder in the memory-cli project. Read CLAUDE.md first.
 
-Task 45: Entity extraction consolidation pass with Haiku.
+Task 44: Salience scoring pass using access metrics in search pipeline.
 
-Implement core extraction logic for memory meta consolidate. Use Haiku to extract entities and relationships from unconsolidated neuron content blobs. Create sub-neurons for extracted entities and wire edges with provenance (extraction_method, extracted_by, confidence less than 1.0). Parent neuron gets consolidated timestamp set.
+Add a salience scoring component to the search pipeline that uses access_count and last_accessed_at to boost frequently/recently accessed neurons. Integrate into the scoring combination step alongside BM25, vector, activation, temporal decay, and tag affinity.
 
 Files to create/modify:
-- src/memory_cli/ingestion/ — new extraction module using Haiku
-- src/memory_cli/neuron/ — sub-neuron creation with parent linkage
-- src/memory_cli/edge/ — extracted edges with confidence and provenance
+- src/memory_cli/search/salience_scoring_access_metrics.py — new scoring module
+- src/memory_cli/search/final_score_combine_and_rank.py — integrate salience weight
+- src/memory_cli/search/light_search_pipeline_orchestrator.py — wire in salience pass
 
 Acceptance criteria:
-- Haiku extracts entities and relationships from neuron content
-- Sub-neurons created with extracted_by provenance metadata
-- Extracted edges carry confidence less than 1.0
-- Authored edges (batch load) retain confidence 1.0
-- Parent neuron consolidated timestamp set after extraction
-- Re-running on already-consolidated neurons is idempotent
+- Frequently accessed neurons get a score boost
+- Recently accessed neurons get a score boost
+- Salience weight is configurable (default reasonable)
+- Zero-access neurons get no penalty (neutral weight)
 
 Protocol:
 1. Write CHECKLIST.md first
-2. Read existing code to understand patterns
+2. Read existing search pipeline code to understand scoring patterns
 3. Implement the feature
 4. Run uv run pytest when done
 5. Commit your work
-6. Then run: minion task complete-phase --task-id 45 --agent blackbelt
+6. Then run: minion task complete-phase --task-id 44 --agent fighter
