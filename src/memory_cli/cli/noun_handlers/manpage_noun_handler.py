@@ -40,7 +40,8 @@ Nouns and their verbs:
   attr      add, get, list, delete
   batch     load
   meta      stats, version
-  manpage   overview, people, search, graph-docs, stores, recipes, front-door
+  manpage   overview, people, search, graph-docs, stores, recipes, front-door,
+            tag-conventions
 
 Global flags (go BEFORE the noun):
   --format <json|text>   Output format (default: json)
@@ -73,7 +74,7 @@ Help at every level:
   memory neuron add --help        Flags for neuron add
 
 For topic-specific guides, run: memory manpage <topic>
-Topics: people, search, graph-docs, stores, recipes, front-door"""
+Topics: people, search, graph-docs, stores, recipes, front-door, tag-conventions"""
 
 _PEOPLE = """\
 People as Neurons
@@ -399,6 +400,107 @@ The mansion grows organically. As you add neurons and edges, the gate
 may shift to a new most-connected neuron. That is expected — the front
 door moves to where the action is."""
 
+_TAG_CONVENTIONS = """\
+Tag Naming Conventions
+
+Tags are the primary filtering mechanism in memory-cli. Good tag hygiene
+keeps your graph navigable as it grows. This guide defines conventions
+for naming, categorizing, and maintaining tags.
+
+Auto-tags (always applied, cannot suppress):
+  YYYY-MM-DD     UTC date when neuron was created (e.g., 2026-03-16)
+  <project>      Detected from git remote or directory name (e.g., memory-cli)
+
+Three tag categories:
+
+  1. STRUCTURAL TYPES — what the neuron IS
+  ─────────────────────────────────────────
+  These classify the neuron's role in the graph.
+
+    person          A human being (contact, colleague, etc.)
+    contact         A person with stored contact info (email, phone)
+    system-rule     A behavioral rule for agents (do X, never Y)
+    feedback        User correction or preference for agent behavior
+    pipeline        Part of a processing pipeline or build step
+    manifesto       Core principle or design philosophy
+    decision        An architectural or project decision record
+    reference       A pointer to an external resource or document
+    session         Captured from a specific work session
+
+  2. DOMAIN GROUPINGS — what the neuron is ABOUT
+  ───────────────────────────────────────────────
+  These describe the subject matter. Use lowercase, hyphen-separated.
+
+    career          Job search, interviews, resume, skills
+    email / emails  Email-sourced content or email-related facts
+    cli             CLI design, commands, argument parsing
+    infra           Infrastructure, servers, deploy, ops
+    tooling         Developer tools, build systems, CI/CD
+    architecture    System design, component structure
+    financial       Money, taxes, budgets, transactions
+    govcon          Government contracting domain
+
+  3. TEMPORAL — when, beyond the auto-date
+  ─────────────────────────────────────────
+  Auto-tags handle day-level granularity. Add manual temporal tags only
+  for coarser groupings or named periods.
+
+    YYYY-MM         Month grouping (e.g., 2026-03) — use sparingly
+    q1-2026         Quarter grouping — only if you query by quarter
+    sprint-14       Sprint or iteration name
+
+  Do NOT duplicate the auto-date: the system already tags 2026-03-16.
+
+Naming rules:
+  - Lowercase only (enforced — tags are normalized to lowercase)
+  - Hyphens for multi-word tags: job-search, system-rule, car-tax
+  - No underscores, no camelCase, no spaces in tag names
+  - Singular preferred: person not persons, email not email-messages
+  - Short and specific: cli not command-line-interface
+
+Good vs bad examples:
+  GOOD                          BAD
+  ────                          ───
+  person                        Person (uppercase — normalized anyway)
+  system-rule                   system_rule (underscore)
+  career                        career-stuff (vague suffix)
+  cli                           command-line-interface (too long)
+  job-search                    jobSearch (camelCase)
+  feedback                      agent-feedback-from-user (over-specific)
+  2026-03                       march-2026 (non-standard temporal)
+  pipeline                      build-and-deploy-pipeline (too long)
+
+Compound tags — when to split:
+  Use compound tags only when the combination is a distinct concept:
+    cli-build-pipeline     OK — specific pipeline identity
+    arc-b60                OK — specific project/artifact code
+
+  Split when tags are independently useful:
+    memory tag add <id> --tags career,interview    (not career-interview)
+    memory tag add <id> --tags person,contact      (not person-contact)
+
+Revisit thresholds — when to audit your tags:
+  - 50+ distinct tags:  Review for synonyms and merge opportunities.
+    Run: memory tag list --sort count
+    Look for: near-duplicates (deploy vs deployment), unused tags (count=1).
+  - Tags with count=1:  Likely too specific. Consider removing or merging.
+  - 10+ structural tags on one neuron:  Over-tagged. Pick the 3-5 most
+    relevant. Tags are for filtering, not for describing every facet.
+  - Monthly:  Run `memory tag list --sort count --limit 20` and check
+    that your top tags still reflect your actual query patterns.
+
+Tag lifecycle:
+  1. Create — tags auto-create on first use (no pre-registration needed)
+  2. Apply — memory tag add <id> --tags tag1,tag2
+  3. Query — memory neuron list --tag <tag>
+  4. Audit — memory tag list --sort count (find bloat)
+  5. Prune — memory tag remove <id> tag-name (clean up)
+
+Cross-store tags:
+  Tags are store-local. The tag "person" in LOCAL and "person" in GLOBAL
+  are independent. This is by design — each store has its own taxonomy.
+  Use consistent naming across stores for your own sanity."""
+
 # =============================================================================
 # TOPIC HANDLERS — each prints its content and returns a Result
 # =============================================================================
@@ -425,6 +527,7 @@ handle_graph_docs = _make_topic_handler(_GRAPH_DOCS)
 handle_stores = _make_topic_handler(_STORES)
 handle_recipes = _make_topic_handler(_RECIPES)
 handle_front_door = _make_topic_handler(_FRONT_DOOR)
+handle_tag_conventions = _make_topic_handler(_TAG_CONVENTIONS)
 
 
 # =============================================================================
@@ -438,6 +541,7 @@ _VERB_MAP = {
     "stores": handle_stores,
     "recipes": handle_recipes,
     "front-door": handle_front_door,
+    "tag-conventions": handle_tag_conventions,
 }
 
 _VERB_DESCRIPTIONS = {
@@ -448,6 +552,7 @@ _VERB_DESCRIPTIONS = {
     "stores": "Memory stores — LOCAL, GLOBAL, foreign, scoped handles",
     "recipes": "Common patterns and workflows",
     "front-door": "The memory mansion — gate neurons, houses, graph navigation",
+    "tag-conventions": "Tag naming conventions — structural, domain, temporal categories",
 }
 
 _FLAG_DEFS = {
@@ -458,6 +563,7 @@ _FLAG_DEFS = {
     "stores": [],
     "recipes": [],
     "front-door": [],
+    "tag-conventions": [],
 }
 
 
