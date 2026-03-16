@@ -28,13 +28,15 @@ def migrated_conn():
     from memory_cli.db.connection_setup_wal_fk_busy import open_connection
     from memory_cli.db.extension_loader_sqlite_vec import load_and_verify_extensions
     from memory_cli.db.migrations.v001_baseline_all_tables_indexes_triggers import apply as v001
-    from memory_cli.db.migrations.v004_add_edge_provenance import apply as v004
+    from memory_cli.db.migrations.v004_add_access_tracking import apply as v004
+    from memory_cli.db.migrations.v005_add_edge_provenance import apply as v005
 
     conn = open_connection(":memory:")
     load_and_verify_extensions(conn)
     conn.execute("BEGIN")
     v001(conn)
     v004(conn)
+    v005(conn)
     conn.execute("COMMIT")
     yield conn
     conn.close()
@@ -315,7 +317,7 @@ class TestV004Migration:
         from memory_cli.db.connection_setup_wal_fk_busy import open_connection
         from memory_cli.db.extension_loader_sqlite_vec import load_and_verify_extensions
         from memory_cli.db.migrations.v001_baseline_all_tables_indexes_triggers import apply as v001
-        from memory_cli.db.migrations.v004_add_edge_provenance import apply as v004
+        from memory_cli.db.migrations.v005_add_edge_provenance import apply as v004
 
         conn = open_connection(":memory:")
         load_and_verify_extensions(conn)
@@ -343,7 +345,7 @@ class TestV004Migration:
         from memory_cli.db.connection_setup_wal_fk_busy import open_connection
         from memory_cli.db.extension_loader_sqlite_vec import load_and_verify_extensions
         from memory_cli.db.migrations.v001_baseline_all_tables_indexes_triggers import apply as v001
-        from memory_cli.db.migrations.v004_add_edge_provenance import apply as v004
+        from memory_cli.db.migrations.v005_add_edge_provenance import apply as v004
 
         conn = open_connection(":memory:")
         load_and_verify_extensions(conn)
