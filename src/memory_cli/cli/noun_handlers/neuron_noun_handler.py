@@ -74,23 +74,51 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
         # Write to first (local-preferred) connection
         connections = get_layered_connections(global_flags)
         conn, scope = connections[0]
-        from memory_cli.neuron import neuron_add
-        result = neuron_add(conn, content, tags=tags, source=source, attrs=attrs, no_embed=True)
-        new_id = result["id"]
-        # If --parent provided, create an edge from new neuron to parent
+
+        # [R65/task-66] Validate parent exists BEFORE creating neuron to
+        # prevent orphans when --parent points to a non-existent ID.
+        edge_conn = conn
+        parent_id = None
         if parent_raw is not None:
             from memory_cli.cli.scoped_handle_format_and_parse import parse_handle
             handle_scope, parent_id = parse_handle(parent_raw)
-            # Route to appropriate connection if scoped handle
-            edge_conn = conn
             if handle_scope is not None:
                 match = _resolve_connection_by_scope(handle_scope, connections)
                 if match is not None:
                     edge_conn = match[0]
+            # Pre-validate parent neuron exists
+            row = edge_conn.execute(
+                "SELECT id FROM neurons WHERE id = ?", (parent_id,)
+            ).fetchone()
+            if row is None:
+                return Result(status="error", error=f"Neuron {parent_raw} not found")
+
+        from memory_cli.neuron import neuron_add
+        result = neuron_add(conn, content, tags=tags, source=source, attrs=attrs, no_embed=True)
+        new_id = result["id"]
+
+        # If --parent provided, create edge parent→child (parent owns the relationship).
+        # [R64/task-65] Direction fix: edge goes from parent to new child, not child to parent.
+        warnings_list = []
+        if parent_id is not None:
             from memory_cli.edge import edge_add
-            edge_add(edge_conn, new_id, parent_id, reason=edge_type)
+            edge_add(edge_conn, parent_id, new_id, reason=edge_type)
             edge_conn.commit()
-        return Result(status="ok", data=scope_neuron_dict(result, scope))
+            # [R66/task-67] Re-fetch neuron so response includes the newly created edge.
+            from memory_cli.neuron import neuron_get
+            refreshed = neuron_get(conn, new_id)
+            if refreshed is not None:
+                result = refreshed
+        else:
+            # [R67/task-68] Warn when no --parent specified — neuron will be unconnected.
+            warnings_list.append(
+                "No parent specified \u2014 neuron will be unconnected. "
+                "Use --parent <id> to file under a topic."
+            )
+
+        data = scope_neuron_dict(result, scope)
+        meta = {"warnings": warnings_list} if warnings_list else None
+        return Result(status="ok", data=data, meta=meta)
     except Exception as e:
         return Result(status="error", error=str(e))
 
