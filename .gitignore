@@ -45,5 +45,8 @@ Thumbs.db
 *.swp
 *.swo
 
+# Claude Code worktrees
+.claude/
+
 # uv lock (generated, not source of truth)
 uv.lock
