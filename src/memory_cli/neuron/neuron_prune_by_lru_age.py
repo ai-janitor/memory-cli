@@ -25,6 +25,10 @@ import time
 from typing import Any, Dict, List
 
 
+class NeuronPruneError(Exception):
+    """Raised when prune encounters an invalid configuration."""
+
+
 def neuron_prune(
     conn: sqlite3.Connection,
     days: int = 30,
@@ -35,18 +39,20 @@ def neuron_prune(
     CLI: `memory neuron prune [--days N] [--dry-run]`
 
     Logic flow:
-    1. Compute cutoff timestamp: now - (days * 86_400_000) milliseconds
-    2. Find candidates: active neurons where last_accessed_at < cutoff
+    1. Validate days >= 1 (days=0 would match all neurons — dangerous)
+    2. Compute cutoff timestamp: now - (days * 86_400_000) milliseconds
+    3. Find candidates: active neurons where last_accessed_at < cutoff
        OR last_accessed_at IS NULL and created_at < cutoff
-    3. Order: access_count ASC (never-accessed first), then last_accessed_at ASC
-    4. If dry_run: return candidates without archiving
-    5. If not dry_run: archive each candidate via neuron_archive()
-    6. Compute freed edge weight (sum of edge weights touching archived neurons)
-    7. Return report dict
+    4. Order: access_count ASC (never-accessed first), then last_accessed_at ASC
+    5. If dry_run: return candidates without archiving
+    6. If not dry_run: archive each candidate via neuron_archive()
+    7. Compute freed edge weight (sum of edge weights touching archived neurons)
+    8. Return report dict
 
     Args:
         conn: SQLite connection.
         days: Number of days since last access to consider stale (default 30).
+              Must be >= 1 to prevent accidental deletion of all neurons.
         dry_run: If True, report candidates without archiving.
 
     Returns:
@@ -58,7 +64,16 @@ def neuron_prune(
             - freed_weight: float — total edge weight freed (0.0 if dry_run)
             - dry_run: bool — whether this was a dry run
             - days: int — the threshold used
+
+    Raises:
+        NeuronPruneError: If days < 1.
     """
+    if days < 1:
+        raise NeuronPruneError(
+            f"--days must be >= 1, got {days}. "
+            "days=0 would match all neurons and is not allowed."
+        )
+
     now_ms = int(time.time() * 1000)
     cutoff_ms = now_ms - (days * 86_400_000)
 
