@@ -409,3 +409,31 @@ class TestNeuronPruneEdgeCases:
         preview = report["candidates"][0]["content_preview"]
         assert len(preview) == 83  # 80 + "..."
         assert preview.endswith("...")
+
+    def test_days_zero_raises_error(self, migrated_conn):
+        """days=0 should raise NeuronPruneError to prevent wiping all neurons."""
+        from memory_cli.neuron.neuron_prune_by_lru_age import neuron_prune, NeuronPruneError
+
+        _insert_neuron(
+            migrated_conn,
+            content="should not be touched",
+            created_at_ms=_ms_days_ago(5),
+            last_accessed_at=None,
+            access_count=0,
+        )
+
+        with pytest.raises(NeuronPruneError, match="--days must be >= 1"):
+            neuron_prune(migrated_conn, days=0)
+
+        # Verify the neuron was NOT touched
+        row = migrated_conn.execute(
+            "SELECT status FROM neurons WHERE content = 'should not be touched'"
+        ).fetchone()
+        assert row[0] == "active"
+
+    def test_days_negative_raises_error(self, migrated_conn):
+        """Negative days should raise NeuronPruneError."""
+        from memory_cli.neuron.neuron_prune_by_lru_age import neuron_prune, NeuronPruneError
+
+        with pytest.raises(NeuronPruneError, match="--days must be >= 1"):
+            neuron_prune(migrated_conn, days=-5)

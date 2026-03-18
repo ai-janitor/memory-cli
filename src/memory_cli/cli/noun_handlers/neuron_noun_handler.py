@@ -464,10 +464,85 @@ def handle_prune(args: List[str], global_flags: Any) -> Any:
         rest = list(args)
         days, rest = extract_flag(rest, "--days", type_fn=int, default=30)
         dry_run, rest = extract_bool_flag(rest, "--dry-run")
+        execute, rest = extract_bool_flag(rest, "--execute")
+        confirm, rest = extract_bool_flag(rest, "--confirm")
         conn, scope = get_layered_connections(global_flags)[0]
-        from memory_cli.neuron import neuron_prune
+        from memory_cli.neuron import neuron_prune, NeuronPruneError
+
+        # Safety: default to dry-run preview unless --execute is passed.
+        # When --execute is passed, --confirm is also required.
+        if not execute and not dry_run:
+            # Default behavior: preview (dry-run)
+            dry_run = True
+        if execute and not confirm:
+            # Show preview and tell user to add --confirm
+            report = neuron_prune(conn, days=days, dry_run=True)
+            report["requires_confirm"] = True
+            report["message"] = (
+                f"Preview: {report['candidate_count']} neuron(s) would be pruned. "
+                "Re-run with --execute --confirm to proceed."
+            )
+            return Result(status="ok", data=report)
+        if execute and confirm:
+            dry_run = False
+
         report = neuron_prune(conn, days=days, dry_run=dry_run)
         return Result(status="ok", data=report)
+    except NeuronPruneError as e:
+        return Result(status="error", error=str(e))
+    except Exception as e:
+        return Result(status="error", error=str(e))
+
+
+# =============================================================================
+# VERB: delete — hard-delete a single neuron
+# =============================================================================
+def handle_delete(args: List[str], global_flags: Any) -> Any:
+    """Hard-delete a single neuron and all its edges, tags, attrs, vectors.
+
+    Args:
+        args: [neuron_id, --confirm]
+        global_flags: Parsed global flags.
+
+    Returns:
+        Result confirming deletion, or not_found/error.
+
+    This is a PERMANENT operation. Requires --confirm flag for safety.
+    """
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
+    from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
+        require_positional, extract_bool_flag,
+    )
+    from memory_cli.cli.scoped_handle_format_and_parse import parse_handle
+    try:
+        rest = list(args)
+        confirm, rest = extract_bool_flag(rest, "--confirm")
+        nid_raw, rest = require_positional(rest, "neuron_id")
+        handle_scope, nid = parse_handle(nid_raw)
+
+        if not confirm:
+            return Result(
+                status="error",
+                error=(
+                    "Destructive operation: --confirm flag is required. "
+                    "Usage: memory neuron delete <id> --confirm"
+                ),
+            )
+
+        # Write operation — route by handle scope, default to first (local)
+        connections = get_layered_connections(global_flags)
+        conn, scope = connections[0]
+        if handle_scope is not None:
+            match = _resolve_connection_by_scope(handle_scope, connections)
+            if match is not None:
+                conn, scope = match
+
+        from memory_cli.neuron import neuron_delete, NeuronDeleteError
+        result = neuron_delete(conn, nid)
+        return Result(status="ok", data=result)
+    except NeuronDeleteError as e:
+        return Result(status="not_found", error=str(e))
     except Exception as e:
         return Result(status="error", error=str(e))
 
@@ -485,6 +560,7 @@ _VERB_MAP = {
     "restore": handle_restore,
     "search": handle_search,
     "prune": handle_prune,
+    "delete": handle_delete,
 }
 
 # Verb descriptions for help system
@@ -497,6 +573,7 @@ _VERB_DESCRIPTIONS = {
     "restore": "Restore an archived neuron",
     "search": "Search neurons by similarity or keyword",
     "prune": "Archive stale neurons by LRU access metrics",
+    "delete": "Permanently delete a single neuron and its edges (requires --confirm)",
 }
 
 # Flag definitions for help system (verb -> list of flag specs)
@@ -527,14 +604,19 @@ _FLAG_DEFS = {
     "archive": [],
     "restore": [],
     "prune": [
-        {"name": "--days", "type": "int", "default": 30, "desc": "Days since last access to consider stale"},
-        {"name": "--dry-run", "type": "bool", "default": False, "desc": "Show candidates without archiving"},
+        {"name": "--days", "type": "int", "default": 30, "desc": "Days since last access to consider stale (must be >= 1)"},
+        {"name": "--dry-run", "type": "bool", "default": False, "desc": "Show candidates without archiving (this is the default)"},
+        {"name": "--execute", "type": "bool", "default": False, "desc": "Actually perform the prune (requires --confirm)"},
+        {"name": "--confirm", "type": "bool", "default": False, "desc": "Confirm destructive prune operation (used with --execute)"},
     ],
     "search": [
         {"name": "--limit", "type": "int", "default": 10, "desc": "Max results"},
         {"name": "--threshold", "type": "float", "default": 0.0, "desc": "Min similarity"},
         {"name": "--type", "type": "str", "default": None, "desc": "Filter by type"},
         {"name": "--verbose", "type": "bool", "default": False, "desc": "Show all fields (status, updated_at, project, attrs)"},
+    ],
+    "delete": [
+        {"name": "--confirm", "type": "bool", "default": False, "desc": "Required: confirm permanent deletion"},
     ],
 }
 
