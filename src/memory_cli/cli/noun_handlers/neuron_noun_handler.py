@@ -67,12 +67,29 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
         ntype, rest = extract_flag(rest, "--type")
         source, rest = extract_flag(rest, "--source")
         tags_flag, rest = extract_flag(rest, "--tags")
+        parent_raw, rest = extract_flag(rest, "--parent")
+        edge_type, rest = extract_flag(rest, "--edge-type", default="child_of")
         tags = [t.strip() for t in tags_flag.split(",") if t.strip()] if tags_flag else None
         attrs = {"type": ntype} if ntype else None
         # Write to first (local-preferred) connection
-        conn, scope = get_layered_connections(global_flags)[0]
+        connections = get_layered_connections(global_flags)
+        conn, scope = connections[0]
         from memory_cli.neuron import neuron_add
         result = neuron_add(conn, content, tags=tags, source=source, attrs=attrs, no_embed=True)
+        new_id = result["id"]
+        # If --parent provided, create an edge from new neuron to parent
+        if parent_raw is not None:
+            from memory_cli.cli.scoped_handle_format_and_parse import parse_handle
+            handle_scope, parent_id = parse_handle(parent_raw)
+            # Route to appropriate connection if scoped handle
+            edge_conn = conn
+            if handle_scope is not None:
+                match = _resolve_connection_by_scope(handle_scope, connections)
+                if match is not None:
+                    edge_conn = match[0]
+            from memory_cli.edge import edge_add
+            edge_add(edge_conn, new_id, parent_id, reason=edge_type)
+            edge_conn.commit()
         return Result(status="ok", data=scope_neuron_dict(result, scope))
     except Exception as e:
         return Result(status="error", error=str(e))
@@ -460,6 +477,8 @@ _FLAG_DEFS = {
         {"name": "--type", "type": "str", "default": "memory", "desc": "Neuron type"},
         {"name": "--source", "type": "str", "default": None, "desc": "Origin identifier"},
         {"name": "--tags", "type": "str", "default": None, "desc": "Comma-separated tags"},
+        {"name": "--parent", "type": "str", "default": None, "desc": "Parent neuron ID — wires new neuron to parent in one step"},
+        {"name": "--edge-type", "type": "str", "default": "child_of", "desc": "Edge type for --parent relationship (default: child_of)"},
     ],
     "get": [
         {"name": "--verbose", "type": "bool", "default": False, "desc": "Show all fields (status, updated_at, project, attrs, embedding_updated_at)"},

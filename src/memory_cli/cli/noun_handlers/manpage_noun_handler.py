@@ -39,9 +39,10 @@ Nouns and their verbs:
   tag       add, remove, list
   attr      add, get, list, delete
   batch     load
+  gate      show, register, deregister
   meta      stats, version
-  manpage   overview, people, search, graph-docs, stores, recipes, front-door,
-            tag-conventions
+  manpage   overview, how-to, people, search, graph-docs, stores, recipes,
+            front-door, tag-conventions
 
 Global flags (go BEFORE the noun):
   --format <json|text>   Output format (default: json)
@@ -75,6 +76,74 @@ Help at every level:
 
 For topic-specific guides, run: memory manpage <topic>
 Topics: people, search, graph-docs, stores, recipes, front-door, tag-conventions"""
+
+_HOW_TO = """\
+Agent Onboarding — Getting Started with memory-cli
+
+This guide tells you everything you need to use memory-cli from scratch.
+
+What memory-cli is for:
+  Persistent knowledge across conversations. You forget between sessions.
+  Memory doesn't. Store facts, decisions, contacts, and context once —
+  retrieve them in any future session via semantic search.
+
+Step 1 — Check the gate first
+  Before adding anything, see what's already in the store:
+    memory gate show
+  This finds the front door (most-connected neuron) and lists the main
+  topic clusters. Don't add duplicates of what's already there.
+
+Step 2 — Two-store model (LOCAL vs GLOBAL)
+  LOCAL store (.memory/ in a project dir):
+    Project-specific knowledge — code patterns, deploy procedures,
+    team contacts FOR THIS PROJECT.
+    Created with:  memory init
+    Used by default when .memory/ exists in the current directory.
+
+  GLOBAL store (~/.memory/):
+    Cross-project knowledge — personal preferences, contacts you use
+    everywhere, reusable patterns.
+    Created with:  memory init --global
+    Access with:   memory --db ~/.memory/memory.db ...
+
+  Rule of thumb: if you'd use it in multiple projects, it goes GLOBAL.
+  If it's specific to one repo or session, it goes LOCAL.
+
+Step 3 — File neurons under doors (parent edges)
+  A "door" is a topic-cluster neuron that acts as an index. Example:
+  neuron 42 might be "Project Architecture" — the door to all architecture
+  neurons. File new facts under doors to keep the graph navigable:
+
+    # Add a fact and wire it to its parent door in one step:
+    memory neuron add "API rate limit is 1000 req/min" --parent 42 --edge-type child_of
+
+    # Or add then wire separately:
+    memory neuron add "API rate limit is 1000 req/min"
+    memory edge add <new-id> 42 --type child_of
+
+  This is how spreading activation finds related neurons: search "rate limit"
+  → finds the fact → follows edge to neuron 42 → sees all architecture context.
+
+Step 4 — The manifesto (what's worth storing)
+  Not everything belongs in memory. Read the manifesto before bulk-adding:
+    memory meta manifesto
+  Short version: store durable facts, decisions, and relationships.
+  Don't store transient state, logs, or anything that expires quickly.
+
+Step 5 — Quick start workflow
+  1. memory gate show                     Orient yourself
+  2. memory meta manifesto                Calibrate what to store
+  3. memory neuron add "..."              Add a fact
+  4. memory neuron search "topic"         Retrieve later
+  5. memory edge add <id> <door-id>       Wire to a topic cluster
+  6. memory neuron list --limit 10        Browse recent neurons
+
+More guides:
+  memory manpage stores       LOCAL vs GLOBAL store details
+  memory manpage front-door   The mansion pattern — gate neurons, houses
+  memory manpage search       How search works (spreading activation)
+  memory manpage recipes      Common patterns and workflows
+  memory manpage overview     Full noun/verb reference"""
 
 _PEOPLE = """\
 People as Neurons
@@ -521,6 +590,7 @@ def _make_topic_handler(content: str):
     return handler
 
 handle_overview = _make_topic_handler(_OVERVIEW)
+handle_how_to = _make_topic_handler(_HOW_TO)
 handle_people = _make_topic_handler(_PEOPLE)
 handle_search = _make_topic_handler(_SEARCH)
 handle_graph_docs = _make_topic_handler(_GRAPH_DOCS)
@@ -535,6 +605,7 @@ handle_tag_conventions = _make_topic_handler(_TAG_CONVENTIONS)
 # =============================================================================
 _VERB_MAP = {
     "overview": handle_overview,
+    "how-to": handle_how_to,
     "people": handle_people,
     "search": handle_search,
     "graph-docs": handle_graph_docs,
@@ -546,6 +617,7 @@ _VERB_MAP = {
 
 _VERB_DESCRIPTIONS = {
     "overview": "Full CLI guide — nouns, verbs, flags",
+    "how-to": "Agent onboarding guide — start here if new",
     "people": "How to model people, contacts, relationships",
     "search": "How search works — hybrid retrieval, spreading activation",
     "graph-docs": "YAML graph document format, batch load, inline/stdin",
@@ -557,6 +629,7 @@ _VERB_DESCRIPTIONS = {
 
 _FLAG_DEFS = {
     "overview": [],
+    "how-to": [],
     "people": [],
     "search": [],
     "graph-docs": [],
