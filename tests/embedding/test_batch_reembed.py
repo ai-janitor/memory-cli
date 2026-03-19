@@ -23,6 +23,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import time
 from unittest.mock import MagicMock, patch
 
@@ -30,6 +31,7 @@ import pytest
 import sqlite3
 
 from memory_cli.embedding.batch_reembed_blank_and_stale import ReembedProgress, batch_reembed
+from memory_cli.embedding.embedding_input_content_plus_tags import build_embedding_input
 
 
 @pytest.fixture
@@ -38,11 +40,16 @@ def migrated_conn():
     from memory_cli.db.connection_setup_wal_fk_busy import open_connection
     from memory_cli.db.extension_loader_sqlite_vec import load_and_verify_extensions
     from memory_cli.db.migrations.v001_baseline_all_tables_indexes_triggers import apply
+    from memory_cli.db.migrations.v009_add_embedding_input_hash import apply as apply_v009
 
     conn = open_connection(":memory:")
     load_and_verify_extensions(conn)
     conn.execute("BEGIN")
     apply(conn)
+    conn.execute("COMMIT")
+    # Apply v009 to add embedding_input_hash column
+    conn.execute("BEGIN")
+    apply_v009(conn)
     conn.execute("COMMIT")
     yield conn
     conn.close()
@@ -288,3 +295,143 @@ class TestProjectFilter:
         mock_blank.assert_called_once_with(migrated_conn, "proj-a")
         mock_stale.assert_called_once_with(migrated_conn, "proj-a")
         mock_all.assert_called_once_with(migrated_conn, "proj-a")
+
+
+class TestEmbeddingInputHash:
+    """Verify embedding_input_hash is computed and used for skip optimization."""
+
+    def test_hash_written_after_batch_reembed(self, migrated_conn):
+        """embedding_input_hash is stored in neurons table after successful embed."""
+        nid = _insert_neuron(migrated_conn, content="hash test content")
+        migrated_conn.execute("COMMIT")
+
+        mock_model = MagicMock()
+        mock_model.embed.side_effect = lambda texts, normalize=True: [
+            [0.0] * 768 for _ in texts
+        ]
+
+        result = batch_reembed(migrated_conn, mock_model)
+
+        assert result.processed == 1
+        row = migrated_conn.execute(
+            "SELECT embedding_input_hash FROM neurons WHERE id = ?", (nid,)
+        ).fetchone()
+        expected_hash = hashlib.sha256(
+            build_embedding_input("hash test content", []).encode()
+        ).hexdigest()
+        assert row[0] == expected_hash
+
+    def test_skip_when_hash_matches(self, migrated_conn):
+        """Neurons whose embedding_input_hash matches current content are skipped."""
+        content = "unchanged content"
+        embedding_input = build_embedding_input(content, [])
+        input_hash = hashlib.sha256(embedding_input.encode()).hexdigest()
+
+        # Insert a stale neuron (updated_at > embedding_updated_at) but with
+        # matching hash — this simulates a non-content change (e.g. source update)
+        now_ms = int(time.time() * 1000)
+        old_ms = now_ms - 10000
+        nid = _insert_neuron(
+            migrated_conn,
+            content=content,
+            updated_at=now_ms,
+            embedding_updated_at=old_ms,
+        )
+        # Set the hash to match current content
+        migrated_conn.execute(
+            "UPDATE neurons SET embedding_input_hash = ? WHERE id = ?",
+            (input_hash, nid),
+        )
+        # Insert a vec0 row so it's detected as stale (not blank)
+        import struct
+        blob = struct.pack("<768f", *([0.0] * 768))
+        migrated_conn.execute(
+            "INSERT OR REPLACE INTO neurons_vec (neuron_id, embedding) VALUES (?, ?)",
+            (nid, blob),
+        )
+        migrated_conn.execute("COMMIT")
+
+        mock_model = MagicMock()
+        mock_model.embed.side_effect = lambda texts, normalize=True: [
+            [0.0] * 768 for _ in texts
+        ]
+
+        result = batch_reembed(migrated_conn, mock_model)
+
+        # Should be detected as stale but skipped due to hash match
+        assert result.stale_count == 1
+        assert result.total_candidates == 1
+        assert result.skipped == 1
+        assert result.processed == 0
+        # embed should NOT have been called
+        mock_model.embed.assert_not_called()
+
+    def test_no_skip_when_hash_differs(self, migrated_conn):
+        """Neurons whose hash doesn't match are re-embedded normally."""
+        now_ms = int(time.time() * 1000)
+        old_ms = now_ms - 10000
+        nid = _insert_neuron(
+            migrated_conn,
+            content="new content after update",
+            updated_at=now_ms,
+            embedding_updated_at=old_ms,
+        )
+        # Set an old hash that doesn't match current content
+        migrated_conn.execute(
+            "UPDATE neurons SET embedding_input_hash = ? WHERE id = ?",
+            ("old_hash_that_wont_match", nid),
+        )
+        import struct
+        blob = struct.pack("<768f", *([0.0] * 768))
+        migrated_conn.execute(
+            "INSERT OR REPLACE INTO neurons_vec (neuron_id, embedding) VALUES (?, ?)",
+            (nid, blob),
+        )
+        migrated_conn.execute("COMMIT")
+
+        mock_model = MagicMock()
+        mock_model.embed.side_effect = lambda texts, normalize=True: [
+            [0.0] * 768 for _ in texts
+        ]
+
+        result = batch_reembed(migrated_conn, mock_model)
+
+        assert result.stale_count == 1
+        assert result.processed == 1
+        assert result.skipped == 0
+        # Hash should be updated
+        row = migrated_conn.execute(
+            "SELECT embedding_input_hash FROM neurons WHERE id = ?", (nid,)
+        ).fetchone()
+        expected_hash = hashlib.sha256(
+            build_embedding_input("new content after update", []).encode()
+        ).hexdigest()
+        assert row[0] == expected_hash
+
+    def test_blank_neurons_have_null_hash_and_embed(self, migrated_conn):
+        """Blank neurons have NULL embedding_input_hash and are always embedded."""
+        nid = _insert_neuron(migrated_conn, content="blank neuron")
+        migrated_conn.execute("COMMIT")
+
+        # Verify hash is NULL before embed
+        row = migrated_conn.execute(
+            "SELECT embedding_input_hash FROM neurons WHERE id = ?", (nid,)
+        ).fetchone()
+        assert row[0] is None
+
+        mock_model = MagicMock()
+        mock_model.embed.side_effect = lambda texts, normalize=True: [
+            [0.0] * 768 for _ in texts
+        ]
+
+        result = batch_reembed(migrated_conn, mock_model)
+
+        assert result.blank_count == 1
+        assert result.processed == 1
+        assert result.skipped == 0
+
+        # Hash should now be set
+        row = migrated_conn.execute(
+            "SELECT embedding_input_hash FROM neurons WHERE id = ?", (nid,)
+        ).fetchone()
+        assert row[0] is not None

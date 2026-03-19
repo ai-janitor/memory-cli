@@ -23,6 +23,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import sqlite3
 from dataclasses import dataclass, field
@@ -56,6 +57,7 @@ class ReembedProgress:
     stale_count: int = 0
     total_candidates: int = 0
     processed: int = 0
+    skipped: int = 0
     failed: int = 0
     failed_neuron_ids: list[int] = field(default_factory=list)
 
@@ -114,10 +116,10 @@ def batch_reembed(
         #     Fetch neuron content and tags from DB
         #     Build embedding input via build_embedding_input(content, tags)
         #   Collect as list of (neuron_id, embedding_input) pairs
-        pairs: list[tuple[int, str]] = []
+        pairs: list[tuple[int, str, str]] = []  # (neuron_id, embedding_input, input_hash)
         for neuron_id in batch_ids:
             row = conn.execute(
-                "SELECT content FROM neurons WHERE id = ?", (neuron_id,)
+                "SELECT content, embedding_input_hash FROM neurons WHERE id = ?", (neuron_id,)
             ).fetchone()
             if row is None:
                 logger.warning("Neuron %s not found during batch reembed, skipping", neuron_id)
@@ -125,6 +127,7 @@ def batch_reembed(
                 progress.failed_neuron_ids.append(neuron_id)
                 continue
             content = row[0]
+            existing_hash = row[1]
             # Load associated tags
             tag_rows = conn.execute(
                 """
@@ -136,7 +139,13 @@ def batch_reembed(
             ).fetchall()
             tags = [r[0] for r in tag_rows]
             embedding_input = build_embedding_input(content, tags)
-            pairs.append((neuron_id, embedding_input))
+            input_hash = hashlib.sha256(embedding_input.encode()).hexdigest()
+            # Skip if embedding input hasn't actually changed
+            if existing_hash is not None and input_hash == existing_hash:
+                logger.debug("Neuron %s hash unchanged, skipping re-embed", neuron_id)
+                progress.skipped += 1
+                continue
+            pairs.append((neuron_id, embedding_input, input_hash))
 
         if not pairs:
             continue
@@ -149,38 +158,39 @@ def batch_reembed(
         #     progress.failed += len(batch_ids)
         #     progress.failed_neuron_ids.extend(batch_ids)
         #     continue
-        texts = [input_text for _, input_text in pairs]
+        texts = [input_text for _, input_text, _ in pairs]
         try:
             vectors = embed_batch(model, texts, "index")
         except Exception as e:
             logger.warning("embed_batch failed for batch starting at %s: %s", batch_start, e)
             progress.failed += len(pairs)
-            progress.failed_neuron_ids.extend([nid for nid, _ in pairs])
+            progress.failed_neuron_ids.extend([nid for nid, _, _ in pairs])
             continue
 
         if vectors is None:
             # Model missing — all in this batch failed
             progress.failed += len(pairs)
-            progress.failed_neuron_ids.extend([nid for nid, _ in pairs])
+            progress.failed_neuron_ids.extend([nid for nid, _, _ in pairs])
             continue
 
-        #   --- Step 3c: Write vectors to vec0 ---
-        #   Try:
-        #     neuron_vector_pairs = list(zip([nid for nid, _ in pairs], vectors))
-        #     write_vectors_batch(conn, neuron_vector_pairs)
-        #     progress.processed += len(batch_ids)
-        #   Except (sqlite3.Error, ValueError) as e:
-        #     progress.failed += len(batch_ids)
-        #     progress.failed_neuron_ids.extend(batch_ids)
-        #     Log/warn the error but continue to next batch
+        #   --- Step 3c: Write vectors to vec0 and update hashes ---
         try:
-            neuron_vector_pairs = list(zip([nid for nid, _ in pairs], vectors))
+            neuron_vector_pairs = list(zip([nid for nid, _, _ in pairs], vectors))
             write_vectors_batch(conn, neuron_vector_pairs)
+            # Update embedding_input_hash and embedding_updated_at for each neuron
+            import time
+            now_ms = int(time.time() * 1000)
+            for nid, _, ihash in pairs:
+                conn.execute(
+                    "UPDATE neurons SET embedding_input_hash = ?, embedding_updated_at = ? WHERE id = ?",
+                    (ihash, now_ms, nid)
+                )
+            conn.commit()
             progress.processed += len(pairs)
         except (sqlite3.Error, ValueError) as e:
             logger.warning("write_vectors_batch failed for batch starting at %s: %s", batch_start, e)
             progress.failed += len(pairs)
-            progress.failed_neuron_ids.extend([nid for nid, _ in pairs])
+            progress.failed_neuron_ids.extend([nid for nid, _, _ in pairs])
 
     # --- Step 4: Return final progress ---
     # return progress
