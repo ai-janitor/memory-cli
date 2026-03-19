@@ -20,6 +20,7 @@ from memory_cli.cli.noun_handlers import batch_noun_handler as _batch
 from memory_cli.cli.noun_handlers import edge_noun_handler as _edge
 from memory_cli.cli.noun_handlers import manpage_noun_handler as _manpage
 from memory_cli.cli.noun_handlers import meta_noun_handler as _meta
+from memory_cli.cli.noun_handlers import model_noun_handler as _model
 from memory_cli.cli.noun_handlers import neuron_noun_handler as _neuron
 from memory_cli.cli.noun_handlers import gate_noun_handler as _gate
 from memory_cli.cli.noun_handlers import tag_noun_handler as _tag
