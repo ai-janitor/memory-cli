@@ -146,10 +146,13 @@ class TestPartialCompletion:
 
         call_count = [0]
 
+        # embed_single calls model.embed() once per neuron.
+        # With batch_size=2: batch1=[c1,c2], batch2=[c3].
+        # Calls 1,2 succeed (batch1), call 3 fails (batch2).
         def _embed_side_effect(texts, normalize=True):
             call_count[0] += 1
-            if call_count[0] == 1:
-                return [[0.0] * 768 for _ in texts]
+            if call_count[0] <= 2:
+                return [[0.0] * 768]
             raise RuntimeError("Simulated embed failure")
 
         mock_model = MagicMock()
@@ -242,8 +245,8 @@ class TestBatchSizeControl:
         assert result.processed == 3
 
     # --- Test: batch_size=100 processes all in one batch ---
-    # batch_reembed(conn, batch_size=100)
-    # Assert embed_batch called 1 time (all 3 in one batch)
+    # With sequential embed_single, each neuron gets its own model.embed() call
+    # batch_size=100 means all 3 are in one batch, but 3 individual embed calls
     def test_batch_size_100_single_call(self, migrated_conn):
         blank1 = _insert_neuron(migrated_conn, content="c1")
         blank2 = _insert_neuron(migrated_conn, content="c2")
@@ -254,14 +257,14 @@ class TestBatchSizeControl:
 
         def _embed_side_effect(texts, normalize=True):
             embed_call_count[0] += 1
-            return [[0.0] * 768 for _ in texts]
+            return [[0.0] * 768]
 
         mock_model = MagicMock()
         mock_model.embed.side_effect = _embed_side_effect
 
         result = batch_reembed(migrated_conn, mock_model, batch_size=100)
 
-        assert embed_call_count[0] == 1
+        assert embed_call_count[0] == 3  # one call per neuron (sequential)
         assert result.processed == 3
 
 

@@ -598,7 +598,7 @@ class TestNeuronSearchMergesStores:
     """Test that neuron search merges results from both stores."""
 
     def test_search_merges_local_and_global(self):
-        """neuron search returns results from both stores, local first."""
+        """neuron search returns results from both stores, sorted by score."""
         from memory_cli.cli.noun_handlers.neuron_noun_handler import handle_search
         from memory_cli.db.connection_setup_wal_fk_busy import open_connection
         from memory_cli.db.extension_loader_sqlite_vec import load_sqlite_vec
@@ -632,15 +632,13 @@ class TestNeuronSearchMergesStores:
         assert result.status == "ok"
         # Both stores have BM25-matchable content for "python"
         assert len(result.data) >= 2
-        # First results should be LOCAL (local queried first)
         local_results = [r for r in result.data if r["id"].startswith("LOCAL-")]
         global_results = [r for r in result.data if r["id"].startswith("GLOBAL-")]
         assert len(local_results) >= 1
         assert len(global_results) >= 1
-        # Local appears before global in the list
-        first_local_idx = next(i for i, r in enumerate(result.data) if r["id"].startswith("LOCAL-"))
-        first_global_idx = next(i for i, r in enumerate(result.data) if r["id"].startswith("GLOBAL-"))
-        assert first_local_idx < first_global_idx
+        # Results are sorted by score descending (highest relevance first)
+        scores = [r.get("score", 0) for r in result.data]
+        assert scores == sorted(scores, reverse=True)
 
         local_conn.close()
         global_conn.close()

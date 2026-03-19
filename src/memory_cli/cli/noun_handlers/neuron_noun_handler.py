@@ -94,7 +94,7 @@ def handle_add(args: List[str], global_flags: Any) -> Any:
                 return Result(status="error", error=f"Neuron {parent_raw} not found")
 
         from memory_cli.neuron import neuron_add
-        result = neuron_add(conn, content, tags=tags, source=source, attrs=attrs, no_embed=True)
+        result = neuron_add(conn, content, tags=tags, source=source, attrs=attrs)
         new_id = result["id"]
 
         # If --parent provided, create edge parent→child (parent owns the relationship).
@@ -427,11 +427,14 @@ def handle_search(args: List[str], global_flags: Any) -> Any:
             total += envelope.total_before_pagination
             if envelope.vector_unavailable:
                 vector_unavailable = True
+        # Re-sort merged results by score descending so global high-relevance
+        # results rank above local low-relevance ones.
+        all_results.sort(key=lambda r: r.get("score", 0), reverse=True)
         if not verbose:
             all_results = [lean_search_result(r) for r in all_results]
         return Result(
             status="ok",
-            data=all_results,
+            data=all_results[:limit],
             meta={
                 "query": query,
                 "total": total,

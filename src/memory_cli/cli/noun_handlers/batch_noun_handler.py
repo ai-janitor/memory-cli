@@ -235,7 +235,7 @@ def handle_reembed(args: List[str], global_flags: Any) -> Any:
         conn, config = get_connection_and_config(global_flags)
         from memory_cli.embedding.model_loader_lazy_singleton import get_model
         from memory_cli.embedding import batch_reembed
-        model = get_model(config.embedding.model_path)
+        model = get_model(config)
         progress = batch_reembed(conn, model, batch_size=batch_size)
         return Result(status="ok", data={
             "processed": progress.processed,
@@ -260,7 +260,7 @@ _VERB_DESCRIPTIONS = {
     "export": "Export database contents to portable format",
     "import": "Import data from portable format",
     "load": "Load a YAML graph document (neurons + edges with ref labels or neuron IDs) from file, stdin (-), or --inline",
-    "reembed": "Regenerate embeddings for all neurons",
+    "reembed": "Embed blank neurons (never embedded) and stale neurons (content/tags changed since last embed). Skips neurons whose embedding input hash is unchanged. Use --global to target the global store. Use --force to re-embed all neurons regardless of staleness.",
 }
 
 _FLAG_DEFS = {

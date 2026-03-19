@@ -29,7 +29,7 @@ import sqlite3
 from dataclasses import dataclass, field
 
 from .embedding_input_content_plus_tags import build_embedding_input
-from .embed_single_and_batch import embed_batch
+from .embed_single_and_batch import embed_batch, embed_single
 from .stale_and_blank_vector_detection import (
     get_all_reembed_candidates,
     get_blank_neuron_ids,
@@ -158,17 +158,20 @@ def batch_reembed(
         #     progress.failed += len(batch_ids)
         #     progress.failed_neuron_ids.extend(batch_ids)
         #     continue
-        texts = [input_text for _, input_text, _ in pairs]
-        try:
-            vectors = embed_batch(model, texts, "index")
-        except Exception as e:
-            logger.warning("embed_batch failed for batch starting at %s: %s", batch_start, e)
-            progress.failed += len(pairs)
-            progress.failed_neuron_ids.extend([nid for nid, _, _ in pairs])
-            continue
+        # Use sequential single embeds — llama-cpp-python 0.3.x batch embed
+        # fails with llama_decode -1 for batch size > 1.
+        vectors = []
+        batch_failed = False
+        for nid, input_text, _ in pairs:
+            try:
+                vec = embed_single(model, input_text, "index")
+                vectors.append(vec)
+            except Exception as e:
+                logger.warning("embed_single failed for neuron %s: %s", nid, e)
+                batch_failed = True
+                break
 
-        if vectors is None:
-            # Model missing — all in this batch failed
+        if batch_failed or not vectors or len(vectors) != len(pairs):
             progress.failed += len(pairs)
             progress.failed_neuron_ids.extend([nid for nid, _, _ in pairs])
             continue

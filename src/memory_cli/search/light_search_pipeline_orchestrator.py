@@ -279,7 +279,9 @@ def _run_retrieval_stage(
     try:
         if not _EMBEDDING_AVAILABLE or get_model is None:
             raise RuntimeError("Embedding package not available")
-        model = get_model(None)  # config=None falls back to defaults
+        from memory_cli.config import load_config
+        config = load_config()
+        model = get_model(config)
         embedding_input = build_embedding_input(options.query, [])
         state.query_embedding = embed_single(model, embedding_input, "query")
     except Exception:

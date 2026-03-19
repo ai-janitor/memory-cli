@@ -338,19 +338,14 @@ def _embed_neuron(
     Raises:
         Any exception from embedding engine or DB — caller handles.
     """
-    import hashlib
-    from memory_cli.embedding import embed_single, write_vector, OperationType
+    from memory_cli.embedding import embed_single, write_vector, get_model, OperationType
+    from memory_cli.config import load_config
 
     input_text = _build_embedding_input(content, tags)
-    input_hash = hashlib.sha256(input_text.encode()).hexdigest()
-    vector = embed_single(None, input_text, "index")
+    config = load_config()
+    model = get_model(config)
+    vector = embed_single(model, input_text, "index")
     write_vector(conn, neuron_id, vector)
-    now_ms = int(time.time() * 1000)
-    conn.execute(
-        "UPDATE neurons SET embedding_updated_at = ?, embedding_input_hash = ? WHERE id = ?",
-        (now_ms, input_hash, neuron_id)
-    )
-    conn.commit()
 
 
 def _build_embedding_input(content: str, tags: List[str]) -> str:
