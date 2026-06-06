@@ -419,55 +419,99 @@ Common Patterns and Workflows
      # Later, find all standup entries:
      memory neuron list --tag standup"""
 
+# Compact orientation — printed by `memory manpage architecture brief`.
+# The SessionStart hook sources this so the model is conveyed every session
+# from a single authoritative place (no hardcoded duplicate in the hook).
+_ARCHITECTURE_BRIEF = """\
+=== HOW TO USE MEMORY (library model) ===
+Route by mission, narrowing: catalog -> section -> shelf -> book. Don't blind keyword-search.
+  catalog = `memory neuron list --tag hub` | section = a hub | shelf = its children or a docs/ folder | book = a short fact in a neuron, OR a file the neuron points to
+  A neuron is a CATALOG CARD, not the book: thin title + summary (+ file path). Long content lives in a FILE; the neuron indexes it.
+  Two libraries: GLOBAL (central) + per-project LOCAL (regional). A query in a branch sees both, local wins. Cite hubs by NAME, not ID.
+  No orphans: every neuron under a hub; every doc under a folder index.
+Full model: memory manpage architecture"""
+
+_ARCHITECTURE = """\
+Knowledge Architecture — the Library Model
+
+The graph is the CARD CATALOG; the filesystem is the STACKS. A neuron is a
+catalog CARD (a thin pointer + summary), not the BOOK. Don't cram a whole
+document into a neuron.
+
+Four tiers, narrowing from question to answer:
+
+  1. Catalog   memory neuron list --tag hub   (the hub index; auto-injected
+               each session by the SessionStart hook)
+  2. Section   a hub (neuron tagged 'hub'); route by mission. The hub body
+               states an inclusion rule — "what belongs here".
+  3. Shelf     a sub-grouping: child neurons in-graph, OR a folder with an
+               INDEX/README on disk.
+  4. Book      the content: a SHORT fact living in the neuron, OR a long
+               document FILE the neuron points to.
+
+  Always walk catalog -> section -> shelf -> book. Blind `neuron search
+  "keyword"` teleports past tiers 1-3 and often lands on the wrong shelf.
+
+The graph/filesystem boundary (the core rule):
+  Neuron = catalog card: 2-4 word title, 1-2 line summary, edges, tags, and a
+  file PATH when the depth lives in a file. The file holds the depth.
+    - atomic fact / rule / contact / decision -> lives fully in the neuron
+    - long / structured / evolving document   -> a file; neuron = thin card
+  Connect both ways: card -> book (path); book -> shelf (folder index ->
+  parent -> repo root). No orphans on either side.
+
+Two libraries (store federation):
+  Central  = GLOBAL (~/.memory): profile, contacts, system rules, reusable
+             cross-project IP, and the directory of branches.
+  Regional = LOCAL (<project>/.memory/, made by `memory init`): that project's
+             own knowledge. A branch is defined by the STORE, located by
+             ancestor-walk to the nearest .memory/ — NOT by a repo.
+  Federation: a query in a regional branch sees regional THEN central (local
+    wins). Visibility is upward by default; --global restricts to central.
+  Call numbers: scoped handles LOCAL-42, GLOBAL-42, <fingerprint>:42.
+  Central -> regional: keep a Branch Registry hub in GLOBAL (one synopsis card
+    per branch: fingerprint + path + coverage) so central can point down to
+    regions; resolve <fingerprint>:id to read across.
+
+Scoping rule: GLOBAL is NOT a catch-all. Project-specific knowledge goes to
+that project's LOCAL store; default LOCAL when unsure, promote to GLOBAL only
+once a 2nd project needs it.
+
+See also: memory manpage stores, manpage tag-conventions, manpage how-to."""
+
 _FRONT_DOOR = """\
-The Memory Mansion — Front Door and Graph Navigation
+Graph Navigation — Catalog First (the Gate is Emergent)
 
-Your memory graph is a mansion. Neurons are rooms, edges are hallways,
-and the gate neuron is the front door — the most connected neuron in
-your store, the natural entry point for navigating the graph.
+The deterministic entry point to your memory is the CATALOG, not the gate:
+    memory neuron list --tag hub
+This lists every hub (the topic index), LOCAL + GLOBAL merged. Route by
+mission to a hub, then walk its child_of edges to the neuron you need.
+For the full model (tiers, card-vs-book, store federation):
+    memory manpage architecture
 
-Key concepts:
+Gate (emergent — NOT the index):
+  `memory gate show` resolves to the most-CONNECTED neuron. It falls out of
+  graph shape and shifts over time. Useful as a "what's been central lately"
+  signal, but do NOT rely on it as the entry point — use the hub catalog.
 
-  Front door (gate neuron):
-    The neuron with the most edges. It connects to the main topic
-    clusters in your store. Find it with:
-      memory gate show
+Edges (build the graph):
+    memory edge add <HUB> <CHILD> --type child_of      (hub -> child)
+    memory edge add 42 99 --type relates_to
+    memory edge splice 42 99 --through 77 --type refines
 
-  Houses:
-    Neurons directly connected to the gate. Each house is a topic
-    cluster — a group of related memories. gate show lists the top
-    houses with their edge reasons and weights.
-
-  Hallways (edges):
-    Connections between neurons. Build new hallways with edge add.
-    Insert a room between two existing rooms with edge splice:
-      memory edge add 42 99 --type relates_to
-      memory edge splice 42 99 --through 77 --type refines
-
-  Cross-store navigation:
-    Each store has a unique fingerprint (8-char hex). Reference neurons
-    in other projects using fingerprint:id handles:
-      memory neuron get a3f2b7c1:42
-    Run `memory meta fingerprint` to see your store's fingerprint.
-    Run `memory meta stores` to list all known stores.
-
-  Registering in the global directory:
-    Announce your project store to the global memory mansion:
-      memory gate register       (from a local project store)
-      memory gate deregister     (remove the announcement)
-    This creates a representative neuron in ~/.memory/ so cross-project
-    search can discover your project.
+Cross-store navigation:
+  Each store has an 8-char hex fingerprint. Reference neurons in other stores
+  by fingerprint:id handles:
+    memory neuron get a3f2b7c1:42
+    memory meta fingerprint     (this store's fingerprint)
+    memory meta stores          (all known stores)
 
 Practical workflow:
-  1. memory gate show                     Find your front door
-  2. memory neuron get <gate-id>          Read the gate neuron
-  3. memory edge list <gate-id>           See all houses (topic clusters)
-  4. memory neuron get <house-id>         Explore a house
-  5. memory neuron search "topic"         Search within the mansion
-
-The mansion grows organically. As you add neurons and edges, the gate
-may shift to a new most-connected neuron. That is expected — the front
-door moves to where the action is."""
+  1. memory neuron list --tag hub         The catalog — start here
+  2. (pick the hub whose mission matches your task)
+  3. memory neuron get <hub-id>           Read its inclusion rule + children
+  4. memory neuron get <child-id>         Walk to the neuron
+  5. memory neuron search "topic"         Only after routing — search within"""
 
 _TAG_CONVENTIONS = """\
 Tag Naming Conventions
@@ -600,12 +644,23 @@ handle_front_door = _make_topic_handler(_FRONT_DOOR)
 handle_tag_conventions = _make_topic_handler(_TAG_CONVENTIONS)
 
 
+def handle_architecture(args: List[str], global_flags: Any) -> Any:
+    """Architecture manpage. `brief` (or --brief) prints the compact orientation
+    the SessionStart hook sources; otherwise the full library model."""
+    import sys
+    from memory_cli.cli.output_envelope_json_and_text import write_output
+    brief = any(a in ("brief", "--brief") for a in (args or []))
+    write_output(_ARCHITECTURE_BRIEF if brief else _ARCHITECTURE, stream=sys.stdout)
+    sys.exit(0)
+
+
 # =============================================================================
 # NOUN REGISTRATION — executed at import time
 # =============================================================================
 _VERB_MAP = {
     "overview": handle_overview,
     "how-to": handle_how_to,
+    "architecture": handle_architecture,
     "people": handle_people,
     "search": handle_search,
     "graph-docs": handle_graph_docs,
@@ -618,18 +673,20 @@ _VERB_MAP = {
 _VERB_DESCRIPTIONS = {
     "overview": "Full CLI guide — nouns, verbs, flags",
     "how-to": "Agent onboarding guide — start here if new",
+    "architecture": "The library model — catalog/section/shelf/book; neuron=card not book; store federation",
     "people": "How to model people, contacts, relationships",
     "search": "How search works — hybrid retrieval, spreading activation",
     "graph-docs": "YAML graph document format, batch load, inline/stdin",
     "stores": "Memory stores — LOCAL, GLOBAL, foreign, scoped handles",
     "recipes": "Common patterns and workflows",
-    "front-door": "The memory mansion — gate neurons, houses, graph navigation",
+    "front-door": "Graph navigation — catalog-first entry; the gate is emergent, not the index",
     "tag-conventions": "Tag naming conventions — structural, domain, temporal categories",
 }
 
 _FLAG_DEFS = {
     "overview": [],
     "how-to": [],
+    "architecture": [],
     "people": [],
     "search": [],
     "graph-docs": [],

@@ -11,6 +11,8 @@ Graph-based memory CLI for AI agents. Python + llama-cpp-python + SQLite + sqlit
 - `REQUIREMENTS.md` — clean requirements (latest)
 - `.planning/v1/SESSION-STATE.md` — full session state for resumption
 - `.planning/v1/raw-to-clean-trace.md` — requirement traceability
+- `docs/knowledge-architecture.md` — the library model (catalog→section→shelf→book); neuron = card, file = book (graph indexes, filesystem holds depth); no-orphan-docs rule
+- `docs/claude-code-integration.md` — agent auto-load setup (SessionStart hook) + organizing conventions (hubs, catalog-first, store scoping, hub promotion/demotion)
 
 ## Reference Repos
 - `/Users/hung/projects/qmd-reference/` — QMD by Tobi Lütke (hybrid search reference)

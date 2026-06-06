@@ -241,6 +241,18 @@ cd your-project/
 memory init
 ```
 
+## Agent Integration
+
+To make the graph **auto-load into every Claude Code session** (a deterministic SessionStart
+hook that injects the topic index) and adopt the organizing conventions that keep the graph
+navigable (hubs, catalog-first routing, no-orphans, store scoping, hub promotion/demotion), see
+**[docs/claude-code-integration.md](docs/claude-code-integration.md)**.
+
+For the architecture *above* those conventions — the tiered "library model" (catalog → section →
+shelf → book) and the rule that **a neuron is a catalog card, not the book** (graph indexes,
+filesystem holds depth) — see **[docs/knowledge-architecture.md](docs/knowledge-architecture.md)**
+(with a visual SVG explainer: **[docs/knowledge-architecture.html](docs/knowledge-architecture.html)**).
+
 ## Requirements
 
 - Python 3.11+
