@@ -140,6 +140,16 @@
   the catalog and walk <em>down</em>.</p>
 
   <div class="fig">
+    <!-- ============================================================
+      SVG MODEL — intent (declare the graph BEFORE drawing; diff the render against this). SKILL G0.
+      nodes:  catalog(cabinet) · section(building) · shelf(shelves) · book
+      ports:  <node>.left, <node>.right (each node's mid-height side)
+      edges (gray, marker arrow, meaning "narrows to"):
+        catalog.right → section.left
+        section.right → shelf.left
+        shelf.right   → book.left
+      rules: 4 nodes in one left→right row; every edge is node→node; single funnel, no crossings.
+    ============================================================ -->
     <svg viewBox="0 0 960 470" role="img" aria-label="Funnel of four tiers narrowing from card catalog to a single book">
       <defs>
         <marker id="arrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
@@ -262,6 +272,13 @@
   lives in a file — a <strong>pointer to that file's path</strong>. You don't photocopy the book onto the index card.</p>
 
   <div class="fig">
+    <!-- ============================================================
+      SVG MODEL — intent (SKILL G0).
+      nodes:  card(thin neuron, left) · book(file on disk, right)
+      ports:  card.right (mid-height) · book.left (mid-height)
+      edges:  card.right → book.left  : "points to"  (orange solid; label backed/clear of shapes)
+      rules:  one edge, node→node, lands on both bodies; no crossings.
+    ============================================================ -->
     <svg viewBox="0 0 960 360" role="img" aria-label="An index card with title, summary and path fields pointing to a thick book file on disk">
       <defs>
         <marker id="arrow2" markerWidth="12" markerHeight="12" refX="8" refY="4" orient="auto" markerUnits="strokeWidth">
@@ -352,7 +369,29 @@ memory attr add &lt;id&gt; <span class="f">path</span> docs/capabilities/network
   A branch is defined by the <em>store</em> — the nearest <code>.memory/</code> found by ancestor-walk — <em>not</em> by a repo.</p>
 
   <div class="fig">
-    <svg viewBox="0 0 1000 560" role="img" aria-label="One central library building and three regional branch buildings with upward query arrows and a downward branch-registry pointer">
+    <!-- ============================================================
+      SVG MODEL — intent (SKILL G0).  Plan the linkage FIRST, then draw each path from these ports.
+      nodes:
+        central   "CENTRAL LIBRARY · GLOBAL"   building, top center
+        registry  "Branch Registry hub"        callout, top right (belongs to central)
+        b_govcon  "govcon"                      branch building, bottom left
+        b_mc      "memory-cli"                  branch building, bottom center
+        b_genesis "genesis-mission"             branch building, bottom right
+      ports:  central.base (bottom edge) · <branch>.roof (peak / roof slope) · registry.bottom
+      edges:
+        b_govcon.roof  → central.base       : READ     green solid up    (branch reads central)
+        b_mc.roof      → central.base       : READ     green solid up
+        b_genesis.roof → central.base       : READ     green solid up
+        registry.bottom→ b_genesis.roofR    : RESOLVE  purple dashed down (central→branch via registry)
+        registry.left  ↔ central.roofR      : membership tie (short dashed, no arrowhead)
+      decisions (disclosed — flip by editing this model, not by nudging pixels):
+        - purple SOURCE = the registry callout, NOT the central wall, so the origin is explicit.
+        - purple TARGET = the RIGHT branch (nearest the top-right registry) so it never crosses the
+          right green up-arrow. Read-up / resolve-down meaning is carried by the LEGEND below.
+      rules checked on the model: every edge node→node landing on a body port; no edge crosses another
+        (lanes: greens fan to base center; purple stays in the far-right lane); labels off the lines.
+    ============================================================ -->
+    <svg viewBox="0 0 1000 560" role="img" aria-label="One central library building, three regional branch buildings with upward read arrows, and a registry pointer from the callout down into the right branch">
       <defs>
         <marker id="arUp" markerWidth="11" markerHeight="11" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
           <path d="M0,0 L8,4 L0,8 Z" fill="#2e8b57"/>
@@ -407,8 +446,10 @@ memory attr add &lt;id&gt; <span class="f">path</span> docs/capabilities/network
       <path d="M540,374 L540,228" stroke="#2e8b57" stroke-width="2.2" fill="none" marker-end="url(#arUp)"/>
       <path d="M890,374 C840,330 700,275 600,228" stroke="#2e8b57" stroke-width="2.2" fill="none" marker-end="url(#arUp)"/>
 
-      <!-- downward registry pointer: from central base down onto the middle region's RIGHT roof slope, kept entirely right of the x=540 upward green so the two lines never cross -->
-      <path d="M620,230 C628,300 602,358 576,390" stroke="#6b4fa0" stroke-width="2.2" stroke-dasharray="5 4" fill="none" marker-end="url(#arDn)"/>
+      <!-- edge registry.bottom -> b_genesis.roofR : RESOLVE (purple dashed). Sourced at the registry
+           callout (795,148) so its origin is explicit; lands on the RIGHT branch's right roof slope
+           (932,384), staying in the far-right lane so it never crosses the right green up-arrow. -->
+      <path d="M795,148 C812,240 880,330 932,384" stroke="#6b4fa0" stroke-width="2.2" stroke-dasharray="5 4" fill="none" marker-end="url(#arDn)"/>
 
       <!-- ============ LAYER 3: ALL TEXT / LABELS (on top of everything) ============ -->
 
@@ -511,6 +552,17 @@ memory meta fingerprint</div>
   A doc reachable from the graph but in an unindexed folder is <em>half-orphaned</em> — both paths must hold.</p>
 
   <div class="fig">
+    <!-- ============================================================
+      SVG MODEL — intent (SKILL G0).  Two sub-graphs split by a divider; ONE deliberate orphan.
+      GRAPH-side edges (blue):
+        hub → card1, hub → card2, hub → card3   : "child_of"  (middle label backed by a white halo)
+        orphan_card : NO edge — intentionally unlinked (the rejected "no hub = noise" case)
+      FILESYSTEM-side edges (orange):
+        readme → index : "links" ;  index → file1, index → file2
+      ports: <node>.bottom / <node>.top (mid-width); divider line separates the two sides.
+      rules: every REAL node is node→node linked; the orphan is the ONE allowed edge-less node (that
+        IS the point); no connector crosses a label; the two sides never cross the divider.
+    ============================================================ -->
     <svg viewBox="0 0 960 300" role="img" aria-label="Graph side: hub to child neurons. Filesystem side: repo root to folder index to files. Plus a rejected orphan.">
       <defs>
         <marker id="arG" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L7,3 L0,6 Z" fill="#2f6fb0"/></marker>
