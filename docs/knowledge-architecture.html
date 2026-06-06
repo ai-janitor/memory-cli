@@ -500,11 +500,9 @@ memory attr add &lt;id&gt; <span class="f">path</span> docs/capabilities/network
         <div xmlns="http://www.w3.org/1999/xhtml" style="box-sizing:border-box;width:100%;height:100%;padding:2px 8px;border-radius:6px;background:#f3ecf9;font-family:ui-monospace,Menlo,Consolas,monospace;line-height:1.1;overflow-wrap:break-word;word-break:break-word;text-align:center;display:flex;flex-direction:column;justify-content:center;font-size:10.5px;font-weight:700;color:#6b4fa0;">a1b2c3d4:42 (resolve across)</div>
       </foreignObject>
     </svg>
-    <p class="cap"><b>Federation is upward by default.</b>
-    <span class="pill up">▲ automatic</span> Standing in a regional branch, a query sees <em>regional then central</em> — regional results first, <b>local wins</b> on conflict.
-    <span class="pill down">▼ deliberate</span> Central points <em>down</em> only via the <b>Branch Registry hub</b> (one synopsis card per branch) and cross-store edges,
-    so something working from central can discover which regions exist and resolve <code>&lt;fingerprint&gt;:id</code> to read across.
-    Regions can't see each other.</p>
+    <p class="cap"><b>Federation is upward by default.</b> A branch reads <em>regional → central</em> (<b>local wins</b>);
+    central reaches a branch only <em>deliberately</em>, via the Branch Registry. Regions can't see each other.
+    <span class="pill up">▲ automatic</span> <span class="pill down">▼ deliberate</span> — see legend.</p>
 
     <!-- LEGEND: descriptions live here (HTML/CSS), not crammed into the SVG drawing — see G2 DRAWING vs DESCRIPTION -->
     <table>
