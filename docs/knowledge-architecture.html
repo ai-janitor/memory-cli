@@ -407,8 +407,8 @@ memory attr add &lt;id&gt; <span class="f">path</span> docs/capabilities/network
       <path d="M540,374 L540,228" stroke="#2e8b57" stroke-width="2.2" fill="none" marker-end="url(#arUp)"/>
       <path d="M890,374 C840,330 700,275 600,228" stroke="#2e8b57" stroke-width="2.2" fill="none" marker-end="url(#arUp)"/>
 
-      <!-- downward registry pointer: from central base down onto the middle region's roof (left slope, clear of the upward arrow) -->
-      <path d="M610,230 C600,300 560,350 522,381" stroke="#6b4fa0" stroke-width="2.2" stroke-dasharray="5 4" fill="none" marker-end="url(#arDn)"/>
+      <!-- downward registry pointer: from central base down onto the middle region's RIGHT roof slope, kept entirely right of the x=540 upward green so the two lines never cross -->
+      <path d="M620,230 C628,300 602,358 576,390" stroke="#6b4fa0" stroke-width="2.2" stroke-dasharray="5 4" fill="none" marker-end="url(#arDn)"/>
 
       <!-- ============ LAYER 3: ALL TEXT / LABELS (on top of everything) ============ -->
 
@@ -424,10 +424,10 @@ memory attr add &lt;id&gt; <span class="f">path</span> docs/capabilities/network
         </div>
       </foreignObject>
 
-      <!-- REGIONAL titles (above each roof; roof peaks at y=374 absolute) -->
-      <text x="170" y="362" text-anchor="middle" font-size="13" font-weight="700" fill="#2e8b57">REGIONAL BRANCH</text>
-      <text x="540" y="362" text-anchor="middle" font-size="13" font-weight="700" fill="#2e8b57">REGIONAL BRANCH</text>
-      <text x="910" y="362" text-anchor="middle" font-size="13" font-weight="700" fill="#2e8b57">REGIONAL BRANCH</text>
+      <!-- (per-building "REGIONAL BRANCH" titles removed: they sat at y=362 right where the arrows emerge from
+           the peaks (y=374) and were pierced by every connector. The middle column (x=540 vertical green) leaves
+           no clear lane for a centered group title either. The term is defined once in the legend below; the
+           buildings are green and carry their project name beneath — see G2 DRAWING vs DESCRIPTION.) -->
 
       <!-- REGIONAL captions (below each building, base y=510 absolute) -->
       <foreignObject x="90" y="516" width="160" height="40">
@@ -534,6 +534,8 @@ memory meta fingerprint</div>
         <path d="M200,90 L98,144" stroke="#2f6fb0" stroke-width="1.8" marker-end="url(#arG)"/>
         <path d="M220,90 L220,144" stroke="#2f6fb0" stroke-width="1.8" marker-end="url(#arG)"/>
         <path d="M240,90 L344,144" stroke="#2f6fb0" stroke-width="1.8" marker-end="url(#arG)"/>
+        <!-- white halo so the middle vertical arrow is hidden behind the edge label rather than crossing its letters -->
+        <rect x="195" y="106" width="50" height="16" fill="#fff"/>
         <text x="220" y="118" text-anchor="middle" font-size="10" class="svgcode" fill="#5b6675">child_of</text>
       </g>
       <!-- rejected orphan -->
