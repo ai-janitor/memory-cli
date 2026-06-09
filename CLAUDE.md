@@ -1,5 +1,13 @@
 # memory-cli
 
+## Maintenance mode
+LIVE, gated repo with a pytest suite. For a defect fix or additive verb, use the
+**maintain-operate-orchestration** skill (`~/.skills/maintain-operate-orchestration/`):
+acceptance-test-first → scope → spec → baseline → delegate → gate → changelog. Per-change
+specs live in `docs/delegations/`. ⚠️ Baseline-green must be checked **multi-run**
+(`uv run pytest tests/` ×5) — the suite has latent flakiness (time/allocation-sensitive
+tests); a single green run is not a stable baseline. (First applied 2026-06-09 for `neuron tree`.)
+
 ## Project Status
 /decompose v2 IN PROGRESS. Stage 7 (Scaffold) — tree approved, content fan-out next. Read `.planning/v2/SESSION-STATE.md` to resume.
 

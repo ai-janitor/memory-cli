@@ -79,7 +79,8 @@ def hydrate_results(
     # neuron_map = {row[0]: row for row in rows}
     placeholders = ",".join("?" * len(neuron_ids))
     rows = conn.execute(
-        f"SELECT id, content, created_at, updated_at, project, source, status "
+        f"SELECT id, content, created_at, updated_at, project, source, status, "
+        f"access_count, last_accessed_at "
         f"FROM neurons WHERE id IN ({placeholders})",
         neuron_ids,
     ).fetchall()
@@ -227,6 +228,8 @@ def _build_result_record(
     #     "project": neuron_row[4],
     #     "source": neuron_row[5],
     #     "status": neuron_row[6],
+    #     "access_count": neuron_row[7],
+    #     "last_accessed_at": neuron_row[8],
     #     "tags": neuron_tags,
     #     "match_type": candidate.get("match_type", "direct_match"),
     #     "hop_distance": candidate.get("hop_distance", 0),
@@ -247,6 +250,8 @@ def _build_result_record(
         "project": neuron_row[4],
         "source": neuron_row[5],
         "status": neuron_row[6],
+        "access_count": neuron_row[7],
+        "last_accessed_at": neuron_row[8],
         "tags": neuron_tags,
         "match_type": candidate.get("match_type", "direct_match"),
         "hop_distance": candidate.get("hop_distance") or 0,

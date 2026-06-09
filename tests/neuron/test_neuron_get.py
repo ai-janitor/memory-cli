@@ -370,3 +370,51 @@ class TestNeuronGetEdgeHydration:
         assert len(out_edges) == 2
         targets = {e["target"] for e in out_edges}
         assert targets == {n2, n3}
+
+
+# -----------------------------------------------------------------------------
+# Access metrics tests (Task 74: --full flag surfaces these fields)
+# -----------------------------------------------------------------------------
+
+class TestNeuronGetAccessMetrics:
+    """Test that access_count and last_accessed_at are returned by neuron_get."""
+
+    def test_access_count_present_in_result(self, migrated_conn):
+        """Verify access_count is present in neuron_get result dict."""
+        from memory_cli.neuron.neuron_get_by_id import neuron_get
+
+        neuron_id = _insert_neuron(migrated_conn, content="metric test")
+        result = neuron_get(migrated_conn, neuron_id)
+        assert "access_count" in result
+
+    def test_last_accessed_at_present_in_result(self, migrated_conn):
+        """Verify last_accessed_at is present in neuron_get result dict."""
+        from memory_cli.neuron.neuron_get_by_id import neuron_get
+
+        neuron_id = _insert_neuron(migrated_conn, content="metric test 2")
+        result = neuron_get(migrated_conn, neuron_id)
+        assert "last_accessed_at" in result
+
+    def test_access_count_increments_on_read(self, migrated_conn):
+        """Verify access_count increases after each neuron_get call."""
+        from memory_cli.neuron.neuron_get_by_id import neuron_get
+
+        neuron_id = _insert_neuron(migrated_conn, content="count test")
+        r1 = neuron_get(migrated_conn, neuron_id)
+        r2 = neuron_get(migrated_conn, neuron_id)
+        assert r2["access_count"] == r1["access_count"] + 1
+
+    def test_last_accessed_at_is_int_after_second_read(self, migrated_conn):
+        """Verify last_accessed_at is a non-zero integer on the second read.
+
+        Note: SELECT runs before the bump UPDATE, so the first call returns the
+        pre-existing (NULL) value.  The UPDATE fires, setting last_accessed_at.
+        The second call's SELECT then returns the non-null timestamp.
+        """
+        from memory_cli.neuron.neuron_get_by_id import neuron_get
+
+        neuron_id = _insert_neuron(migrated_conn, content="access ts test")
+        neuron_get(migrated_conn, neuron_id)  # first read — sets last_accessed_at via UPDATE
+        result = neuron_get(migrated_conn, neuron_id)  # second read — SELECT sees updated value
+        assert isinstance(result["last_accessed_at"], int)
+        assert result["last_accessed_at"] > 0

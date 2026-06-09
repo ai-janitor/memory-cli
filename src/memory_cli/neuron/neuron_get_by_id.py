@@ -70,7 +70,7 @@ def neuron_get(conn: sqlite3.Connection, neuron_id: int) -> Optional[Dict[str, A
     """
     # --- Step 1: Lookup neuron row ---
     # SELECT id, content, created_at, updated_at, project, source, status,
-    #        embedding_updated_at
+    #        embedding_updated_at, last_accessed_at, access_count
     # FROM neurons WHERE id = ?
     # If no row returned -> return None
 
@@ -88,7 +88,7 @@ def neuron_get(conn: sqlite3.Connection, neuron_id: int) -> Optional[Dict[str, A
 
     row = conn.execute(
         """SELECT id, content, created_at, updated_at, project, source, status,
-                  embedding_updated_at
+                  embedding_updated_at, last_accessed_at, access_count
            FROM neurons WHERE id = ?""",
         (neuron_id,)
     ).fetchone()

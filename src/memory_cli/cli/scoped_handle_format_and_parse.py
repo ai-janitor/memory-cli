@@ -23,9 +23,40 @@ from __future__ import annotations
 import logging
 import os
 import re
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 _logger = logging.getLogger(__name__)
+
+# Epoch-ms timestamp fields that get a human-readable `<field>_iso` companion.
+_TIMESTAMP_FIELDS = ("created_at", "updated_at", "last_accessed_at", "embedding_updated_at")
+
+
+def _epoch_ms_to_iso(val: Any) -> Optional[str]:
+    """Convert an epoch-milliseconds int to a local ISO datetime string.
+
+    Returns None for null/non-int values so callers can skip the companion field.
+    """
+    if not isinstance(val, int):
+        return None
+    try:
+        return datetime.fromtimestamp(val / 1000).isoformat(sep=" ", timespec="seconds")
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def add_iso_timestamps(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Add `<field>_iso` companions for epoch-ms timestamp fields, in place.
+
+    Non-destructive to the original epoch values (machine consumers keep them);
+    only adds readable companions. For any present timestamp field the `_iso`
+    key is ALWAYS set (None when the source is null/unconvertible) so the output
+    key set stays deterministic regardless of access-time side effects.
+    """
+    for field in _TIMESTAMP_FIELDS:
+        if field in data:
+            data[f"{field}_iso"] = _epoch_ms_to_iso(data[field])
+    return data
 
 
 # =============================================================================
@@ -156,12 +187,11 @@ def scope_neuron_dict(data: Dict[str, Any], scope: str) -> Dict[str, Any]:
     1. If data has 'id' key and it's an int -> replace with format_handle
     2. Return modified copy
     """
-    if "id" not in data:
-        return data
     out = dict(data)
-    val = out["id"]
+    val = out.get("id")
     if isinstance(val, int):
         out["id"] = format_handle(val, scope)
+    add_iso_timestamps(out)
     return out
 
 

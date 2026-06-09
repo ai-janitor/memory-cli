@@ -310,20 +310,16 @@ def _get_neighbors(
     return [(row[0], row[1], row[2], row[3]) for row in outgoing + incoming]
 
 
-# Cache for column existence check per connection id
-_confidence_column_cache: Dict[int, bool] = {}
-
-
 def _has_confidence_column(conn: sqlite3.Connection) -> bool:
-    """Check if the edges table has a confidence column (v004 migration).
+    """Check if the edges table has a confidence column (v005 migration).
 
-    Result is cached per connection to avoid repeated PRAGMA queries.
+    PRAGMA each call — deliberately NOT cached by id(conn): CPython reuses object
+    ids after a connection is GC'd, so an id-keyed module cache leaks a stale
+    schema flag onto a later same-id connection with a different schema (a
+    non-deterministic cross-test failure). Correctness > one PRAGMA.
     """
-    conn_id = id(conn)
-    if conn_id not in _confidence_column_cache:
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(edges)").fetchall()}
-        _confidence_column_cache[conn_id] = "confidence" in cols
-    return _confidence_column_cache[conn_id]
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(edges)").fetchall()}
+    return "confidence" in cols
 
 
 def _compute_activation(

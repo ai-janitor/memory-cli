@@ -43,33 +43,26 @@ DEFAULT_OFFSET = 0
 SNIPPET_MAX_LENGTH = 100
 VALID_DIRECTIONS = {"outgoing", "incoming", "both"}
 
-# Cache for column existence check per connection id
-_provenance_column_cache: Dict[int, bool] = {}
-_canonical_reason_column_cache: Dict[int, bool] = {}
-
-
 def _has_provenance_columns(conn: sqlite3.Connection) -> bool:
-    """Check if the edges table has provenance/confidence columns (v004 migration).
+    """Check if the edges table has provenance/confidence columns (v005 migration).
 
-    Result is cached per connection to avoid repeated PRAGMA queries.
+    Queries PRAGMA each call (a fast local op). Deliberately NOT cached by
+    id(conn): CPython reuses object ids after a connection is GC'd, so an
+    id-keyed module-level cache leaks a stale schema flag onto a later, same-id
+    connection with a different schema — a non-deterministic cross-test failure
+    (a v001-only test conn poisoning test_edge_provenance). Correctness > 1 PRAGMA.
     """
-    conn_id = id(conn)
-    if conn_id not in _provenance_column_cache:
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(edges)").fetchall()}
-        _provenance_column_cache[conn_id] = "provenance" in cols
-    return _provenance_column_cache[conn_id]
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(edges)").fetchall()}
+    return "provenance" in cols
 
 
 def _has_canonical_reason_column(conn: sqlite3.Connection) -> bool:
-    """Check if the edges table has canonical_reason column (v006 migration).
+    """Check if the edges table has canonical_reason column (v006/v007 migration).
 
-    Result is cached per connection to avoid repeated PRAGMA queries.
+    PRAGMA each call — NOT id(conn)-cached (see _has_provenance_columns rationale).
     """
-    conn_id = id(conn)
-    if conn_id not in _canonical_reason_column_cache:
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(edges)").fetchall()}
-        _canonical_reason_column_cache[conn_id] = "canonical_reason" in cols
-    return _canonical_reason_column_cache[conn_id]
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(edges)").fetchall()}
+    return "canonical_reason" in cols
 
 
 class EdgeListError(Exception):

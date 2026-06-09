@@ -155,6 +155,8 @@ def handle_get(args: List[str], global_flags: Any) -> Any:
     try:
         rest = list(args)
         verbose, rest = extract_bool_flag(rest, "--verbose")
+        full, rest = extract_bool_flag(rest, "--full")
+        verbose = verbose or full
         nid_raw, rest = require_positional(rest, "neuron_id")
         handle_scope, nid = parse_handle(nid_raw)
         connections = get_layered_connections(global_flags)
@@ -221,6 +223,8 @@ def handle_list(args: List[str], global_flags: Any) -> Any:
         offset, rest = extract_flag(rest, "--offset", type_fn=int, default=0)
         archived, rest = extract_bool_flag(rest, "--archived")
         verbose, rest = extract_bool_flag(rest, "--verbose")
+        full, rest = extract_bool_flag(rest, "--full")
+        verbose = verbose or full
         status = "all" if archived else "active"
         tags_and = [tag] if tag else None
         # Layered: query all stores, merge results (local first)
@@ -408,6 +412,8 @@ def handle_search(args: List[str], global_flags: Any) -> Any:
     try:
         rest = list(args)
         verbose, rest = extract_bool_flag(rest, "--verbose")
+        full, rest = extract_bool_flag(rest, "--full")
+        verbose = verbose or full
         query, rest = require_positional(rest, "query")
         limit, rest = extract_flag(rest, "--limit", type_fn=int, default=10)
         threshold, rest = extract_flag(rest, "--threshold", type_fn=float, default=0.0)
@@ -551,6 +557,54 @@ def handle_delete(args: List[str], global_flags: Any) -> Any:
 
 
 # =============================================================================
+# VERB: tree — recursive tree/lineage traversal from a root neuron
+# =============================================================================
+def handle_tree(args: List[str], global_flags: Any) -> Any:
+    """Walk edges recursively from a root neuron and return a nested tree.
+
+    Args:
+        args: [neuron_id, --direction down|up|both, --depth N, --type <edge_reason>]
+        global_flags: Parsed global flags.
+
+    Returns:
+        Result with status="ok", data=<nested tree dict>.
+    """
+    from memory_cli.cli.output_envelope_json_and_text import Result
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
+    from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
+        require_positional, extract_flag,
+    )
+    from memory_cli.cli.scoped_handle_format_and_parse import parse_handle
+    from memory_cli.traversal.tree_recursive_lineage import tree_lineage
+    try:
+        rest = list(args)
+        direction, rest = extract_flag(rest, "--direction", default="down")
+        depth, rest = extract_flag(rest, "--depth", type_fn=int, default=10)
+        edge_type, rest = extract_flag(rest, "--type", default=None)
+        nid_raw, rest = require_positional(rest, "neuron_id")
+        handle_scope, nid = parse_handle(nid_raw)
+
+        connections = get_layered_connections(global_flags)
+        conn, scope = connections[0]
+        if handle_scope is not None:
+            from memory_cli.cli.scoped_handle_format_and_parse import resolve_connection_by_scope as _rcs
+            match = _rcs(handle_scope, connections)
+            if match is not None:
+                conn, scope = match
+
+        tree = tree_lineage(conn, nid, direction=direction, depth=depth, edge_type=edge_type)
+        return Result(
+            status="ok",
+            data=tree,
+            meta={"direction": direction, "depth": depth, "edge_type": edge_type},
+        )
+    except LookupError as e:
+        return Result(status="not_found", error=str(e))
+    except Exception as e:
+        return Result(status="error", error=str(e))
+
+
+# =============================================================================
 # NOUN REGISTRATION — executed at import time
 # =============================================================================
 # Verb map: verb name -> handler function
@@ -564,6 +618,7 @@ _VERB_MAP = {
     "search": handle_search,
     "prune": handle_prune,
     "delete": handle_delete,
+    "tree": handle_tree,
 }
 
 # Verb descriptions for help system
@@ -577,6 +632,7 @@ _VERB_DESCRIPTIONS = {
     "search": "Search neurons by similarity or keyword",
     "prune": "Archive stale neurons by LRU access metrics",
     "delete": "Permanently delete a single neuron and its edges (requires --confirm)",
+    "tree": "Recursive tree/lineage traversal from a root neuron",
 }
 
 # Flag definitions for help system (verb -> list of flag specs)
@@ -589,7 +645,8 @@ _FLAG_DEFS = {
         {"name": "--edge-type", "type": "str", "default": "child_of", "desc": "Edge type for --parent relationship (default: child_of)"},
     ],
     "get": [
-        {"name": "--verbose", "type": "bool", "default": False, "desc": "Show all fields (status, updated_at, project, attrs, embedding_updated_at)"},
+        {"name": "--verbose", "type": "bool", "default": False, "desc": "Show all fields incl. updated_at, last_accessed_at, access_count, status, project, attrs, embedding_updated_at"},
+        {"name": "--full", "type": "bool", "default": False, "desc": "Alias for --verbose"},
     ],
     "list": [
         {"name": "--type", "type": "str", "default": None, "desc": "Filter by type"},
@@ -597,7 +654,8 @@ _FLAG_DEFS = {
         {"name": "--limit", "type": "int", "default": 50, "desc": "Max results"},
         {"name": "--offset", "type": "int", "default": 0, "desc": "Skip first N"},
         {"name": "--archived", "type": "bool", "default": False, "desc": "Include archived"},
-        {"name": "--verbose", "type": "bool", "default": False, "desc": "Show all fields (status, updated_at, project, attrs, embedding_updated_at)"},
+        {"name": "--verbose", "type": "bool", "default": False, "desc": "Show all fields incl. updated_at, last_accessed_at, access_count, status, project, attrs, embedding_updated_at"},
+        {"name": "--full", "type": "bool", "default": False, "desc": "Alias for --verbose"},
     ],
     "update": [
         {"name": "--content", "type": "str", "default": None, "desc": "New content"},
@@ -616,10 +674,16 @@ _FLAG_DEFS = {
         {"name": "--limit", "type": "int", "default": 10, "desc": "Max results"},
         {"name": "--threshold", "type": "float", "default": 0.0, "desc": "Min similarity"},
         {"name": "--type", "type": "str", "default": None, "desc": "Filter by type"},
-        {"name": "--verbose", "type": "bool", "default": False, "desc": "Show all fields (status, updated_at, project, attrs)"},
+        {"name": "--verbose", "type": "bool", "default": False, "desc": "Show all fields incl. updated_at, last_accessed_at, access_count, status, project, attrs"},
+        {"name": "--full", "type": "bool", "default": False, "desc": "Alias for --verbose"},
     ],
     "delete": [
         {"name": "--confirm", "type": "bool", "default": False, "desc": "Required: confirm permanent deletion"},
+    ],
+    "tree": [
+        {"name": "--direction", "type": "str", "default": "down", "desc": "down (descendants), up (ancestors), or both"},
+        {"name": "--depth", "type": "int", "default": 10, "desc": "Max recursion depth (depth=1 = root + one level)"},
+        {"name": "--type", "type": "str", "default": None, "desc": "Only follow edges with this reason (edge_type filter)"},
     ],
 }
 

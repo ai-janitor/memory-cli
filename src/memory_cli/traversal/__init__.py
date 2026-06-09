@@ -24,3 +24,4 @@
 
 from .timeline_walk_forward_backward import timeline_walk
 from .goto_follow_edges_single_hop import goto_follow_edges
+from .tree_recursive_lineage import tree_lineage
