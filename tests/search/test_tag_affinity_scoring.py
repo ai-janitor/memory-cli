@@ -40,6 +40,9 @@ from memory_cli.search.tag_affinity_scoring_shared_tags import (
 )
 from memory_cli.search.final_score_combine_and_rank import (
     compute_final_scores,
+    RRF_MAX,
+    AFFINITY_GAIN,
+    TAG_AFFINITY_BASE_CAP,
 )
 
 
@@ -378,9 +381,10 @@ class TestTagAffinityFinalScoring:
     """Test that tag_affinity_score integrates correctly with final scoring."""
 
     def test_tag_affinity_boosts_direct_match(self):
-        """Verify tag_affinity_score is additive in direct_match scoring.
+        """Verify tag_affinity acts as a BOUNDED multiplier on direct_match.
 
-        final_score = (rrf_score + tag_affinity_score) * temporal_weight
+        MEM-FIX-0006: final = (rrf/RRF_MAX) * temporal * affinity_mod * salience_mod.
+        affinity_mod = 1 + AFFINITY_GAIN * min(tag_affinity, 1.0).
         """
         candidates = [
             {
@@ -392,13 +396,14 @@ class TestTagAffinityFinalScoring:
             }
         ]
         result = compute_final_scores(candidates)
-        expected = (0.016 + 0.25) * 1.0
+        affinity_mod = 1.0 + AFFINITY_GAIN * 0.25
+        expected = (0.016 / RRF_MAX) * 1.0 * affinity_mod
         assert abs(result[0]["final_score"] - expected) < 1e-10
 
     def test_tag_affinity_boosts_fan_out(self):
-        """Verify tag_affinity_score is additive in fan_out scoring.
+        """Verify tag_affinity acts as a BOUNDED multiplier on fan_out.
 
-        final_score = (activation_score + tag_affinity_score) * temporal_weight
+        MEM-FIX-0006: final = activation * temporal * affinity_mod * salience_mod.
         """
         candidates = [
             {
@@ -410,13 +415,15 @@ class TestTagAffinityFinalScoring:
             }
         ]
         result = compute_final_scores(candidates)
-        expected = (0.4 + 0.5) * 1.0
+        affinity_mod = 1.0 + AFFINITY_GAIN * 0.5
+        expected = 0.4 * 1.0 * affinity_mod
         assert abs(result[0]["final_score"] - expected) < 1e-10
 
     def test_tag_affinity_only_neuron_scored(self):
-        """Verify tag_affinity-only neurons (match_type='tag_affinity') are scored.
+        """Verify tag_affinity-only neurons are scored on a capped base.
 
-        final_score = tag_affinity_score * temporal_weight
+        MEM-FIX-0006: base = min(affinity,1.0) * TAG_AFFINITY_BASE_CAP, then
+        * temporal * salience_mod.
         """
         candidates = [
             {
@@ -427,37 +434,39 @@ class TestTagAffinityFinalScoring:
             }
         ]
         result = compute_final_scores(candidates)
-        expected = 0.583 * 0.8
+        expected = 0.583 * TAG_AFFINITY_BASE_CAP * 0.8
         assert abs(result[0]["final_score"] - expected) < 1e-10
 
     def test_tag_affinity_changes_ranking(self):
-        """Verify tag_affinity_score can reorder results.
+        """Verify tag_affinity can still reorder CLOSE direct matches.
 
-        Without affinity: neuron 1 (rrf=0.03) > neuron 2 (rrf=0.01).
-        With affinity: neuron 2 (rrf=0.01 + affinity=0.5) > neuron 1 (rrf=0.03 + affinity=0.0).
+        With the bounded modifier, a strong affinity (1.0 -> +25%) on a
+        slightly-weaker rrf can overtake a slightly-stronger rrf with no
+        affinity, when the rrf gap is small.
+        Neuron 1: rrf=0.016 (base 0.488), no affinity -> 0.488.
+        Neuron 2: rrf=0.014 (base 0.427), affinity=1.0 (+25%) -> 0.534.
         """
         candidates = [
             {
                 "neuron_id": 1,
                 "match_type": "direct_match",
-                "rrf_score": 0.03,
+                "rrf_score": 0.016,
                 "tag_affinity_score": 0.0,
                 "temporal_weight": 1.0,
             },
             {
                 "neuron_id": 2,
                 "match_type": "direct_match",
-                "rrf_score": 0.01,
-                "tag_affinity_score": 0.5,
+                "rrf_score": 0.014,
+                "tag_affinity_score": 1.0,
                 "temporal_weight": 1.0,
             },
         ]
         result = compute_final_scores(candidates)
-        # Neuron 2 should now be first (0.01+0.5=0.51 > 0.03+0.0=0.03)
         assert result[0]["neuron_id"] == 2
 
     def test_no_tag_affinity_defaults_to_zero(self):
-        """Verify missing tag_affinity_score defaults to 0 (backward compat)."""
+        """Verify missing tag_affinity_score -> neutral modifier (no boost)."""
         candidates = [
             {
                 "neuron_id": 1,
@@ -468,8 +477,8 @@ class TestTagAffinityFinalScoring:
             }
         ]
         result = compute_final_scores(candidates)
-        # Should work like before: rrf_score * temporal_weight
-        assert abs(result[0]["final_score"] - 0.016) < 1e-10
+        # base only, neutral modifiers: rrf/RRF_MAX * 1.0
+        assert abs(result[0]["final_score"] - (0.016 / RRF_MAX)) < 1e-10
 
 
 # -----------------------------------------------------------------------------

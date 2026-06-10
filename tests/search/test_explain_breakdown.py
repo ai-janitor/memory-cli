@@ -28,6 +28,10 @@ from memory_cli.search.explain_scoring_breakdown import (
     build_explain_breakdowns,
     _build_single_breakdown,
 )
+from memory_cli.search.final_score_combine_and_rank import (
+    compute_final_scores,
+    _score_direct_match,
+)
 
 
 # -----------------------------------------------------------------------------
@@ -242,3 +246,34 @@ class TestExplainMatchTypeSpecific:
         breakdown = _build_single_breakdown(candidate, False)
         assert breakdown["vector_distance"] is None
         assert breakdown["vector_rank"] is None
+
+
+# -----------------------------------------------------------------------------
+# Explain consistency with the (rescaled) final-score formula
+# -----------------------------------------------------------------------------
+
+class TestExplainFormulaConsistency:
+    """The --explain breakdown must report the SAME final_score the ranking
+    formula produces (MEM-FIX-0006). The breakdown passes component fields
+    through unchanged; this guards that it stays consistent end-to-end."""
+
+    def test_breakdown_final_score_matches_formula(self):
+        """Run compute_final_scores -> build_explain_breakdowns and verify the
+        breakdown's final_score equals _score_direct_match for the candidate,
+        and that all component fields (rrf, affinity, salience) are surfaced."""
+        candidate = {
+            "neuron_id": 686,
+            "match_type": "direct_match",
+            "rrf_score": 2.0 / 61.0,            # perfect dual-list match
+            "tag_affinity_score": 0.3,
+            "temporal_weight": 0.95,
+            "salience_weight": 1.4,
+        }
+        expected_final = _score_direct_match(dict(candidate))
+        ranked = compute_final_scores([dict(candidate)])
+        enriched = build_explain_breakdowns(ranked, vector_unavailable=False)
+        bd = enriched[0]["score_breakdown"]
+        assert abs(bd["final_score"] - expected_final) < 1e-10
+        assert bd["rrf_score"] == candidate["rrf_score"]
+        assert bd["tag_affinity_score"] == candidate["tag_affinity_score"]
+        assert bd["salience_weight"] == candidate["salience_weight"]

@@ -5,6 +5,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **Search final-score scale mismatch buried perfect text/vector matches** — `compute_final_scores` ADDED a rank-based `rrf_score` (hard ceiling 2/61 ≈ 0.033) to a 0–1 `tag_affinity_score`, then multiplied by an UNBOUNDED `salience_weight`. Match quality contributed ≤4% of the total; old, frequently-accessed, loosely-tagged neurons permanently outranked verbatim matches (a freshly-added perfect match landed at rank 42). Rewrote stage 8 (`final_score_combine_and_rank.py`): the match-quality signal is now normalized into a DOMINANT 0–1 base (`rrf_score/RRF_MAX` for direct matches, `activation_score` for fan-out, capped affinity for tag-only neighbors); affinity/salience are bounded multipliers centered on 1.0 (salience's unbounded excess is clamped at stage 8 — upstream computation unchanged); temporal applies as its natural 0–1 multiplier. A top-RRF match with weak modifiers now outranks a mid-RRF match with maxed modifiers. Live: target neuron moved rank 42 → 1; regression control moved rank 8 → 1. Orchestrator stage-8 docstring updated to match. (MEM-FIX-0006 / backlog #71)
+
 ## [0.4.0] — 2026-06-10
 
 Minor bump (semver): new feature (central model resolution, MEM-FIX-0003) + additive API field (`meta.vector_unavailable_reason`, MEM-FIX-0002) + new `neuron tree` verb. No breaking changes to existing data or search behavior; `model download --local` removal is pre-1.0 cleanup of a flag superseded by central resolution.

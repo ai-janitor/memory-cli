@@ -187,8 +187,11 @@ def light_search(
          the activation graph but are removed from final output).
     8. FINAL SCORE — Combine and rank.
        - Call final_score_combine_and_rank.compute_final_scores()
-       - direct_match → rrf_score * temporal_weight.
-       - fan_out → activation_score * temporal_weight.
+       - Match quality is the dominant base; affinity/salience/temporal are
+         bounded modifiers around 1.0 (MEM-FIX-0006 / backlog #71).
+       - direct_match → (rrf_score/RRF_MAX) * temporal * affinity_mod * salience_mod.
+       - fan_out → activation_score * temporal * affinity_mod * salience_mod.
+       - tag_affinity → capped_affinity_base * temporal * salience_mod.
        - Sort descending by final_score.
     9. PAGINATION — Apply --limit/--offset after ranking.
        - Slice the ranked list: [offset:offset+limit].
