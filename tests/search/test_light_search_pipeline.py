@@ -286,6 +286,33 @@ class TestLightSearchBM25OnlyFallback:
         assert call_log == [sentinel_config]         # get_model received the passed config
         assert not mock_lc.called                    # load_config never invoked
 
+    def test_bm25_only_sets_vector_unavailable_reason(self, search_db):
+        """Verify envelope carries the exception class+message in vector_unavailable_reason
+        when the embedding model is missing (FileNotFoundError).
+
+        RED before fix: envelope has no vector_unavailable_reason attr (or it is None).
+        GREEN after fix: envelope.vector_unavailable_reason == "FileNotFoundError: Model not available"
+        """
+        conn, nids = search_db
+        options = SearchOptions(query="python", fan_out_depth=0)
+        with patch(
+            "memory_cli.search.light_search_pipeline_orchestrator.get_model",
+            side_effect=FileNotFoundError("Model not available"),
+        ):
+            envelope = light_search(conn, options)
+        assert envelope.vector_unavailable is True
+        assert envelope.vector_unavailable_reason == "FileNotFoundError: Model not available"
+
+    def test_reason_none_when_vectors_available(self, search_db):
+        """Verify vector_unavailable_reason is None when embedding succeeds."""
+        conn, nids = search_db
+        options = SearchOptions(query="python", fan_out_depth=0)
+        # No patch — let embedding fail naturally (model likely absent in CI);
+        # but if vector_unavailable is False the reason must be None.
+        envelope = light_search(conn, options)
+        if not envelope.vector_unavailable:
+            assert envelope.vector_unavailable_reason is None
+
 
 # -----------------------------------------------------------------------------
 # Empty result tests

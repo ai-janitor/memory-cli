@@ -313,6 +313,18 @@ class TestEnvelopeStructure:
         env = build_envelope(fake_results, 5, 20, 0)
         assert env["metadata"]["result_count"] == 2
 
+    def test_metadata_has_vector_unavailable_reason(self):
+        """Verify metadata carries reason string when provided."""
+        env = build_envelope([], 0, 20, 0,
+                             vector_unavailable=True,
+                             vector_unavailable_reason="FileNotFoundError: missing.gguf")
+        assert env["metadata"]["vector_unavailable_reason"] == "FileNotFoundError: missing.gguf"
+
+    def test_metadata_reason_none_when_not_set(self):
+        """Verify metadata reason is None when not provided."""
+        env = build_envelope([], 0, 20, 0, vector_unavailable=False)
+        assert env["metadata"]["vector_unavailable_reason"] is None
+
 
 # -----------------------------------------------------------------------------
 # Pagination tests

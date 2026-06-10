@@ -19,7 +19,7 @@
 from __future__ import annotations
 
 import logging
-from typing import List, Any
+from typing import List, Any, Optional
 
 from memory_cli.cli.entrypoint_and_argv_dispatch import register_noun
 
@@ -424,6 +424,7 @@ def handle_search(args: List[str], global_flags: Any) -> Any:
         all_results = []
         total = 0
         vector_unavailable = False
+        vector_unavailable_reason: Optional[str] = None
         from memory_cli.search import light_search, SearchOptions
         for conn, config, scope in connections:
             options = SearchOptions(query=query, limit=limit)
@@ -435,6 +436,8 @@ def handle_search(args: List[str], global_flags: Any) -> Any:
             total += envelope.total_before_pagination
             if envelope.vector_unavailable:
                 vector_unavailable = True
+                if envelope.vector_unavailable_reason and vector_unavailable_reason is None:
+                    vector_unavailable_reason = envelope.vector_unavailable_reason
         # Re-sort merged results by score descending so global high-relevance
         # results rank above local low-relevance ones.
         all_results.sort(key=lambda r: r.get("score", 0), reverse=True)
@@ -447,6 +450,7 @@ def handle_search(args: List[str], global_flags: Any) -> Any:
                 "query": query,
                 "total": total,
                 "vector_unavailable": vector_unavailable,
+                "vector_unavailable_reason": vector_unavailable_reason,
             },
         )
     except Exception as e:

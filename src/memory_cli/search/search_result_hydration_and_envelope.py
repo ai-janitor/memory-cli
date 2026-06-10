@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 def hydrate_results(
@@ -277,6 +277,7 @@ def build_envelope(
     limit: int,
     offset: int,
     vector_unavailable: bool = False,
+    vector_unavailable_reason: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Construct the final search result envelope.
 
@@ -333,6 +334,7 @@ def build_envelope(
         },
         "metadata": {
             "vector_unavailable": vector_unavailable,
+            "vector_unavailable_reason": vector_unavailable_reason,
             "result_count": len(results),
         },
     }

@@ -87,6 +87,7 @@ class PipelineState:
     # Stage 1: Query embedding
     query_embedding: Optional[List[float]] = None
     vector_unavailable: bool = False
+    vector_unavailable_reason: Optional[str] = None
 
     # Stage 2: BM25 results — list of (neuron_id, raw_score, normalized_score)
     bm25_candidates: List[Dict[str, Any]] = field(default_factory=list)
@@ -137,6 +138,7 @@ class SearchResultEnvelope:
     limit: int = 20
     offset: int = 0
     vector_unavailable: bool = False
+    vector_unavailable_reason: Optional[str] = None
     exit_code: int = 0  # 0=found, 1=no results, 2=error
 
 
@@ -251,6 +253,7 @@ def light_search(
             limit=options.limit,
             offset=options.offset,
             vector_unavailable=state.vector_unavailable,
+            vector_unavailable_reason=state.vector_unavailable_reason,
             exit_code=2,
         )
 
@@ -290,9 +293,10 @@ def _run_retrieval_stage(
         model = get_model(config)
         embedding_input = build_embedding_input(options.query, [])
         state.query_embedding = embed_single(model, embedding_input, "query")
-    except Exception:
+    except Exception as exc:
         # Embedding unavailable — BM25-only fallback
         state.vector_unavailable = True
+        state.vector_unavailable_reason = f"{type(exc).__name__}: {exc}"
 
     # --- Stage 2: BM25 retrieval ---
     state.bm25_candidates = retrieve_bm25(conn, options.query)
@@ -414,6 +418,7 @@ def _run_output_stage(
         limit=options.limit,
         offset=options.offset,
         vector_unavailable=state.vector_unavailable,
+        vector_unavailable_reason=state.vector_unavailable_reason,
         exit_code=0 if state.results else 1,
     )
 
