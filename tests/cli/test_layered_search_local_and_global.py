@@ -623,9 +623,10 @@ class TestNeuronSearchMergesStores:
 
         flags = SimpleNamespace(config=None, db=None, global_only=False, format="json")
 
+        dummy_config = object()  # sentinel — unused by BM25-only path
         with patch(
-            "memory_cli.cli.noun_handlers.db_connection_from_global_flags.get_layered_connections",
-            return_value=[(local_conn, "LOCAL"), (global_conn, "GLOBAL")],
+            "memory_cli.cli.noun_handlers.db_connection_from_global_flags.get_layered_connections_with_config",
+            return_value=[(local_conn, dummy_config, "LOCAL"), (global_conn, dummy_config, "GLOBAL")],
         ):
             result = handle_search(["python"], flags)
 

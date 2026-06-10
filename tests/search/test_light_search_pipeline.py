@@ -258,6 +258,34 @@ class TestLightSearchBM25OnlyFallback:
                 assert r["score_breakdown"]["vector_distance"] is None
                 assert r["score_breakdown"]["vector_rank"] is None
 
+    def test_global_config_used_when_passed_explicitly(self, search_db):
+        """When config is passed to light_search, bare load_config() must NOT be called.
+
+        Proves the retrieval stage uses the caller-resolved config, not ancestor-walk.
+        """
+        conn, nids = search_db
+        options = SearchOptions(query="python", fan_out_depth=0)
+        sentinel_config = object()  # not a real config — proves it's passed through
+
+        call_log = []
+
+        def mock_get_model(cfg):
+            call_log.append(cfg)
+            raise FileNotFoundError("no model in test")
+
+        with patch("memory_cli.search.light_search_pipeline_orchestrator.get_model",
+                   side_effect=mock_get_model), \
+             patch("memory_cli.config.load_config") as mock_lc:
+            # When config provided, load_config must not be invoked.
+            # We patch the canonical source module (lazy import target);
+            # if config=... is passed through correctly it will never be called.
+            mock_lc.side_effect = AssertionError("load_config called despite config arg")
+            envelope = light_search(conn, options, config=sentinel_config)
+
+        assert envelope.vector_unavailable is True  # FileNotFoundError still sets flag
+        assert call_log == [sentinel_config]         # get_model received the passed config
+        assert not mock_lc.called                    # load_config never invoked
+
 
 # -----------------------------------------------------------------------------
 # Empty result tests

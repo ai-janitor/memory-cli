@@ -140,7 +140,11 @@ class SearchResultEnvelope:
     exit_code: int = 0  # 0=found, 1=no results, 2=error
 
 
-def light_search(conn: sqlite3.Connection, options: SearchOptions) -> SearchResultEnvelope:
+def light_search(
+    conn: sqlite3.Connection,
+    options: SearchOptions,
+    config: Optional["MemoryConfig"] = None,
+) -> SearchResultEnvelope:
     """Execute the full 10-stage light search pipeline.
 
     This is the main entry point for `memory neuron search <query>`.
@@ -216,7 +220,7 @@ def light_search(conn: sqlite3.Connection, options: SearchOptions) -> SearchResu
     try:
         # --- Stages 1-3: Retrieval (embedding, BM25, vector) ---
         t0 = time.perf_counter()
-        _run_retrieval_stage(conn, state, options)
+        _run_retrieval_stage(conn, state, options, config=config)
         retrieval_ms = (time.perf_counter() - t0) * 1000
 
         # --- Stages 4-8: Scoring (RRF, activation, temporal, tag filter, final) ---
@@ -255,6 +259,7 @@ def _run_retrieval_stage(
     conn: sqlite3.Connection,
     state: PipelineState,
     options: SearchOptions,
+    config: Optional["MemoryConfig"] = None,
 ) -> None:
     """Execute stages 1-3: embedding, BM25 retrieval, vector retrieval.
 
@@ -279,8 +284,9 @@ def _run_retrieval_stage(
     try:
         if not _EMBEDDING_AVAILABLE or get_model is None:
             raise RuntimeError("Embedding package not available")
-        from memory_cli.config import load_config
-        config = load_config()
+        if config is None:
+            from memory_cli.config import load_config
+            config = load_config()
         model = get_model(config)
         embedding_input = build_embedding_input(options.query, [])
         state.query_embedding = embed_single(model, embedding_input, "query")

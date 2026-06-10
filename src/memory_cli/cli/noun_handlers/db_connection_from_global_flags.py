@@ -90,8 +90,8 @@ def get_connection_and_scope(global_flags: Any) -> Tuple[sqlite3.Connection, str
     return conn, scope
 
 
-def _open_config_path(config_path: Path, db_override: str | None = None) -> Tuple[sqlite3.Connection, str]:
-    """Open a DB connection from a specific config path and return (conn, scope).
+def _open_config_path(config_path: Path, db_override: str | None = None) -> Tuple[sqlite3.Connection, MemoryConfig, str]:
+    """Open a DB connection from a specific config path and return (conn, config, scope).
 
     Internal helper for get_layered_connections(). Loads the config from the
     given path, opens the DB, runs migrations, and detects scope.
@@ -101,7 +101,7 @@ def _open_config_path(config_path: Path, db_override: str | None = None) -> Tupl
         db_override: Optional --db override (only applied if provided).
 
     Returns:
-        Tuple of (sqlite3.Connection, scope_str).
+        Tuple of (sqlite3.Connection, MemoryConfig, scope_str).
     """
     config = load_config(config_override=str(config_path), db_override=db_override)
     conn = open_connection(config.db_path)
@@ -112,7 +112,56 @@ def _open_config_path(config_path: Path, db_override: str | None = None) -> Tupl
         run_pending_migrations(conn, current, _TARGET_VERSION)
     from memory_cli.cli.scoped_handle_format_and_parse import detect_scope
     scope = detect_scope(config.db_path)
-    return conn, scope
+    return conn, config, scope
+
+
+def get_layered_connections_with_config(global_flags: Any) -> List[Tuple[sqlite3.Connection, MemoryConfig, str]]:
+    """Like get_layered_connections but also yields the resolved MemoryConfig per store.
+
+    Used by callers that need to thread the config downstream (e.g. to pass to
+    light_search so it uses the correct embedding model path instead of re-resolving
+    via ancestor walk from cwd).
+
+    Returns:
+        List of (sqlite3.Connection, MemoryConfig, scope_str) tuples.
+        Order: LOCAL first (if exists), GLOBAL second (if exists).
+    """
+    config_override = getattr(global_flags, "config", None)
+    db_override = getattr(global_flags, "db", None)
+    global_only = getattr(global_flags, "global_only", False)
+
+    if config_override is not None or db_override is not None:
+        conn, config = get_connection_and_config(global_flags)
+        from memory_cli.cli.scoped_handle_format_and_parse import detect_scope
+        scope = detect_scope(config.db_path)
+        return [(conn, config, scope)]
+
+    if global_only:
+        from memory_cli.config.config_path_resolution_ancestor_walk import _global_config_path
+        global_path = _global_config_path()
+        if not global_path.is_file():
+            raise ConfigLoadError(
+                stage="resolve",
+                details="No global memory store found at ~/.memory/. Run `memory init --global`.",
+            )
+        conn, config, scope = _open_config_path(global_path, db_override)
+        return [(conn, config, scope)]
+
+    from memory_cli.config.config_path_resolution_ancestor_walk import resolve_all_config_paths
+    config_paths = resolve_all_config_paths()
+
+    if not config_paths:
+        raise ConfigLoadError(
+            stage="resolve",
+            details="No memory config found. Run `memory init` to create a new memory store.",
+        )
+
+    connections: List[Tuple[sqlite3.Connection, MemoryConfig, str]] = []
+    for config_path, scope in config_paths:
+        conn, config, resolved_scope = _open_config_path(config_path, db_override)
+        connections.append((conn, config, resolved_scope))
+
+    return connections
 
 
 def get_layered_connections(global_flags: Any) -> List[Tuple[sqlite3.Connection, str]]:
@@ -156,7 +205,7 @@ def get_layered_connections(global_flags: Any) -> List[Tuple[sqlite3.Connection,
                 stage="resolve",
                 details="No global memory store found at ~/.memory/. Run `memory init --global`.",
             )
-        conn, scope = _open_config_path(global_path)
+        conn, _cfg, scope = _open_config_path(global_path)
         return [(conn, scope)]
 
     # Layered mode: resolve all config paths and open each
@@ -171,7 +220,7 @@ def get_layered_connections(global_flags: Any) -> List[Tuple[sqlite3.Connection,
 
     connections: List[Tuple[sqlite3.Connection, str]] = []
     for config_path, scope in config_paths:
-        conn, resolved_scope = _open_config_path(config_path)
+        conn, _cfg, resolved_scope = _open_config_path(config_path)
         connections.append((conn, resolved_scope))
 
     return connections

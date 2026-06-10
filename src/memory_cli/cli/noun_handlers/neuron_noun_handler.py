@@ -404,7 +404,7 @@ def handle_search(args: List[str], global_flags: Any) -> Any:
     7. Empty results are success (exit 0), data=[]
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
-    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections
+    from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_layered_connections_with_config
     from memory_cli.cli.noun_handlers.arg_parse_extract_positional_and_flags import (
         require_positional, extract_flag, extract_bool_flag,
     )
@@ -418,14 +418,16 @@ def handle_search(args: List[str], global_flags: Any) -> Any:
         limit, rest = extract_flag(rest, "--limit", type_fn=int, default=10)
         threshold, rest = extract_flag(rest, "--threshold", type_fn=float, default=0.0)
         # Layered: search all stores, merge results (local first)
-        connections = get_layered_connections(global_flags)
+        # Use with_config variant so each store's resolved config is threaded into
+        # light_search — prevents bare load_config() from ignoring --global flag.
+        connections = get_layered_connections_with_config(global_flags)
         all_results = []
         total = 0
         vector_unavailable = False
         from memory_cli.search import light_search, SearchOptions
-        for conn, scope in connections:
+        for conn, config, scope in connections:
             options = SearchOptions(query=query, limit=limit)
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=config)
             results = envelope.results
             if threshold > 0.0:
                 results = [r for r in results if r.get("score", 0) >= threshold]
