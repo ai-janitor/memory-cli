@@ -96,7 +96,7 @@ VALIDATION_RULES: Dict[str, Dict[str, Any]] = {
     },
     "embedding.model_path": {
         "type": str,
-        "required": True,
+        "required": False,
         "absolute_path": True,
     },
     "embedding.n_ctx": {
@@ -147,15 +147,15 @@ VALIDATION_RULES: Dict[str, Dict[str, Any]] = {
 class EmbeddingConfig:
     """Typed representation of the embedding section of config."""
 
-    # model_path: str
     # n_ctx: int
     # n_batch: int
     # dimensions: int
+    # model_path: Optional[str] — None means use central ~/.memory/models/default.gguf
 
-    model_path: str
     n_ctx: int
     n_batch: int
     dimensions: int
+    model_path: Optional[str] = None
 
 
 @dataclass

@@ -167,14 +167,13 @@ class TestProjectInit:
 
     # --- test_project_config_paths_are_absolute ---
     # Read config.json, assert db_path starts with /
-    # Assert embedding.model_path starts with /
-    # (No relative paths — must be absolute even for project scope)
+    # embedding.model_path is null (central resolution — not baked into config)
     def test_project_config_paths_are_absolute(self, project_dir, fake_home):
         init_memory_store(project=True, cwd=project_dir)
         config_path = project_dir / ".memory" / "config.json"
         data = json.loads(config_path.read_text())
         assert data["db_path"].startswith("/")
-        assert data["embedding"]["model_path"].startswith("/")
+        assert data["embedding"]["model_path"] is None
 
 
 # =============================================================================
@@ -337,13 +336,13 @@ class TestConfigContent:
         assert data["db_path"] == str(store / "memory.db")
         assert data["db_path"].startswith("/")
 
-    # --- test_model_path_is_absolute_and_inside_store ---
-    # Assert embedding.model_path == str(store_path / "models" / "default.gguf")
-    def test_model_path_is_absolute_and_inside_store(self, fake_home):
+    # --- test_model_path_is_null_after_init ---
+    # embedding.model_path must be null — central resolution, not baked into config
+    def test_model_path_is_null_after_init(self, fake_home):
         store = init_memory_store(project=False)
         config_path = store / "config.json"
         data = json.loads(config_path.read_text())
-        assert data["embedding"]["model_path"] == str(store / "models" / "default.gguf")
+        assert data["embedding"]["model_path"] is None
 
     # --- test_default_values_match_spec ---
     # Assert embedding.n_ctx == 2048

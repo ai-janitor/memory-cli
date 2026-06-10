@@ -332,8 +332,8 @@ def _write_default_config(store_path: Path, force: bool = False) -> Path:
     # 2. Override db_path with absolute path
     config["db_path"] = str(store_path / "memory.db")
 
-    # 3. Override embedding.model_path
-    config["embedding"]["model_path"] = str(store_path / "models" / "default.gguf")
+    # 3. embedding.model_path = null — loader resolves central ~/.memory/models/default.gguf
+    config["embedding"]["model_path"] = None
 
     # 4. Serialize to JSON with indent=2
     config_json = json.dumps(config, indent=2)

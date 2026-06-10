@@ -109,24 +109,27 @@ class TestSingletonBehavior:
 
 
 class TestMissingModelFile:
-    """FileNotFoundError when model path does not exist."""
+    """FileNotFoundError when model path does not exist and no central fallback."""
 
-    # --- Test: nonexistent path raises FileNotFoundError ---
-    # Mock config to return "/nonexistent/model.gguf"
+    # --- Test: nonexistent path raises FileNotFoundError when no central model ---
+    # Mock Path.home() to a tmp dir with no central model
     # Call get_model()
     # Assert raises FileNotFoundError
-    # Assert error message contains the path
-    def test_nonexistent_path_raises(self):
-        config = _make_config("/nonexistent/model.gguf")
-        with pytest.raises(FileNotFoundError, match="/nonexistent/model.gguf"):
+    def test_nonexistent_path_raises(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        config = _make_config(str(tmp_path / "nonexistent" / "model.gguf"))
+        with pytest.raises(FileNotFoundError):
             get_model(config)
 
-    # --- Test: path exists but is a directory raises FileNotFoundError ---
-    # Mock config to return path to a directory (e.g., tmp_path)
+    # --- Test: path is a directory raises FileNotFoundError when no central model ---
+    # Mock Path.home() to a tmp dir with no central model
     # Call get_model()
     # Assert raises FileNotFoundError
-    def test_directory_path_raises(self, tmp_path):
-        config = _make_config(str(tmp_path))
+    def test_directory_path_raises(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        model_dir = tmp_path / "a_directory"
+        model_dir.mkdir()
+        config = _make_config(str(model_dir))
         with pytest.raises(FileNotFoundError):
             get_model(config)
 

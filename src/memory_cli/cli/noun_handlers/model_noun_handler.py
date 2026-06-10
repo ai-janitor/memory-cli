@@ -33,11 +33,10 @@ def handle_download(args: List[str], global_flags: Any) -> Any:
     """Download the nomic-embed-text-v1.5 Q8_0 GGUF model.
 
     Default: downloads to global store ~/.memory/models/default.gguf.
-    --local: downloads to local store's models dir instead.
     --force: re-download even if file already exists.
 
-    After downloading to global, if a local store exists and has no model,
-    auto-creates a symlink from local models/default.gguf -> global.
+    Central resolution in model_loader_lazy_singleton means all stores
+    automatically find the global model — no per-store symlink needed.
     """
     import sys
     from pathlib import Path
@@ -48,31 +47,12 @@ def handle_download(args: List[str], global_flags: Any) -> Any:
 
     try:
         rest = list(args)
-        use_local, rest = extract_bool_flag(rest, "--local")
         force, rest = extract_bool_flag(rest, "--force")
 
-        # Resolve target directory
+        # Always download to global store
         home = Path.home()
-        global_models_dir = home / ".memory" / "models"
-        global_model_path = global_models_dir / _MODEL_FILENAME
-
-        if use_local:
-            # Find local store via ancestor walk
-            from memory_cli.config.config_path_resolution_ancestor_walk import (
-                _walk_ancestors,
-            )
-            local_config = _walk_ancestors(Path.cwd())
-            if local_config is None:
-                return Result(
-                    status="error",
-                    error="No local .memory/ store found. Run `memory init` first.",
-                )
-            local_store = local_config.parent  # .memory/ dir
-            target_dir = local_store / "models"
-            target_path = target_dir / _MODEL_FILENAME
-        else:
-            target_dir = global_models_dir
-            target_path = global_model_path
+        target_dir = home / ".memory" / "models"
+        target_path = target_dir / _MODEL_FILENAME
 
         # Check if file already exists
         if target_path.exists() and not target_path.is_symlink() and not force:
@@ -90,10 +70,6 @@ def handle_download(args: List[str], global_flags: Any) -> Any:
 
         # Download with progress
         _download_with_progress(str(target_path), sys.stderr)
-
-        # After global download: auto-symlink to local if local exists and has no model
-        if not use_local:
-            _auto_symlink_to_local(global_model_path)
 
         return Result(
             status="ok",
@@ -152,36 +128,6 @@ def _download_with_progress(dest_path: str, output_stream: Any) -> None:
         raise
 
 
-def _auto_symlink_to_local(global_model_path: Any) -> None:
-    """If a local .memory/ store exists and has no model, symlink to global."""
-    from pathlib import Path
-    from memory_cli.config.config_path_resolution_ancestor_walk import _walk_ancestors
-
-    local_config = _walk_ancestors(Path.cwd())
-    if local_config is None:
-        return
-
-    local_store = local_config.parent
-    global_store = Path.home() / ".memory"
-
-    # Don't symlink if local IS the global store
-    if local_store.resolve() == global_store.resolve():
-        return
-
-    local_models_dir = local_store / "models"
-    local_model_path = local_models_dir / _MODEL_FILENAME
-
-    if local_model_path.exists():
-        return
-
-    import sys
-
-    local_models_dir.mkdir(parents=True, exist_ok=True)
-    local_model_path.symlink_to(global_model_path)
-    sys.stderr.write(f"  Symlinked {local_model_path} -> {global_model_path}\n")
-    sys.stderr.flush()
-
-
 # =============================================================================
 # NOUN REGISTRATION
 # =============================================================================
@@ -195,7 +141,6 @@ _VERB_DESCRIPTIONS = {
 
 _FLAG_DEFS = {
     "download": [
-        {"name": "--local", "type": "bool", "default": False, "desc": "Download to local .memory/ store instead of global"},
         {"name": "--force", "type": "bool", "default": False, "desc": "Re-download even if model already exists"},
     ],
 }

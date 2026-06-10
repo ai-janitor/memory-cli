@@ -66,13 +66,34 @@ def get_model(config: Any):  # -> Llama
     n_ctx = config.embedding.n_ctx
     n_batch = config.embedding.n_batch
 
-    # --- Step 3: Validate model file exists ---
-    # path = Path(model_path)
-    # If not path.exists() or not path.is_file():
-    #   raise FileNotFoundError(f"Embedding model not found: {model_path}")
-    path = Path(model_path)
-    if not path.exists() or not path.is_file():
-        raise FileNotFoundError(f"Embedding model not found: {model_path}")
+    # --- Step 2.5: Central resolution order ---
+    # 1. config.embedding.model_path set AND file exists → use it (explicit wins)
+    # 2. config.embedding.model_path set AND file absent → fall through to central
+    # 3. ~/.memory/models/default.gguf exists → use it (central default)
+    # 4. None of the above → raise FileNotFoundError
+    central_path = Path.home() / ".memory" / "models" / "default.gguf"
+
+    if model_path is not None:
+        explicit = Path(model_path)
+        if explicit.exists() and explicit.is_file():
+            path = explicit  # step 1: explicit wins
+        elif central_path.exists() and central_path.is_file():
+            path = central_path  # step 2→3: fall through to central
+        else:
+            raise FileNotFoundError(
+                f"No embedding model found. Run: memory model download"
+                f" (config path absent: {model_path})"
+            )
+    else:
+        # model_path is None (new store written with null)
+        if central_path.exists() and central_path.is_file():
+            path = central_path  # step 3: central default
+        else:
+            raise FileNotFoundError(
+                "No embedding model found. Run: memory model download"
+            )
+
+    # --- Step 3: (resolved above — path is set) ---
 
     # --- Step 4: Load the model ---
     # from llama_cpp import Llama
