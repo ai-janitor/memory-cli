@@ -475,3 +475,50 @@ class TestDbPathAndSize:
         """
         stats = gather_meta_stats(migrated_conn, config, ":memory:")
         assert stats["db_size_bytes"] == 0
+
+
+class TestNoneModelPath:
+    """Regression tests: model_path=None in config must not crash gather_meta_stats."""
+
+    @pytest.fixture
+    def config_none_model(self):
+        return {
+            "embedding": {
+                "model_path": None,
+                "dimensions": 768,
+                "n_ctx": 2048,
+            }
+        }
+
+    def test_none_model_path_does_not_crash(self, migrated_conn, config_none_model) -> None:
+        """gather_meta_stats with model_path=None must not raise TypeError.
+
+        # --- Arrange ---
+        # config["embedding"]["model_path"] = None (as written by memory init post-MEM-FIX-0003)
+
+        # --- Act ---
+        # stats = gather_meta_stats(conn, config, ":memory:")
+
+        # --- Assert ---
+        # No exception raised; returns a dict
+        """
+        stats = gather_meta_stats(migrated_conn, config_none_model, ":memory:")
+        assert isinstance(stats, dict)
+
+    def test_none_model_path_config_model_name_is_string(self, migrated_conn, config_none_model) -> None:
+        """config_model_name should be a string even when model_path is None.
+
+        # --- Assert ---
+        # stats["config_model_name"] is a str (not None, not raises)
+        """
+        stats = gather_meta_stats(migrated_conn, config_none_model, ":memory:")
+        assert isinstance(stats["config_model_name"], str)
+
+    def test_none_model_path_no_false_drift(self, migrated_conn, config_none_model) -> None:
+        """drift_detected should be False on empty DB even with model_path=None.
+
+        # --- Assert ---
+        # No vectors written → embedding_model_name is None → no drift comparison
+        """
+        stats = gather_meta_stats(migrated_conn, config_none_model, ":memory:")
+        assert stats["drift_detected"] is False

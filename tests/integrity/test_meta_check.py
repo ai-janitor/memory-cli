@@ -637,3 +637,67 @@ class TestIntegrityTimestamp:
         ts2 = datetime.fromisoformat(result2["last_integrity_check_at"])
 
         assert ts2 >= ts1
+
+
+class TestNoneModelPathCheck:
+    """Regression tests: model_path=None in config must not crash _check_model_match or run_meta_check."""
+
+    @pytest.fixture
+    def config_none_model(self):
+        return {
+            "embedding": {
+                "model_path": None,
+                "dimensions": 768,
+                "n_ctx": 2048,
+            }
+        }
+
+    @pytest.fixture
+    def migrated_conn(self):
+        from memory_cli.db.connection_setup_wal_fk_busy import open_connection
+        from memory_cli.db.extension_loader_sqlite_vec import load_and_verify_extensions
+        from memory_cli.db.migrations.v001_baseline_all_tables_indexes_triggers import apply
+        conn = open_connection(":memory:")
+        load_and_verify_extensions(conn)
+        conn.execute("BEGIN")
+        apply(conn)
+        conn.execute("COMMIT")
+        yield conn
+        conn.close()
+
+    def test_check_model_match_none_model_path_no_vectors(self, migrated_conn, config_none_model) -> None:
+        """_check_model_match with model_path=None and no real vectors must not crash.
+
+        DB has migration default ('default') → early return before reaching basename call.
+        Still must not raise.
+        """
+        item = _check_model_match(migrated_conn, config_none_model)
+        assert item.passed is True
+
+    def test_check_model_match_none_model_path_with_real_db_model(self, migrated_conn, config_none_model) -> None:
+        """_check_model_match with model_path=None and a real model in DB must not raise TypeError.
+
+        # --- Arrange ---
+        # DB has embedding_model = "some-model.gguf"
+        # config model_path = None
+
+        # --- Assert ---
+        # No TypeError; item is a CheckItem (pass or fail, not a crash)
+        """
+        migrated_conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('embedding_model', 'some-model.gguf')"
+        )
+        migrated_conn.commit()
+        # Must not raise
+        item = _check_model_match(migrated_conn, config_none_model)
+        assert isinstance(item, CheckItem)
+
+    def test_run_meta_check_none_model_path_does_not_crash(self, migrated_conn, config_none_model) -> None:
+        """run_meta_check with model_path=None must not raise.
+
+        # --- Assert ---
+        # Returns a result dict (no TypeError from os.path.basename(None))
+        """
+        result = run_meta_check(migrated_conn, config_none_model)
+        assert isinstance(result, dict)
+        assert "status" in result

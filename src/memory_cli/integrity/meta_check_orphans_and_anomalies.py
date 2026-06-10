@@ -177,7 +177,8 @@ def _check_model_match(conn: sqlite3.Connection, config: dict) -> CheckItem:
     if row is None or row[0] == "default":
         return CheckItem(name="model_match", passed=True)
     db_model = row[0]
-    config_model = os.path.basename(config["embedding"]["model_path"])
+    _raw_model_path = config["embedding"]["model_path"]
+    config_model = os.path.basename(_raw_model_path) if _raw_model_path is not None else "none"
     if db_model == config_model:
         return CheckItem(name="model_match", passed=True)
     return CheckItem(

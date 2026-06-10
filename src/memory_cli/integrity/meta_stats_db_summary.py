@@ -86,7 +86,8 @@ def gather_meta_stats(
     embedding_dimensions: int | None = int(embedding_dimensions_str) if embedding_dimensions_str else None
 
     # --- Step 4: Embedding config from current config ---
-    config_model_name = os.path.basename(config["embedding"]["model_path"])
+    _raw_model_path = config["embedding"]["model_path"]
+    config_model_name = os.path.basename(_raw_model_path) if _raw_model_path is not None else "none"
     config_dimensions = int(config["embedding"]["dimensions"])
 
     # --- Step 5: Drift detection ---
