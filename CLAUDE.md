@@ -1,5 +1,7 @@
 # memory-cli
 
+Agent bootstrap / code discovery: `Agents.md` (use `codebase` CLI — not `codebase-memory-mcp`).
+
 ## Maintenance mode
 LIVE, gated repo with a pytest suite. For a defect fix or additive verb, use the
 **maintain-operate-orchestration** skill (`~/.skills/maintain-operate-orchestration/`):
