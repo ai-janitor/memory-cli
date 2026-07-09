@@ -1,9 +1,9 @@
 # MEM-FIX-0007 — result
 
-- commit: 647d47e
+- commits: 647d47e (light/CLI fast-path + AC-1..7), 1c22b7c (result doc), + heavy INV-B fix (this commit)
 - baseline: 1848 (×5 green, `test_consolidate_mixed_states` known-flaky)
-- post-suite: 1857 passed, 0 failures (1848 + 9 new)
-- red→green: verified via `git stash` on the two src files — all 9 new tests fail on old code, pass on new code
+- post-suite: 1859 passed, 0 failures (1848 + 9 AC + 2 heavy guard)
+- red→green: verified via `git stash` — all 9 AC tests fail on old light/CLI src; both heavy guard tests fail on old heavy src; all green with fixes
 
 ## AC map
 - AC-1 (type filter correct) — green
@@ -20,5 +20,10 @@
 - no new DB indexes added (reused `idx_neuron_attrs_attr_key_id`, `idx_neuron_tags_tag_id`).
 - semantic path internals untouched.
 
-## Deviation flagged (not fixed — out of fence)
-- `heavy_search_orchestrator.py` builds its own `SearchOptions(tags=tag_filter or [])` without `semantic=True`. In production (not test — all heavy tests mock `light_search`), a real heavy-search call with a non-empty `tag_filter` would now hit the facet fast-path too, since `options.tags` is truthy and `semantic` defaults False. Spec's blast-radius note ("heavy_search_orchestrator … WITHOUT type/tags → default path, unchanged") undercounts this — `tags` IS passed. No test broke because `light_search` is mocked in the heavy suite. Flagging for a follow-up: either heavy_search should pass `semantic=True`, or the fast-path predicate should be type-only. Left as-is per blast fence (spec didn't authorize touching `heavy_search_orchestrator.py`).
+## INV-B heavy regression — FOUND + FIXED (orchestrator ruling: fix in-scope)
+- Root cause: `heavy_search_orchestrator.py` built `SearchOptions(tags=tag_filter or [])` without `semantic=True`. Since MEM-FIX-0007 fast-paths on truthy `options.tags`, a real tag-scoped heavy search would have silently degraded to no-embed BM25-only. Not caught by existing heavy suite (it mocks `light_search`).
+- Fix: both heavy `SearchOptions` builders (light-search phase + expansion phase) now pass `semantic=True` → tag-scoped heavy sub-queries keep the full pipeline. CLI/light fast-path predicate UNCHANGED (`--type` AND `--tag` still fast-path there).
+- Guard (tests/search/heavy/test_heavy_search_orchestrator.py, `TestHeavyStaysSemanticWithTagFilter`, 2 tests):
+  - end-to-end: real DB + real light_search, tag_filter set → `get_model` IS called (not fast-path).
+  - spy: every heavy light_search options object has `semantic=True`.
+  - Both red on old heavy src (stash-verified), green with fix.

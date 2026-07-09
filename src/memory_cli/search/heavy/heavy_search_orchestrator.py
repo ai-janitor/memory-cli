@@ -224,6 +224,7 @@ def _run_light_search_phase(
         limit=inflated_limit,
         offset=0,
         tags=tag_filter or [],
+        semantic=True,  # heavy = full semantic pipeline; keep tag-scoped subqueries off the facet fast-path (INV-B, MEM-FIX-0007)
     )
     return light_search(conn, options)
 
@@ -331,6 +332,7 @@ def _run_haiku_expansion_phase(
             limit=10,
             offset=0,
             tags=tag_filter or [],
+            semantic=True,  # heavy = full semantic pipeline; keep tag-scoped subqueries off the facet fast-path (INV-B, MEM-FIX-0007)
         )
         term_results = light_search(conn, options)
         all_expansion_results.extend(term_results.results)

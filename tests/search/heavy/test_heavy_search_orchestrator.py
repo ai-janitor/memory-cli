@@ -385,3 +385,66 @@ class TestHeavySearchAuthErrors:
                     with pytest.raises(SystemExit) as exc_info:
                         heavy_search(mock_conn, "query", mock_config, limit=10)
         assert exc_info.value.code == 2
+
+
+# -----------------------------------------------------------------------------
+# INV-B regression fence (MEM-FIX-0007) — heavy stays semantic even with a
+# tag_filter. MEM-FIX-0007 added a facet fast-path to light_search that skips
+# the embed model when --tag/--type is set. Heavy search passes a tag_filter
+# into its light_search sub-queries, so it MUST opt back in via semantic=True
+# and keep the full pipeline (get_model called) — otherwise heavy silently
+# degrades to a no-embed BM25-only search.
+# -----------------------------------------------------------------------------
+
+class TestHeavyStaysSemanticWithTagFilter:
+    """INV-B: a tag-scoped heavy search must NOT take the facet fast-path."""
+
+    def _real_conn(self):
+        from memory_cli.db.connection_setup_wal_fk_busy import open_connection
+        from memory_cli.db.extension_loader_sqlite_vec import load_and_verify_extensions
+        from memory_cli.db.migrations.v001_baseline_all_tables_indexes_triggers import apply as apply_v001
+        from memory_cli.db.migrations.v004_add_access_tracking import apply as apply_v004
+        conn = open_connection(":memory:")
+        load_and_verify_extensions(conn)
+        conn.execute("BEGIN"); apply_v001(conn); conn.execute("COMMIT")
+        conn.execute("BEGIN"); apply_v004(conn); conn.execute("COMMIT")
+        return conn
+
+    def test_tag_filtered_heavy_still_calls_get_model(self, mock_config):
+        """Heavy search with a non-empty tag_filter still hits the embed path.
+
+        Real DB + real light_search (Haiku phases patched to stay offline).
+        get_model is patched to raise (BM25-only fallback) but MUST be CALLED —
+        proving heavy's tag-scoped light_search runs the full pipeline, not the
+        MEM-FIX-0007 facet fast-path.
+        """
+        from memory_cli.neuron import neuron_add
+        conn = self._real_conn()
+        neuron_add(conn, "python programming with tag", tags=["urgent"], no_embed=True)
+
+        with patch("memory_cli.search.heavy.heavy_search_orchestrator.resolve_haiku_api_key", return_value="key"):
+            with patch(
+                "memory_cli.search.light_search_pipeline_orchestrator.get_model",
+                side_effect=FileNotFoundError("model unavailable in test"),
+            ) as mock_get_model:
+                with patch("memory_cli.search.heavy.heavy_search_orchestrator.haiku_rerank", return_value=[1]):
+                    with patch("memory_cli.search.heavy.heavy_search_orchestrator.haiku_expand_query", return_value=[]):
+                        result = heavy_search(conn, "python", mock_config, limit=10, tag_filter=["urgent"])
+
+        # Full pipeline ran (embed attempted) → NOT the facet fast-path.
+        mock_get_model.assert_called()
+        assert "results" in result
+        conn.close()
+
+    def test_light_search_phase_passes_semantic_true(self, mock_conn, mock_config):
+        """Spy: heavy's light_search sub-query options carry semantic=True."""
+        light_result = _make_light_results(3)
+        with patch("memory_cli.search.heavy.heavy_search_orchestrator.resolve_haiku_api_key", return_value="key"):
+            with patch("memory_cli.search.heavy.heavy_search_orchestrator.light_search", return_value=light_result) as mock_ls:
+                with patch("memory_cli.search.heavy.heavy_search_orchestrator.haiku_rerank", return_value=[1, 2, 3]):
+                    with patch("memory_cli.search.heavy.heavy_search_orchestrator.haiku_expand_query", return_value=["t1"]):
+                        heavy_search(mock_conn, "query", mock_config, tag_filter=["urgent"], limit=10)
+        # Every light_search options object heavy builds must be semantic.
+        for call in mock_ls.call_args_list:
+            options = call[0][1]
+            assert options.semantic is True
