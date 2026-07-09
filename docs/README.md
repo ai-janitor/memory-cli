@@ -23,6 +23,8 @@ the graph. Standard: `~/.droid/refs/open-knowledge-format.md`.
 | agent auto-load / Claude Code integration setup | [claude-code-integration.md](claude-code-integration.md) |
 | every product object + wiring + dead/unused tally | [object-model.md](object-model.md) |
 | query-path cost map + ranked bottlenecks (LIGHT search) | [performance-analysis.md](performance-analysis.md) |
+| ordered fix plan over the perf bottlenecks (quick wins → architecture → scale) | [perf-fix-plan.md](perf-fix-plan.md) |
+| dead-code delete candidates + wire/defer decisions | [dead-code-and-unused.md](dead-code-and-unused.md) |
 | a diagnosis / architecture review / fix methodology | [diagnostics/](#diagnostics) |
 | a per-change spec / gate / result (MEM-FIX / MEM-FEAT) | [delegations/](#delegations) |
 | a checklist certification transcript | [certs/](#certs) |
@@ -36,6 +38,8 @@ the graph. Standard: `~/.droid/refs/open-knowledge-format.md`.
 
 - [object-model.md](object-model.md) — account-for-object catalog: ~95 objects / 14 domains; unused tally (5 fully-dead / ~20 product-unused-but-tested). `type: reference`
 - [performance-analysis.md](performance-analysis.md) — stage-by-stage cost map + top-5 bottlenecks for `memory neuron search`, benchmarked on the live store. `type: reference`
+- [perf-fix-plan.md](perf-fix-plan.md) — ordered fix plan over the top-5: quick wins (write-on-read, BFS PRAGMA+N+1) → architecture (resident embedding daemon) → scale-later (vec0 ANN). Per-fix acceptance test/risk/owner. `type: reference`
+- [dead-code-and-unused.md](dead-code-and-unused.md) — action catalog over object-model.md unused tally: Class A (5 fully-dead delete candidates) + Class B decision table (wire/defer per unit). `type: reference`
 
 ## Diagnostics
 
