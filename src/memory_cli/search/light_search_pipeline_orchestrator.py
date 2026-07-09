@@ -29,7 +29,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from .bm25_retrieval_fts5_match import retrieve_bm25
+from .bm25_retrieval_fts5_match import (
+    retrieve_bm25, _build_fts5_query, _normalize_bm25_score,
+    FTS5_TABLE, BM25_CANDIDATE_CAP,
+)
 from .vector_retrieval_two_step_knn import retrieve_vectors
 from .rrf_fusion_rank_based_k60 import fuse_rrf
 from .spreading_activation_bfs_linear_decay import spread
@@ -62,8 +65,13 @@ except ImportError:
 class SearchOptions:
     """Configuration for a single search invocation.
 
-    Populated from CLI flags: --limit, --offset, --tag, --tag-mode,
-    --fan-out-depth, --explain.
+    Populated from CLI flags: --limit, --offset, --tag, --tag-mode, --type,
+    --semantic, --fan-out-depth, --explain.
+
+    ntype/tags (MEM-FIX-0007): when either is set and semantic is False,
+    light_search() takes the facet fast-path — indexed attr/tag pre-filter,
+    BM25-in-subset ranking, no embed/vector/activation. Pass semantic=True
+    to opt a facet-scoped query back into the full pipeline.
     """
     query: str = ""
     limit: int = 20
@@ -72,6 +80,8 @@ class SearchOptions:
     tag_mode: str = "AND"  # "AND" or "OR"
     fan_out_depth: int = 1  # default 1, max 3
     explain: bool = False
+    ntype: Optional[str] = None
+    semantic: bool = False
 
 
 # -----------------------------------------------------------------------------
@@ -140,6 +150,7 @@ class SearchResultEnvelope:
     vector_unavailable: bool = False
     vector_unavailable_reason: Optional[str] = None
     exit_code: int = 0  # 0=found, 1=no results, 2=error
+    facet_fast: bool = False  # True when the facet fast-path served this result (MEM-FIX-0007)
 
 
 def light_search(
@@ -223,6 +234,13 @@ def light_search(
     t_start = time.perf_counter()
 
     try:
+        # --- MEM-FIX-0007: facet-scoped fast-path ---
+        # --type/--tag scoped queries (no --semantic opt-out) resolve via the
+        # existing attr/tag indexes and skip embed + vector + activation
+        # entirely — no llama.cpp model load. See _facet_fast_search().
+        if (options.ntype or options.tags) and not options.semantic:
+            return _facet_fast_search(conn, options)
+
         # --- Stages 1-3: Retrieval (embedding, BM25, vector) ---
         t0 = time.perf_counter()
         _run_retrieval_stage(conn, state, options, config=config)
@@ -259,6 +277,180 @@ def light_search(
             vector_unavailable_reason=state.vector_unavailable_reason,
             exit_code=2,
         )
+
+
+def _facet_fast_search(
+    conn: sqlite3.Connection,
+    options: SearchOptions,
+) -> SearchResultEnvelope:
+    """Facet-scoped fast path (MEM-FIX-0007) — indexed pre-filter, no embed.
+
+    Resolves candidates via the existing attr/tag indexes
+    (idx_neuron_attrs_attr_key_id, idx_neuron_tags_tag_id), ranks the
+    candidate set by BM25-in-subset (or recency for an empty query), then
+    hydrates directly. Zero calls to get_model()/embed_single() — this is
+    the storm-fix for --type/--tag gate lookups (minion bug #72).
+
+    Logic flow:
+    1. Resolve type-matching neuron ids (if options.ntype).
+    2. Resolve tag-matching neuron ids honoring tag_mode (if options.tags).
+    3. Intersect when both facets are given.
+    4. Rank via _rank_facet_candidates() — BM25-in-subset, or recency when
+       the query is empty.
+    5. Paginate, hydrate, envelope. vector_unavailable stays False — this is
+       a deliberate skip, not a degraded/error path; facet_fast=True marks it.
+
+    Args:
+        conn: SQLite connection.
+        options: SearchOptions with ntype and/or tags set.
+
+    Returns:
+        SearchResultEnvelope, facet_fast=True.
+    """
+    candidate_ids: Optional[set] = None
+
+    if options.ntype:
+        candidate_ids = _resolve_type_candidates(conn, options.ntype)
+
+    if options.tags:
+        tag_ids = _resolve_tag_candidates(conn, options.tags, options.tag_mode)
+        candidate_ids = tag_ids if candidate_ids is None else (candidate_ids & tag_ids)
+
+    candidate_ids = candidate_ids or set()
+
+    if not candidate_ids:
+        return SearchResultEnvelope(
+            results=[],
+            total_before_pagination=0,
+            limit=options.limit,
+            offset=options.offset,
+            vector_unavailable=False,
+            vector_unavailable_reason=None,
+            exit_code=1,
+            facet_fast=True,
+        )
+
+    ranked = _rank_facet_candidates(conn, candidate_ids, options.query)
+    total = len(ranked)
+    paginated = ranked[options.offset:options.offset + options.limit]
+    results = hydrate_results(conn, paginated, explain=options.explain)
+
+    return SearchResultEnvelope(
+        results=results,
+        total_before_pagination=total,
+        limit=options.limit,
+        offset=options.offset,
+        vector_unavailable=False,
+        vector_unavailable_reason=None,
+        exit_code=0 if results else 1,
+        facet_fast=True,
+    )
+
+
+def _resolve_type_candidates(conn: sqlite3.Connection, ntype: str) -> set:
+    """Resolve neuron ids whose 'type' attr equals ntype (indexed lookup).
+
+    Query: neuron_attrs JOIN attr_keys WHERE name='type' AND value=ntype.
+    Uses idx_neuron_attrs_attr_key_id (existing index — do not add another).
+    """
+    rows = conn.execute(
+        "SELECT na.neuron_id FROM neuron_attrs na "
+        "JOIN attr_keys ak ON na.attr_key_id = ak.id "
+        "WHERE ak.name = 'type' AND na.value = ?",
+        (ntype,),
+    ).fetchall()
+    return {row[0] for row in rows}
+
+
+def _resolve_tag_candidates(
+    conn: sqlite3.Connection,
+    tags: List[str],
+    tag_mode: str,
+) -> set:
+    """Resolve neuron ids matching the given tags under AND/OR mode.
+
+    Uses idx_neuron_tags_tag_id (existing index — do not add another).
+    AND: neuron must have every requested tag. OR: at least one.
+    """
+    if not tags:
+        return set()
+    placeholders = ",".join("?" * len(tags))
+    required = {t.lower() for t in tags}
+    rows = conn.execute(
+        f"SELECT nt.neuron_id, t.name FROM neuron_tags nt "
+        f"JOIN tags t ON nt.tag_id = t.id WHERE t.name IN ({placeholders})",
+        list(required),
+    ).fetchall()
+    per_neuron: Dict[int, set] = {}
+    for neuron_id, tag_name in rows:
+        per_neuron.setdefault(neuron_id, set()).add(tag_name.lower())
+
+    mode = (tag_mode or "AND").upper()
+    if mode not in ("AND", "OR"):
+        mode = "AND"
+    if mode == "AND":
+        return {nid for nid, names in per_neuron.items() if required.issubset(names)}
+    return set(per_neuron.keys())  # OR: presence in per_neuron already means >=1 match
+
+
+def _rank_facet_candidates(
+    conn: sqlite3.Connection,
+    candidate_ids: set,
+    query: str,
+) -> List[Dict[str, Any]]:
+    """Rank a facet candidate set — BM25-in-subset, or recency if query is empty.
+
+    Non-empty query: constrain the FTS5 MATCH to rowid IN candidate_ids so
+    BM25 scoring/ranking never touches rows outside the facet — cheap and
+    index-backed (FTS5 + the rowid IN filter).
+    Empty query: rank by created_at desc (AC-6 — facet browse with no text).
+    Capped at BM25_CANDIDATE_CAP, matching the full-pipeline BM25 stage.
+    """
+    ids = list(candidate_ids)
+    placeholders = ",".join("?" * len(ids))
+    stripped = (query or "").strip()
+
+    if stripped:
+        fts5_query = _build_fts5_query(stripped)
+        if not fts5_query:
+            return []
+        try:
+            rows = conn.execute(
+                f"SELECT rowid, bm25({FTS5_TABLE}) AS raw_score FROM {FTS5_TABLE} "
+                f"WHERE {FTS5_TABLE} MATCH ? AND rowid IN ({placeholders}) "
+                f"ORDER BY raw_score LIMIT ?",
+                [fts5_query] + ids + [BM25_CANDIDATE_CAP],
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+        return [
+            {
+                "neuron_id": row[0],
+                "match_type": "direct_match",
+                "final_score": _normalize_bm25_score(row[1]),
+                "hop_distance": 0,
+                "edge_reason": None,
+            }
+            for row in rows
+        ]
+
+    # Empty query — rank the facet set by recency.
+    rows = conn.execute(
+        f"SELECT id FROM neurons WHERE id IN ({placeholders}) "
+        f"ORDER BY created_at DESC LIMIT ?",
+        ids + [BM25_CANDIDATE_CAP],
+    ).fetchall()
+    n = len(rows)
+    return [
+        {
+            "neuron_id": row[0],
+            "match_type": "direct_match",
+            "final_score": 1.0 - (rank / n) * 0.5,
+            "hop_distance": 0,
+            "edge_reason": None,
+        }
+        for rank, row in enumerate(rows)
+    ]
 
 
 def _run_retrieval_stage(

@@ -417,6 +417,12 @@ def handle_search(args: List[str], global_flags: Any) -> Any:
         query, rest = require_positional(rest, "query")
         limit, rest = extract_flag(rest, "--limit", type_fn=int, default=10)
         threshold, rest = extract_flag(rest, "--threshold", type_fn=float, default=0.0)
+        # MEM-FIX-0007: --type/--tag were parsed nowhere and silently dropped.
+        # Wire them into SearchOptions so light_search's facet fast-path (or
+        # the post-activation tag filter, for --semantic) actually applies.
+        ntype, rest = extract_flag(rest, "--type")
+        tag, rest = extract_flag(rest, "--tag")
+        semantic, rest = extract_bool_flag(rest, "--semantic")
         # Layered: search all stores, merge results (local first)
         # Use with_config variant so each store's resolved config is threaded into
         # light_search — prevents bare load_config() from ignoring --global flag.
@@ -427,7 +433,11 @@ def handle_search(args: List[str], global_flags: Any) -> Any:
         vector_unavailable_reason: Optional[str] = None
         from memory_cli.search import light_search, SearchOptions
         for conn, config, scope in connections:
-            options = SearchOptions(query=query, limit=limit)
+            options = SearchOptions(
+                query=query, limit=limit,
+                ntype=ntype, tags=[tag] if tag else [],
+                semantic=semantic,
+            )
             envelope = light_search(conn, options, config=config)
             results = envelope.results
             if threshold > 0.0:
