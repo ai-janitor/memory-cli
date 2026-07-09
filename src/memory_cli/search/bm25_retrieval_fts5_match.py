@@ -163,6 +163,31 @@ def _build_fts5_query(query: str) -> str:
     return " ".join(escaped)
 
 
+def _build_fts5_query_or(query: str) -> str:
+    """Sanitize user input into an OR-joined FTS5 MATCH expression.
+
+    Same escaping as _build_fts5_query(), but joins quoted tokens with OR
+    instead of relying on FTS5's implicit AND. Used by the facet fast-path
+    Tier 2 relaxation (MEM-FIX-0008) when the AND-joined query matches zero
+    rows in the facet subset — a multi-word phrase where no single row
+    contains every token still deserves any-token hits ranked by BM25.
+    Not used by the full-pipeline retrieve_bm25() (INV-A/INV-B: global BM25
+    semantics stay AND-only).
+
+    Args:
+        query: Raw user search query.
+
+    Returns:
+        OR-joined sanitized FTS5 MATCH expression, or "" if empty.
+    """
+    stripped = query.strip()
+    if not stripped:
+        return ""
+    tokens = stripped.split()
+    escaped = ['"' + token.replace('"', '""') + '"' for token in tokens]
+    return " OR ".join(escaped)
+
+
 def _normalize_bm25_score(raw_score: float) -> float:
     """Normalize a raw FTS5 BM25 score to the 0-1 range.
 

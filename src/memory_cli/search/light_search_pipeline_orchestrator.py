@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from .bm25_retrieval_fts5_match import (
-    retrieve_bm25, _build_fts5_query, _normalize_bm25_score,
+    retrieve_bm25, _build_fts5_query, _build_fts5_query_or, _normalize_bm25_score,
     FTS5_TABLE, BM25_CANDIDATE_CAP,
 )
 from .vector_retrieval_two_step_knn import retrieve_vectors
@@ -398,13 +398,26 @@ def _rank_facet_candidates(
     candidate_ids: set,
     query: str,
 ) -> List[Dict[str, Any]]:
-    """Rank a facet candidate set — BM25-in-subset, or recency if query is empty.
+    """Rank a facet candidate set via staged relaxation (MEM-FIX-0008).
 
-    Non-empty query: constrain the FTS5 MATCH to rowid IN candidate_ids so
-    BM25 scoring/ranking never touches rows outside the facet — cheap and
-    index-backed (FTS5 + the rowid IN filter).
-    Empty query: rank by created_at desc (AC-6 — facet browse with no text).
+    Non-empty query, cheapest sufficient tier wins:
+      Tier 1: quoted-AND MATCH in subset (today's behavior, unchanged).
+              Non-empty hits -> return, match_type="direct_match".
+      Tier 2: AND yielded zero -> retry with OR-joined quoted tokens, same
+              subset/cap, ranked by BM25. Non-empty -> match_type="facet_or".
+              Fixes multi-word gate phrases where no single row contains
+              every token (e.g. "verify on live path" against a facet where
+              rows only ever contain one or two of those tokens).
+      Tier 3: still zero (or the query had no matchable tokens) -> recency
+              fallback over the facet subset, match_type="facet_recency".
+              Guarantees a non-empty facet never yields 0 results for a
+              non-empty query.
+
+    Empty query: rank by created_at desc (AC-6 — facet browse with no
+    text), match_type="direct_match", unchanged from pre-0008 behavior.
+
     Capped at BM25_CANDIDATE_CAP, matching the full-pipeline BM25 stage.
+    Zero model loads on any tier (REQ-3) — everything here is FTS5/SQL.
     """
     ids = list(candidate_ids)
     placeholders = ",".join("?" * len(ids))
@@ -412,29 +425,67 @@ def _rank_facet_candidates(
 
     if stripped:
         fts5_query = _build_fts5_query(stripped)
-        if not fts5_query:
-            return []
-        try:
-            rows = conn.execute(
-                f"SELECT rowid, bm25({FTS5_TABLE}) AS raw_score FROM {FTS5_TABLE} "
-                f"WHERE {FTS5_TABLE} MATCH ? AND rowid IN ({placeholders}) "
-                f"ORDER BY raw_score LIMIT ?",
-                [fts5_query] + ids + [BM25_CANDIDATE_CAP],
-            ).fetchall()
-        except sqlite3.OperationalError:
-            return []
-        return [
-            {
-                "neuron_id": row[0],
-                "match_type": "direct_match",
-                "final_score": _normalize_bm25_score(row[1]),
-                "hop_distance": 0,
-                "edge_reason": None,
-            }
-            for row in rows
-        ]
+        if fts5_query:
+            rows = _facet_bm25_match(conn, fts5_query, ids, placeholders)
+            if rows:
+                return _facet_bm25_rows_to_candidates(rows, "direct_match")
 
-    # Empty query — rank the facet set by recency.
+            or_query = _build_fts5_query_or(stripped)
+            if or_query:
+                or_rows = _facet_bm25_match(conn, or_query, ids, placeholders)
+                if or_rows:
+                    return _facet_bm25_rows_to_candidates(or_rows, "facet_or")
+
+        # Tier 3: AND and OR both empty (or the query had no valid FTS5
+        # tokens) — recency fallback over the facet subset (REQ-1 floor).
+        return _facet_recency_candidates(conn, ids, placeholders, "facet_recency")
+
+    # Empty query — rank the facet set by recency (unchanged, AC-6).
+    return _facet_recency_candidates(conn, ids, placeholders, "direct_match")
+
+
+def _facet_bm25_match(
+    conn: sqlite3.Connection,
+    fts5_query: str,
+    ids: List[int],
+    placeholders: str,
+) -> List[Any]:
+    """Run a single FTS5 MATCH constrained to the facet subset. Shared by
+    Tier 1 (AND) and Tier 2 (OR) of _rank_facet_candidates()."""
+    try:
+        return conn.execute(
+            f"SELECT rowid, bm25({FTS5_TABLE}) AS raw_score FROM {FTS5_TABLE} "
+            f"WHERE {FTS5_TABLE} MATCH ? AND rowid IN ({placeholders}) "
+            f"ORDER BY raw_score LIMIT ?",
+            [fts5_query] + ids + [BM25_CANDIDATE_CAP],
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+
+def _facet_bm25_rows_to_candidates(rows: List[Any], match_type: str) -> List[Dict[str, Any]]:
+    """Map FTS5 (rowid, raw_score) rows to candidate dicts."""
+    return [
+        {
+            "neuron_id": row[0],
+            "match_type": match_type,
+            "final_score": _normalize_bm25_score(row[1]),
+            "hop_distance": 0,
+            "edge_reason": None,
+        }
+        for row in rows
+    ]
+
+
+def _facet_recency_candidates(
+    conn: sqlite3.Connection,
+    ids: List[int],
+    placeholders: str,
+    match_type: str,
+) -> List[Dict[str, Any]]:
+    """Rank a facet id set by created_at desc, capped at BM25_CANDIDATE_CAP.
+    Shared by the empty-query branch (unchanged, AC-6) and the MEM-FIX-0008
+    Tier 3 fallback for a non-empty query that matched no facet rows."""
     rows = conn.execute(
         f"SELECT id FROM neurons WHERE id IN ({placeholders}) "
         f"ORDER BY created_at DESC LIMIT ?",
@@ -444,7 +495,7 @@ def _rank_facet_candidates(
     return [
         {
             "neuron_id": row[0],
-            "match_type": "direct_match",
+            "match_type": match_type,
             "final_score": 1.0 - (rank / n) * 0.5,
             "hop_distance": 0,
             "edge_reason": None,
