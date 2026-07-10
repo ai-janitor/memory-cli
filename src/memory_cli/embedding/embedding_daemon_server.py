@@ -66,8 +66,23 @@ def statefile_path() -> Path:
     return _run_dir() / STATE_NAME
 
 
+def _rss_kb_self() -> Optional[int]:
+    try:
+        r = __import__("subprocess").run(
+            ["ps", "-o", "rss=", "-p", str(os.getpid())],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            return int(r.stdout.strip())
+    except (ValueError, OSError):
+        pass
+    return None
+
+
 def _write_statefile() -> None:
-    """Persist ops counters for CLI status (embed_count, model_path, dims)."""
+    """Persist ops counters for CLI status (embed_count, model_path, dims, rss)."""
     try:
         dims = None
         if _config is not None:
@@ -78,6 +93,9 @@ def _write_statefile() -> None:
             "dims": dims,
             "start_ts": _start_ts,
             "pid": os.getpid(),
+            # Pin post-load RSS so status equality checks are stable (ps noise
+            # is a few KB; a 2nd model copy would jump ~100MB+).
+            "rss_kb": _rss_kb_self(),
         }
         statefile_path().write_text(json.dumps(payload))
     except OSError:

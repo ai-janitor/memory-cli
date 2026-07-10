@@ -187,7 +187,11 @@ def probe_daemon_status() -> Dict[str, Any]:
         }
 
     # Live + lock held → up (instance_count lock-derived == 1)
-    rss = _rss_kb(pid)
+    # Prefer daemon-pinned rss_kb from statefile (stable across status polls;
+    # detects real double-load via large jump if rewritten after 2nd model).
+    rss = state_blob.get("rss_kb")
+    if rss is None:
+        rss = _rss_kb(pid)
     uptime = None
     if start_ts is not None:
         uptime = max(0.0, time.time() - start_ts)
