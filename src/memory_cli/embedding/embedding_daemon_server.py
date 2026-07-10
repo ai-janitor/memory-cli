@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import signal
@@ -18,7 +19,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, List, Optional, TextIO
 
 # LEGAL imports only (INV-1): embedding + config. No search/cli/db.
 from memory_cli.embedding.embed_single_and_batch import embed_batch
@@ -27,6 +28,7 @@ from memory_cli.embedding.model_loader_lazy_singleton import get_model, reset_mo
 PROTOCOL_V = 1
 SOCK_NAME = "embedd.sock"
 PID_NAME = "embedd.pid"
+STATE_NAME = "embedd.state"
 
 # Shared daemon state (single process)
 _last_request_ts: float = 0.0
@@ -38,6 +40,8 @@ _idle_timeout_s: float = 600.0
 _n_threads: int = 4
 _config: Any = None
 _shutdown_event = threading.Event()
+# Held open for process lifetime so LOCK_EX stays (ADR R6 / APUE pidfile flock).
+_lock_fd: Optional[TextIO] = None
 
 
 def _run_dir() -> Path:
@@ -56,6 +60,28 @@ def socket_path() -> Path:
 
 def pidfile_path() -> Path:
     return _run_dir() / PID_NAME
+
+
+def statefile_path() -> Path:
+    return _run_dir() / STATE_NAME
+
+
+def _write_statefile() -> None:
+    """Persist ops counters for CLI status (embed_count, model_path, dims)."""
+    try:
+        dims = None
+        if _config is not None:
+            dims = getattr(getattr(_config, "embedding", None), "dimensions", None)
+        payload = {
+            "embed_count": _embed_count,
+            "model_path": _model_path_loaded,
+            "dims": dims,
+            "start_ts": _start_ts,
+            "pid": os.getpid(),
+        }
+        statefile_path().write_text(json.dumps(payload))
+    except OSError:
+        pass
 
 
 def _env_or_config(env_key: str, cfg_val: float | int, cast=float):
@@ -124,6 +150,8 @@ def _resolved_model_meta(config: Any) -> tuple[str, float, int]:
 class _Handler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
         global _last_request_ts, _embed_count, _model_path_loaded, _model_mtime_loaded
+        # Any client contact resets idle (status handshake, embed, …).
+        _last_request_ts = time.time()
         try:
             hs_raw = _recv_frame(self.request)
             hs = json.loads(hs_raw.decode())
@@ -213,7 +241,9 @@ class _Handler(socketserver.BaseRequestHandler):
         op_type = req.get("op_type") or "query"
         try:
             vectors = embed_texts(list(texts), op_type)
+            global _embed_count
             _embed_count += 1
+            _write_statefile()
             # status 0 + count + dims + float32 LE blob
             count = len(vectors)
             d = dims if vectors else int(_config.embedding.dimensions)
@@ -247,12 +277,32 @@ def _idle_watchdog() -> None:
 
 
 def _graceful_exit() -> None:
+    global _lock_fd
     _shutdown_event.set()
     try:
         sp = socket_path()
         if sp.exists():
             sp.unlink()
     except OSError:
+        pass
+    try:
+        sf = statefile_path()
+        if sf.exists():
+            sf.unlink()
+    except OSError:
+        pass
+    try:
+        if _lock_fd is not None:
+            try:
+                fcntl.flock(_lock_fd.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+            try:
+                _lock_fd.close()
+            except OSError:
+                pass
+            _lock_fd = None
+    except Exception:
         pass
     try:
         pp = pidfile_path()
@@ -264,15 +314,6 @@ def _graceful_exit() -> None:
     os._exit(0)
 
 
-def _write_pidfile() -> None:
-    pp = pidfile_path()
-    pp.write_text(f"{os.getpid()}\n")
-    try:
-        os.chmod(pp, 0o600)
-    except OSError:
-        pass
-
-
 def _pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -281,9 +322,45 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
+def _acquire_pidfile_lock() -> bool:
+    """Acquire LOCK_EX|LOCK_NB on the pidfile BEFORE model load (ADR R6).
+
+    Returns True if this process is the sole owner; False if another daemon
+    holds the lock (caller must exit without loading the model).
+    """
+    global _lock_fd
+    pp = pidfile_path()
+    # Open/create; do not truncate until we hold the lock.
+    _lock_fd = open(pp, "a+")
+    try:
+        fcntl.flock(_lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        try:
+            _lock_fd.close()
+        except OSError:
+            pass
+        _lock_fd = None
+        return False
+    # We own the lock — write THIS process's pid + start_ts (APUE pattern).
+    try:
+        _lock_fd.seek(0)
+        _lock_fd.truncate()
+        _lock_fd.write(f"{os.getpid()}\n{time.time()}\n")
+        _lock_fd.flush()
+        os.fsync(_lock_fd.fileno())
+        try:
+            os.chmod(pp, 0o600)
+        except OSError:
+            pass
+    except OSError:
+        pass
+    return True
+
+
 def serve_forever(config: Any = None) -> None:
     """Bind UDS and serve until idle timeout or signal."""
     global _config, _last_request_ts, _start_ts, _idle_timeout_s, _n_threads
+    global _model_path_loaded, _model_mtime_loaded, _embed_count
 
     if config is None:
         from memory_cli.config import load_config
@@ -308,6 +385,7 @@ def serve_forever(config: Any = None) -> None:
             or home_s.startswith("/private/tmp")
             or "pytest" in home_s
             or "mcli-pt" in home_s
+            or "mclit-" in home_s
         ):
             _idle_timeout_s = min(_idle_timeout_s, 1.0)
     _n_threads = int(
@@ -323,33 +401,22 @@ def serve_forever(config: Any = None) -> None:
     except Exception:
         pass
 
-    # Single-instance: if live pid + socket, refuse double-start
-    pp = pidfile_path()
+    # R6: flock BEFORE model load — loser exits in ms, never loads 139MB.
+    if not _acquire_pidfile_lock():
+        return
+
     sp = socket_path()
-    if pp.exists():
-        try:
-            old_pid = int(pp.read_text().split()[0])
-            if _pid_alive(old_pid) and sp.exists():
-                # Already running — exit 0 (reuse)
-                return
-        except (ValueError, OSError):
-            pass
-        try:
-            pp.unlink()
-        except OSError:
-            pass
     if sp.exists():
         try:
             sp.unlink()
         except OSError:
             pass
 
-    _write_pidfile()
     _start_ts = time.time()
     _last_request_ts = time.time()  # don't idle-exit before first client window
+    _embed_count = 0
 
-    # Preload model at start so the first client does not pay cold-load latency
-    # (AC1: warm-daemon cold-client search <100ms).
+    # Preload model only AFTER lock won.
     try:
         get_model(_config)
         path, mtime, _dims = _resolved_model_meta(_config)
@@ -358,6 +425,7 @@ def serve_forever(config: Any = None) -> None:
     except Exception:
         # Stay up; handshake will surface load errors to clients.
         pass
+    _write_statefile()
 
     server = _Server(str(sp), _Handler)
     try:

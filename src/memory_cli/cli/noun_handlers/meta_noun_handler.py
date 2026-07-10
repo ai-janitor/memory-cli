@@ -379,25 +379,10 @@ def handle_health(args: List[str], global_flags: Any) -> Any:
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
     from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_config
-    import os
-    from pathlib import Path
+    from memory_cli.cli.noun_handlers.embed_noun_handler import probe_daemon_condensed
 
-    def _daemon_probe() -> dict:
-        sock = Path.home() / ".memory" / "run" / "embedd.sock"
-        pidf = Path.home() / ".memory" / "run" / "embedd.pid"
-        if not sock.exists() or not pidf.exists():
-            return {"daemon": "down", "state": "down"}
-        try:
-            pid = int(pidf.read_text().split()[0])
-            os.kill(pid, 0)
-        except (ValueError, OSError):
-            return {"daemon": "down", "state": "down"}
-        # Optional handshake would go here; presence of live pid+socket = up
-        return {"daemon": "up", "state": "up", "pid": pid, "socket": str(sock)}
-
-    # Always probe the daemon first (ADR 0001) so `memory meta health` reports
-    # up/down even when the store/DB is unavailable — Tier-B reds key on "up".
-    daemon = _daemon_probe()
+    # R6: condensed nested block {daemon: {state,pid,instance_count,rss_kb}}
+    daemon_block = {"daemon": probe_daemon_condensed()}
 
     try:
         conn, config = get_connection_and_config(global_flags)
@@ -420,7 +405,7 @@ def handle_health(args: List[str], global_flags: Any) -> Any:
                 data={
                     "message": "No search latency data available. Run some searches first.",
                     "sample_count": 0,
-                    **daemon,
+                    **daemon_block,
                 },
             )
 
@@ -437,7 +422,7 @@ def handle_health(args: List[str], global_flags: Any) -> Any:
                 data={
                     "message": "No search latency data recorded yet.",
                     "sample_count": 0,
-                    **daemon,
+                    **daemon_block,
                 },
             )
 
@@ -476,7 +461,7 @@ def handle_health(args: List[str], global_flags: Any) -> Any:
                 "p99": percentile(outputs, 99),
             },
             "threshold_ms": threshold_ms,
-            **daemon,
+            **daemon_block,
         }
 
         # Check for degradation
@@ -496,13 +481,13 @@ def handle_health(args: List[str], global_flags: Any) -> Any:
 
     except Exception as e:
         # DB path failed — still surface daemon probe so lifecycle checks work.
-        if daemon.get("state") == "up":
+        if daemon_block.get("daemon", {}).get("state") == "up":
             return Result(
                 status="ok",
                 data={
                     "message": f"latency stats unavailable: {e}",
                     "sample_count": 0,
-                    **daemon,
+                    **daemon_block,
                 },
             )
         return Result(status="error", error=str(e))
