@@ -139,10 +139,11 @@ Inputs: `docs/perf-fix-plan.md`, `docs/performance-analysis.md`,
 
 ## R6 — Multi-store efficiency (second-look NEW-3, do with R1)
 
-- STATUS: **SHIPPED** (2026-07-10; `tests/search/test_r6_multistore_embed_once.py`
-  3/3). Embed-once per `(model_path,dims)` identity + merge-before-hydrate in
+- STATUS: **SHIPPED** (2026-07-10, commit `c05aaa0`; see `CHANGELOG.md` →
+  Unreleased/Added "Multi-store embed-once + merge-before-hydrate (R6 / NEW-3)").
+  Embed-once per `(model_path,dims)` identity + merge-before-hydrate in
   `handle_search`; config-identity guard keeps per-store embed when models differ.
-  Do not re-propose.
+  Reds: `tests/search/test_r6_multistore_embed_once.py` (3/3). Do not re-propose.
 - WHAT: layered LOCAL+GLOBAL search runs the FULL pipeline per store
   (`cli/noun_handlers/neuron_noun_handler.py:435-441`): embed inference per
   store, latency commit per store, full-page hydration per store, then merge
@@ -172,7 +173,7 @@ Inputs: `docs/perf-fix-plan.md`, `docs/performance-analysis.md`,
 | 2 | R3 timeout/self-reap | quick win | coder | ✅ SHIPPED `4069ed85` |
 | 3 | R4 read-only search (4 sub-fixes) | quick win | coder | ✅ SHIPPED `903c462` |
 | 4 | R1 embedding daemon | architecture | architect | ✅ SHIPPED `8803a8c` |
-| 5 | R6 multi-store single-embed | small | coder (with R1) | ✅ SHIPPED |
+| 5 | R6 multi-store single-embed | small | coder (with R1) | ✅ SHIPPED `c05aaa0` |
 | 6 | R5 close #66/#67 | correctness | coder | ✅ SHIPPED |
 
 One-liner: R1 + R2 kill both the 25 s tail and the concurrency DoS;

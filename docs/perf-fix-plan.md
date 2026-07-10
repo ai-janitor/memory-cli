@@ -130,6 +130,10 @@ daemon's before/after is measured against a clean baseline.
 
 ### NEW-3 — multi-store layering ~2× the whole pipeline (docs measured single-store)
 
+- STATUS: **SHIPPED** (2026-07-10, commit `c05aaa0` = R6; see `CHANGELOG.md`
+  Unreleased/Added "Multi-store embed-once + merge-before-hydrate (R6 / NEW-3)").
+  Query embedded once per `(model_path,dims)` identity + reused across same-config
+  stores; per-store hydration deferred until after merge/truncate. Do not re-propose.
 - source: `perf-second-look-findings.md:27-30`
 - change:
   - `neuron search` runs FULL `light_search` PER store — `cli/noun_handlers/neuron_noun_handler.py:435-441`: embed inference per store + `_record_latency` INSERT/commit per store + full-page hydration + access bumps + FTS trigger rewrites per store.
