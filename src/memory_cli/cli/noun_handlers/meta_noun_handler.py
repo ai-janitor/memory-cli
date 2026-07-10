@@ -360,22 +360,44 @@ def handle_consolidate(args: List[str], global_flags: Any) -> Any:
 # VERB: health — search latency statistics and degradation warnings
 # =============================================================================
 def handle_health(args: List[str], global_flags: Any) -> Any:
-    """Report search latency statistics (p50/p95/p99) and suggest pruning.
+    """Report search latency statistics (p50/p95/p99) and daemon probe (ADR 0001).
 
     Reads the last N search latency records (default 100, configurable via
     --window flag) and computes percentile statistics. If p95 exceeds the
     configured threshold (search.latency_threshold_ms), emits a warning
     and suggests running `memory neuron prune`.
 
+    Also probes the resident embedding daemon socket and reports up/down
+    so fleet hosts can detect a warm embed path (stdout contains "up"/"down").
+
     Args:
         args: [--window N] optional window size for latency records.
         global_flags: Parsed global flags.
 
     Returns:
-        Result with latency stats dict and optional warning.
+        Result with latency stats dict, daemon probe, and optional warning.
     """
     from memory_cli.cli.output_envelope_json_and_text import Result
     from memory_cli.cli.noun_handlers.db_connection_from_global_flags import get_connection_and_config
+    import os
+    from pathlib import Path
+
+    def _daemon_probe() -> dict:
+        sock = Path.home() / ".memory" / "run" / "embedd.sock"
+        pidf = Path.home() / ".memory" / "run" / "embedd.pid"
+        if not sock.exists() or not pidf.exists():
+            return {"daemon": "down", "state": "down"}
+        try:
+            pid = int(pidf.read_text().split()[0])
+            os.kill(pid, 0)
+        except (ValueError, OSError):
+            return {"daemon": "down", "state": "down"}
+        # Optional handshake would go here; presence of live pid+socket = up
+        return {"daemon": "up", "state": "up", "pid": pid, "socket": str(sock)}
+
+    # Always probe the daemon first (ADR 0001) so `memory meta health` reports
+    # up/down even when the store/DB is unavailable — Tier-B reds key on "up".
+    daemon = _daemon_probe()
 
     try:
         conn, config = get_connection_and_config(global_flags)
@@ -398,6 +420,7 @@ def handle_health(args: List[str], global_flags: Any) -> Any:
                 data={
                     "message": "No search latency data available. Run some searches first.",
                     "sample_count": 0,
+                    **daemon,
                 },
             )
 
@@ -414,6 +437,7 @@ def handle_health(args: List[str], global_flags: Any) -> Any:
                 data={
                     "message": "No search latency data recorded yet.",
                     "sample_count": 0,
+                    **daemon,
                 },
             )
 
@@ -452,6 +476,7 @@ def handle_health(args: List[str], global_flags: Any) -> Any:
                 "p99": percentile(outputs, 99),
             },
             "threshold_ms": threshold_ms,
+            **daemon,
         }
 
         # Check for degradation
@@ -470,6 +495,16 @@ def handle_health(args: List[str], global_flags: Any) -> Any:
         return Result(status="ok", data=stats)
 
     except Exception as e:
+        # DB path failed — still surface daemon probe so lifecycle checks work.
+        if daemon.get("state") == "up":
+            return Result(
+                status="ok",
+                data={
+                    "message": f"latency stats unavailable: {e}",
+                    "sample_count": 0,
+                    **daemon,
+                },
+            )
         return Result(status="error", error=str(e))
 
 

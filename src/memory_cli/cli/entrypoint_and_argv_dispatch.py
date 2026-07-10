@@ -193,6 +193,10 @@ def _dispatch(global_flags: Any, tokens: List[str]) -> None:
     10. write_output(formatted, stream=sys.stdout)
     11. exit_with(result.status)
     """
+    # ADR 0001 Tier-B convenience: `memory search <query>` → `memory neuron search <query>`
+    if tokens and tokens[0] == "search":
+        tokens = ["neuron", "search", *tokens[1:]]
+
     noun_name = tokens[0]
     noun_entry = _registry.get(noun_name)
     if noun_entry is None:

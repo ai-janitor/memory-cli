@@ -105,13 +105,22 @@ def get_model(config: Any):  # -> Llama
     #     verbose=False,
     # )
     from llama_cpp import Llama  # noqa: PLC0415 — deferred import to avoid hard dependency
-    _model_instance = Llama(
-        model_path=str(path),
-        embedding=True,
-        n_ctx=n_ctx,
-        n_batch=n_batch,
-        verbose=False,
-    )
+    # Thread cap: prefer embedding.daemon_n_threads (ADR 0001) over llama.cpp
+    # cpu_count defaults — bounds fleet embed CPU for both daemon and inproc.
+    n_threads = getattr(config.embedding, "daemon_n_threads", None)
+    llama_kwargs: dict = {
+        "model_path": str(path),
+        "embedding": True,
+        "n_ctx": n_ctx,
+        "n_batch": n_batch,
+        "verbose": False,
+        "use_mmap": True,
+    }
+    if n_threads is not None and int(n_threads) >= 1:
+        nt = int(n_threads)
+        llama_kwargs["n_threads"] = nt
+        llama_kwargs["n_threads_batch"] = nt
+    _model_instance = Llama(**llama_kwargs)
 
     # --- Step 5: Store and return ---
     # _model_loaded = True

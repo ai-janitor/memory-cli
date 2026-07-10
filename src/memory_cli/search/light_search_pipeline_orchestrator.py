@@ -541,15 +541,22 @@ def _run_retrieval_stage(
         options: Search options with query text.
     """
     # --- Stage 1: Try to get query embedding ---
+    # ADR 0001 client seam: route through embedding_daemon_client.embed
+    # (batch shape); [0] is the single-query vector. Daemon failures fall
+    # back in-client to inproc; if the client itself raises (INV-3 force),
+    # BM25-only path keeps search exit 0.
     try:
         if not _EMBEDDING_AVAILABLE or get_model is None:
             raise RuntimeError("Embedding package not available")
         if config is None:
             from memory_cli.config import load_config
             config = load_config()
-        model = get_model(config)
         embedding_input = build_embedding_input(options.query, [])
-        state.query_embedding = embed_single(model, embedding_input, "query")
+        from memory_cli.embedding.embedding_daemon_client import embed as daemon_embed
+        vectors = daemon_embed([embedding_input], "query", config)
+        state.query_embedding = vectors[0] if vectors else None
+        if state.query_embedding is None:
+            raise RuntimeError("daemon client returned empty embedding batch")
     except Exception as exc:
         # Embedding unavailable — BM25-only fallback
         state.vector_unavailable = True

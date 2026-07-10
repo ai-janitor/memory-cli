@@ -54,6 +54,11 @@ CONFIG_DEFAULTS: Dict[str, Any] = {
         "n_ctx": 2048,
         "n_batch": 512,
         "dimensions": 768,
+        # R1 resident daemon (ADR 0001 seam rulings)
+        "daemon_embed_timeout_s": 30.0,
+        "daemon_connect_timeout_s": 2.0,
+        "daemon_idle_timeout_s": 600.0,
+        "daemon_n_threads": 4,
     },
     "search": {
         "default_limit": 10,
@@ -111,6 +116,22 @@ VALIDATION_RULES: Dict[str, Dict[str, Any]] = {
         "type": int,
         "min_exclusive": 0,
     },
+    "embedding.daemon_embed_timeout_s": {
+        "type": float,
+        "min_exclusive": 0.0,
+    },
+    "embedding.daemon_connect_timeout_s": {
+        "type": float,
+        "min_exclusive": 0.0,
+    },
+    "embedding.daemon_idle_timeout_s": {
+        "type": float,
+        "min_exclusive": 0.0,
+    },
+    "embedding.daemon_n_threads": {
+        "type": int,
+        "min": 1,
+    },
     "search.default_limit": {
         "type": int,
         "min": 1,
@@ -156,6 +177,11 @@ class EmbeddingConfig:
     n_batch: int
     dimensions: int
     model_path: Optional[str] = None
+    # R1 resident daemon (ADR 0001)
+    daemon_embed_timeout_s: float = 30.0
+    daemon_connect_timeout_s: float = 2.0
+    daemon_idle_timeout_s: float = 600.0
+    daemon_n_threads: int = 4
 
 
 @dataclass
@@ -388,6 +414,10 @@ def dict_to_config_schema(config: Dict[str, Any]) -> ConfigSchema:
         n_ctx=emb["n_ctx"],
         n_batch=emb["n_batch"],
         dimensions=emb["dimensions"],
+        daemon_embed_timeout_s=float(emb.get("daemon_embed_timeout_s", 30.0)),
+        daemon_connect_timeout_s=float(emb.get("daemon_connect_timeout_s", 2.0)),
+        daemon_idle_timeout_s=float(emb.get("daemon_idle_timeout_s", 600.0)),
+        daemon_n_threads=int(emb.get("daemon_n_threads", 4)),
     )
 
     srch = config["search"]
