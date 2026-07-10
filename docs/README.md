@@ -55,6 +55,9 @@ the graph. Standard: `~/.droid/refs/open-knowledge-format.md`.
 
 Investigations + methodology. Home: `docs/diagnostics/`.
 
+- [0001-neuron-search-architecture-review.md](diagnostics/0001-neuron-search-architecture-review.md) — architecture review after the 2026-07-09 fleet load storm (load 600+); verifies root causes, finds the fix-not-deployed gap. `type: report`
+- [0002-search-fix-methodology.md](diagnostics/0002-search-fix-methodology.md) — execution methodology for the ranked fixes: per-fix scope, acceptance criteria, deploy gate. `type: plan`
+
 ## Architecture
 
 ADR records (Context/Decision/Consequences, append-only). Home:
@@ -62,9 +65,6 @@ ADR records (Context/Decision/Consequences, append-only). Home:
 
 - [architecture/README.md](architecture/README.md) — ADR index.
 - [architecture/0001-resident-embedding-daemon.md](architecture/0001-resident-embedding-daemon.md) — warm-GGUF embed daemon over unix socket; inproc fallback, never hang; embed-only. Supersedes diagnostics/0001 §3. `status: proposed`
-
-- [0001-neuron-search-architecture-review.md](diagnostics/0001-neuron-search-architecture-review.md) — architecture review after the 2026-07-09 fleet load storm (load 600+); verifies root causes, finds the fix-not-deployed gap. `type: report`
-- [0002-search-fix-methodology.md](diagnostics/0002-search-fix-methodology.md) — execution methodology for the ranked fixes: per-fix scope, acceptance criteria, deploy gate. `type: plan`
 
 ## Delegations
 
