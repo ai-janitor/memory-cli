@@ -27,6 +27,7 @@ the graph. Standard: `~/.droid/refs/open-knowledge-format.md`.
 | dead-code delete candidates + wire/defer decisions | [dead-code-and-unused.md](dead-code-and-unused.md) |
 | second-look perf findings beyond the top-5 (multi-store 2× wall, corrected refs) | [perf-second-look-findings.md](perf-second-look-findings.md) |
 | ranked perf boost recommendations (what/why/how/acceptance/effort, merged + backlog) | [perf-boost-recommendations.md](perf-boost-recommendations.md) |
+| a known gap / deferred item / follow-up | [10-known-gaps.md](10-known-gaps.md) |
 | a diagnosis / architecture review / fix methodology | [diagnostics/](#diagnostics) |
 | a per-change spec / gate / result (MEM-FIX / MEM-FEAT) | [delegations/](#delegations) |
 | a checklist certification transcript | [certs/](#certs) |
@@ -44,6 +45,10 @@ the graph. Standard: `~/.droid/refs/open-knowledge-format.md`.
 - [dead-code-and-unused.md](dead-code-and-unused.md) — action catalog over object-model.md unused tally: Class A (5 fully-dead delete candidates) + Class B decision table (wire/defer per unit). `type: reference`
 - [perf-second-look-findings.md](perf-second-look-findings.md) — independent second-look over perf-analysis/perf-fix-plan: 5 new findings (FTS trigger amplification, probe-DDL writes, multi-store 2× wall, facet rollback, tag-affinity explosion) + corrected line refs. `type: reference`
 - [perf-boost-recommendations.md](perf-boost-recommendations.md) — ranked boost recommendations merged from perf-fix-plan + second-look + backlog (#72 #66 #67 #35); each item = what/why/how/acceptance/effort. `type: reference`
+
+## Known gaps + deferred
+
+- [10-known-gaps.md](10-known-gaps.md) — tracked gaps + deferred items, each with source ref + revive-trigger. Currently: 4 deferred perf items (ANN index, tag-affinity caps, fuzzy scan, latency pruning). `type: reference`
 
 ## Diagnostics
 
