@@ -50,3 +50,7 @@ Thumbs.db
 
 # uv lock (generated, not source of truth)
 uv.lock
+.droid/
+
+# Gate cert item-mark sidecars (transient tooling evidence; .md transcripts are the durable record)
+docs/certs/*-items.txt

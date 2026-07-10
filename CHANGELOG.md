@@ -5,6 +5,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-07-09
+
+Query/search performance program — 7 improvements (R1-R7) + resident embedding
+daemon + hygiene. Tester-first reds → coder → tester audit → reviewer code gate
+→ owner close on every change. Default suite deterministic green (1905 passed /
+9 skipped / 0 failed); host-perf + daemon-subprocess tests env-gated on-demand
+(`MEMORY_PERF_TESTS` / `MEMORY_DAEMON_TESTS`, see `docs/testing-daemon-lane.md`).
+
 ### Fixed
 - **Hygiene batch (task-74c20c2e)** — daemon: test-only guard on tmp-HOME idle floor (`PYTEST_CURRENT_TEST` / `MEMORY_DAEMON_TEST_SHORT_IDLE`); client socket finally-close on all paths (fd leak on autostart retry); model loader `atexit` close silences Llama.__del__ TypeError. Search: remove dead SearchTimeoutError isinstance branch; refuse nested `_SearchDeadline` (shared SIGALRM); latency side-channel Bernoulli sample `random() < 1/10` on file-backed DBs (B1: counter sample killed one-shot CLI observability — was 0 rows/process). `:memory:` always records. R6: `_embed_identity` uses `dimensions` (not dead `dims`) + CHANGELOG wording.
 
