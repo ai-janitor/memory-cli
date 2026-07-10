@@ -87,6 +87,19 @@ Checklist certification transcripts (agile-working, per task). Home: `docs/certs
 
 - object-model-transcript.md · performance-analysis-transcript.md · task-a1051fca…-transcript.md
 
+## Conventions — DOC-SHIP RULE (no orphan docs)
+
+Author ANY durable doc under `docs/` (reference / plan / how-to / report / ADR / new
+top-level `.md`) → in the **SAME commit**:
+
+1. **OKF frontmatter** on the file: `type:` + `title` / `description` / `tags` (incl. `okf`) / `timestamp`.
+2. **A catalog link here** in `docs/README.md` (Fast-path table and/or a section list), reachable ≤3 hops.
+
+**doc-authored ⇒ frontmatter + catalog, same commit.** Do not leave cataloging for the
+recorder — orphans got swept twice this wave; this rule kills that failure mode. Full rule:
+`CLAUDE.md` § DOC-SHIP RULE. Standard: `~/.droid/refs/open-knowledge-format.md`. Model:
+[knowledge-architecture.md](knowledge-architecture.md) (no-orphan rule).
+
 ## Related
 
 - Requirements: `REQUIREMENTS.md` (clean, latest) · `REQUIREMENTS-RAW.md` (immutable)
@@ -95,5 +108,4 @@ Checklist certification transcripts (agile-working, per task). Home: `docs/certs
 
 ## Gaps (flagged, not yet closed)
 
-- `knowledge-architecture.md` + `claude-code-integration.md` lack OKF frontmatter (`type:`) — retrofit pending.
 - `docs/delegations/` + `docs/certs/` files lack frontmatter — process artifacts; low priority.

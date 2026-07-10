@@ -1,3 +1,11 @@
+---
+type: explanation
+title: Knowledge Architecture — the Library Model
+description: How knowledge is addressed across the memory graph and filesystem — graph = card catalog, filesystem = stacks, neuron = catalog card (pointer + summary, not the book). The no-orphan-docs rule and tier-by-tier navigation.
+tags: [architecture, knowledge-model, library-model, okf, no-orphan]
+timestamp: 2026-07-10
+---
+
 # Knowledge Architecture — the Library Model
 
 How knowledge is *addressed* across the memory graph and the filesystem. The graph is the

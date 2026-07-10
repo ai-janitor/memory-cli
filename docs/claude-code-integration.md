@@ -1,3 +1,11 @@
+---
+type: how-to
+title: Claude Code Integration — Deterministic Memory Auto-Load + Organizing Conventions
+description: How to wire `memory` into Claude Code (or any agent harness) so the knowledge graph auto-loads every session (SessionStart hook injecting the topic index), plus the organizing conventions (hubs, catalog-first, store scoping, hub promotion/demotion) that keep the graph navigable.
+tags: [integration, claude-code, auto-load, session-hook, conventions, okf]
+timestamp: 2026-07-10
+---
+
 # Claude Code Integration — Deterministic Memory Auto-Load + Organizing Conventions
 
 How to wire `memory` into Claude Code (or any agent harness) so the knowledge graph
