@@ -26,6 +26,11 @@ daemon's before/after is measured against a clean baseline.
 
 ### 1 — Write-on-read: access-count UPDATE + latency INSERT (QUICK WIN)
 
+- STATUS: **SHIPPED** (2026-07-10, commit `903c462` = R4 true read-only search; see
+  `CHANGELOG.md` Unreleased/Added "True read-only search (R4)"). All sub-fixes incl.
+  NEW-1 (v010 FTS trigger scoped to `UPDATE OF content`) + NEW-2 (extension probe
+  swapped off CREATE/DROP): search path now does ZERO persistent writes. Reds:
+  `tests/search/test_r4_true_read_only_search.py` (6/6). Do not re-propose.
 - TIER: quick win
 - change:
   - two writes committed on every search read.
@@ -137,12 +142,11 @@ daemon's before/after is measured against a clean baseline.
 
 ### NEW-4 — facet fast-lane: access bump never committed → silently rolled back
 
-- STATUS: **PARTIAL** — the measurement half shipped via R2 (commit `00633bd`;
-  `CHANGELOG.md` Unreleased/Added "Facet fast-path records `search_latency` (R2)"):
-  facet lane now calls shared `_record_latency`, so `search_latency` no longer
-  excludes the fast lane. REMAINING: the read-only refactor (item #1) so the facet
-  lane does ZERO writes and the uncommitted-txn rollback is gone. Do not re-propose
-  the latency-recording part.
+- STATUS: **SHIPPED** — measurement half via R2 (commit `00633bd`, facet lane records
+  `search_latency`); read-only half via R4 (commit `903c462`, "True read-only search"):
+  access_count opt-in default-off + latency side-channel writer → facet lane does ZERO
+  writes, no uncommitted-txn rollback, WAL writer slot free. Both cite `CHANGELOG.md`.
+  Do not re-propose.
 - source: `perf-second-look-findings.md:32-36`
 - change:
   - `_facet_fast_search` returns at `light_search_pipeline_orchestrator.py:242→338-347` BEFORE reaching `_record_latency` → hydration's UPDATE (`:119`) sits in an open implicit txn; search verb never commits; `close()` ROLLS BACK.
@@ -180,7 +184,7 @@ Folded from `perf-second-look-findings.md:43-49`. Notes/flags, not tasks.
 
 | Order | Item | path:line | Tier | Owner role | Status |
 |---|---|---|---|---|---|
-| 1 | Write-on-read: access_count UPDATE + latency INSERT/commit | orchestrator `:686`/`:692`; hydration `:120` | quick win | coder | ⬜ pending (= R4) |
+| 1 | Write-on-read: access_count UPDATE + latency INSERT/commit | orchestrator `:686`/`:692`; hydration `:120` | quick win | coder | ✅ SHIPPED `903c462` (R4) |
 | 2 | BFS PRAGMA-per-node + N+1 edge queries | bfs `:321`/`:287`/`:295`/`:302` | quick win | coder | ⬜ pending |
 | 3 | Embedding model reloaded per process | model_loader `:35`/`:108` | architecture | architect | ✅ SHIPPED `8803a8c` (R1) |
 | 4 | Cold-load / contention tail (same root as #3) | model_loader `:108`; ext_loader `:80-83` (corrected) | architecture | architect (folds into #3) | ✅ SHIPPED `8803a8c` (R1) |

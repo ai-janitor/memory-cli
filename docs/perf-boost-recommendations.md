@@ -90,6 +90,13 @@ Inputs: `docs/perf-fix-plan.md`, `docs/performance-analysis.md`,
 
 ## R4 — True read-only search (write-on-read cluster, plan #1 + second-look)
 
+- STATUS: **SHIPPED** (2026-07-10, commit `903c462`; see `CHANGELOG.md` →
+  Unreleased/Added "True read-only search (R4)"). All 4 sub-fixes landed: v010 FTS
+  trigger scoped to `UPDATE OF content`; access_count opt-in (default off); latency
+  INSERT via side-channel writer; extension probe swapped to `vec_version()`/
+  `pragma_module_list` (no CREATE/DROP). Search path = ZERO persistent writes →
+  RO connections + concurrent fleet reads. Reds:
+  `tests/search/test_r4_true_read_only_search.py` (6/6). Do not re-propose.
 - WHAT: search must do ZERO writes. Four sub-fixes, do together:
   1. restrict FTS trigger: `trg_neurons_fts_update` → `AFTER UPDATE OF
      content ON neurons` (today it's unconditional — every access bump
@@ -157,7 +164,7 @@ Inputs: `docs/perf-fix-plan.md`, `docs/performance-analysis.md`,
 |---|---|---|---|---|
 | 1 | R2 fleet→facet path + #72 status note | ops/docs | today | ✅ SHIPPED `00633bd` |
 | 2 | R3 timeout/self-reap | quick win | coder | ✅ SHIPPED `4069ed85` |
-| 3 | R4 read-only search (4 sub-fixes) | quick win | coder | ⬜ pending |
+| 3 | R4 read-only search (4 sub-fixes) | quick win | coder | ✅ SHIPPED `903c462` |
 | 4 | R1 embedding daemon | architecture | architect | ✅ SHIPPED `8803a8c` |
 | 5 | R6 multi-store single-embed | small | coder (with R1) | ⬜ pending |
 | 6 | R5 close #66/#67 | correctness | coder | ⬜ pending |
