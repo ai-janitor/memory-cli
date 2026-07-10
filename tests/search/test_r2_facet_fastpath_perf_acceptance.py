@@ -105,24 +105,26 @@ class TestZeroLlamaConstruction:
         assert envelope.facet_fast is True
         assert envelope.exit_code == 0
 
-    def test_positive_control_plain_search_does_construct_llama(self, conn):
-        # Non-facet semantic search MUST reach the constructor — proves the
-        # llama_cpp.Llama patch actually observes constructions, so the
-        # zero-count assertion above genuinely constrains behavior.
+    def test_positive_control_llama_counter_is_live(self):
+        # Non-vacuity proof for the zero-count guard above: the same
+        # llama_cpp.Llama patch MUST observe a construction when the model is
+        # actually loaded. We drive get_model() directly (the sole construction
+        # site) rather than through the search path — since R1 landed, a plain
+        # search routes through the embedding daemon client and may construct
+        # ZERO Llama in THIS process by design (the daemon owns the model), so a
+        # search-path control would be non-deterministic. A direct get_model()
+        # call is the deterministic proof that the patch counts constructions.
         from memory_cli.embedding import model_loader_lazy_singleton as _ml
+        from memory_cli.config import load_config
         _ml.reset_model()  # clear any singleton loaded by an earlier test
 
-        _add(conn, "python programming tutorial about verbs")
-
-        # Make the constructor cheap + non-fatal: a bare stub instead of a
-        # 4GB model load. We assert only that construction was ATTEMPTED.
+        # Patch to a stub so no real 146MB load happens; assert construction only.
         with patch("llama_cpp.Llama", return_value=MagicMock()) as mock_llama:
-            options = SearchOptions(query="python", fan_out_depth=0)
-            light_search(conn, options)
+            _ml.get_model(load_config())
 
         assert mock_llama.call_count >= 1, (
-            "plain (non-facet) search did not construct a Llama model — the "
-            "zero-Llama guard above would be vacuous"
+            "llama_cpp.Llama patch observed no construction from get_model() — "
+            "the zero-Llama guard above would be vacuous"
         )
         _ml.reset_model()  # leave the singleton clean for other tests
 
