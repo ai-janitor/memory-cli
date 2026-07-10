@@ -215,6 +215,16 @@ def _cli(args, home: Path, timeout=30):
     )
 
 
+def _json(proc):
+    """Parse the CLI JSON envelope; return the .data payload (or {} on miss)."""
+    import json as _j
+    try:
+        obj = _j.loads(proc.stdout)
+    except (ValueError, TypeError):
+        return {}
+    return obj.get("data", obj) if isinstance(obj, dict) else {}
+
+
 # =============================================================================
 # TIER A — deterministic contract reds
 # =============================================================================
@@ -415,55 +425,29 @@ class TestTierBLiveDaemon:
         finally:
             self._stop(temp_home)
 
-    @pytest.mark.skip(reason="QUARANTINED (backlog #73): flaky ~1/5 — real "
-                      "subprocess autostart + 146MB cold model load + socket race. "
-                      "Deterministic single-resident-copy needs a daemon-introspection "
-                      "seam (health reports daemon pid/instance count; today meta "
-                      "health = search-latency stats, pidfile pid semantics unclear). "
-                      "Seam gap bounced to architect.")
     def test_ac2_two_clients_one_resident_model_copy(self, temp_home):
-        # HOME-scoped + implementation-agnostic. The OLD version used a
-        # system-wide `pgrep` that counted daemons from other tests/runs lingering
-        # on the idle timeout (ignores HOME isolation) → flaky/false-red. Proof of
-        # "one resident copy": two CONCURRENT client.embed calls (client
-        # autostarts one daemon; single-instance guard forbids a second) both
-        # succeed through exactly ONE socket endpoint under this HOME. A second
-        # resident model would require a second daemon = a second socket, which
-        # the single-instance bind prevents.
-        import threading
-        from memory_cli.embedding import embedding_daemon_client as dc
-        from memory_cli.config import load_config
-
-        sock = temp_home / SOCK_REL
-        cfg = load_config()
-        results, errs = [], []
-
-        def client():
-            try:
-                v = dc.embed(["concurrent client probe text"], "query", cfg)
-                results.append(v)
-            except Exception as e:  # noqa: BLE001 — record, assert below
-                errs.append(str(e))
-
+        # UNQUARANTINED (#73 resolved by ADR R6 daemon introspection + flock).
+        # Deterministic single-resident-copy via the LOCK-derived introspection
+        # surface — no pgrep race. Start daemon → instance_count==1, rss≈140k;
+        # a 2nd --bg returns already_up (lock held, no 2nd 139MB load); re-query
+        # → instance_count still 1, rss unchanged. (Full form: test_r6_daemon_
+        # introspection.py::TestDeterministicSingleInstance.)
+        self._start(temp_home)
         try:
-            # Warm ONE daemon first (serial) — AC2 is about a WARM daemon shared
-            # by concurrent clients, not two clients racing to autostart one.
-            dc.embed(["warm the resident daemon"], "query", cfg)
-            assert sock.exists(), "AC2: daemon did not start / expose a socket"
+            st1 = _json(_cli(["embed", "daemon"], temp_home))
+            assert st1.get("instance_count") == 1, f"AC2: instance_count != 1: {st1}"
+            assert st1.get("rss_kb", 0) > 100_000, f"AC2: model not resident: {st1}"
+            rss_before, pid_before = st1["rss_kb"], st1["pid"]
 
-            threads = [threading.Thread(target=client) for _ in range(2)]
-            for t in threads:
-                t.start()
-            for t in threads:
-                t.join()
+            r2 = _cli(["embed", "daemon", "--bg"], temp_home)
+            assert _json(r2).get("state") == "already_up", (
+                f"AC2: 2nd --bg not already_up (flock): {_json(r2)!r}"
+            )
 
-            assert errs == [], f"AC2: concurrent clients failed: {errs}"
-            assert len(results) == 2, "AC2: both concurrent clients must return"
-            # One resident daemon endpoint served both clients.
-            assert sock.exists(), "AC2: no single daemon socket endpoint after concurrent use"
-            # Both clients got a well-formed 768-dim vector from the one model.
-            for v in results:
-                assert len(_first_vec(v)) == 768
+            st3 = _json(_cli(["embed", "daemon"], temp_home))
+            assert st3.get("instance_count") == 1, f"AC2: instance_count changed: {st3}"
+            assert st3.get("pid") == pid_before, "AC2: daemon respawned"
+            assert st3.get("rss_kb") == rss_before, "AC2: rss changed = 2nd model copy"
         finally:
             self._stop(temp_home)
 
