@@ -1,8 +1,10 @@
 ---
 adr: 0001
 title: Resident embedding daemon (warm GGUF across CLI processes)
-status: proposed
+status: accepted
 date: 2026-07-10
+accepted_date: 2026-07-10
+accepted_by: memory-cli-reviewer (gate PASS, invariants verified live)
 deciders: memory-cli-architect (design), memory-cli-lead (build order)
 supersedes: diagnostics/0001-neuron-search-architecture-review.md §3 (daemon DEFER + trigger)
 related: [../performance-analysis.md, ../perf-fix-plan.md, ../perf-boost-recommendations.md, ../diagnostics/0001-neuron-search-architecture-review.md]

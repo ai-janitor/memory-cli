@@ -19,4 +19,4 @@ timestamp: 2026-07-10
 - [0001-resident-embedding-daemon.md](0001-resident-embedding-daemon.md) —
   one warm process holds the GGUF; CLI embeds over a unix socket; in-process
   fallback, never hang; embed-only. **Supersedes**
-  `diagnostics/0001` §3 (daemon DEFER). `status: proposed`.
+  `diagnostics/0001` §3 (daemon DEFER). `status: accepted` (gate PASS, invariants verified live).
