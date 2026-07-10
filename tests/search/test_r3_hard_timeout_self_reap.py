@@ -237,15 +237,16 @@ class TestLivePathSelfReap:
         c.commit()
         c.close()
 
-        # In-subprocess: patch the embed stage to wedge for 30s, then run a real
-        # `memory search` with a short ceiling against the pre-built store. A
-        # compliant build self-reaps (exit nonzero) near the ceiling; today it
-        # wedges → our 8s harness timeout fires (RED).
+        # In-subprocess: wedge the BM25 stage (always executed, independent of
+        # the embed daemon-vs-inproc branch) for 30s, then run a real `memory
+        # search` with a short ceiling against the pre-built store. A compliant
+        # build self-reaps (exit nonzero) near the ceiling; today it wedges →
+        # our 8s harness timeout fires (RED).
         script = (
             "import sys, time\n"
             "from unittest.mock import patch\n"
-            "patch('memory_cli.search.light_search_pipeline_orchestrator.get_model',"
-            " side_effect=lambda c: (time.sleep(30), None)[1]).start()\n"
+            "patch('memory_cli.search.light_search_pipeline_orchestrator.retrieve_bm25',"
+            " side_effect=lambda *a, **k: time.sleep(30)).start()\n"
             "from memory_cli.cli.entrypoint_and_argv_dispatch import main\n"
             f"main(['search','wedge','--db',{str(db_path)!r},'--timeout','{CEILING_S}'])\n"
         )
