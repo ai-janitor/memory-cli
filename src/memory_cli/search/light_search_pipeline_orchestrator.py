@@ -70,8 +70,11 @@ except ImportError:
 DEFAULT_SEARCH_TIMEOUT_S = 120.0
 
 # Thread-local-ish globals for the alarm handler (search is single-threaded CLI).
+# N2 hygiene: _SearchDeadline uses process-wide SIGALRM + one ITIMER — nesting
+# would clobber the outer deadline. Depth guard refuses nested enter.
 _deadline_stage: str = "init"
 _deadline_timeout_s: float = DEFAULT_SEARCH_TIMEOUT_S
+_deadline_depth: int = 0
 
 
 class SearchTimeoutError(Exception):
@@ -96,7 +99,11 @@ def _set_stage(stage: str) -> None:
 
 
 class _SearchDeadline:
-    """Install a real-time ITIMER that raises SearchTimeoutError on breach."""
+    """Install a real-time ITIMER that raises SearchTimeoutError on breach.
+
+    Not re-entrant: shared SIGALRM handler + single ITIMER_REAL. Nested
+    light_search would silently break outer deadlines — refuse with RuntimeError.
+    """
 
     def __init__(self, timeout_s: Optional[float]):
         # None → default; <=0 → disabled (not used by reds; defensive)
@@ -105,11 +112,19 @@ class _SearchDeadline:
         self.timeout_s = float(timeout_s)
         self._prev_handler = None
         self._armed = False
+        self._entered = False
 
     def __enter__(self):
-        global _deadline_timeout_s, _deadline_stage
+        global _deadline_timeout_s, _deadline_stage, _deadline_depth
         if self.timeout_s <= 0:
             return self
+        if _deadline_depth > 0:
+            raise RuntimeError(
+                "nested _SearchDeadline not supported "
+                "(shared SIGALRM / single ITIMER_REAL)"
+            )
+        _deadline_depth += 1
+        self._entered = True
         _deadline_timeout_s = self.timeout_s
         _deadline_stage = "init"
         # SIGALRM only works on main thread (Unix CLI + pytest main).
@@ -123,6 +138,7 @@ class _SearchDeadline:
         return self
 
     def __exit__(self, exc_type, exc, tb):
+        global _deadline_depth
         if self._armed:
             try:
                 signal.setitimer(signal.ITIMER_REAL, 0)
@@ -133,6 +149,9 @@ class _SearchDeadline:
                     signal.signal(signal.SIGALRM, self._prev_handler)
             except (ValueError, AttributeError, OSError):
                 pass
+        if self._entered:
+            _deadline_depth = max(0, _deadline_depth - 1)
+            self._entered = False
         return False
 
 
@@ -863,6 +882,12 @@ def _candidates_as_deferred_results(
     return results
 
 
+# N3 hygiene: sample latency side-channel writes on file-backed DBs (fleet storm
+# under #72). :memory: always records so R2 unit reds stay observable.
+_LATENCY_SAMPLE_EVERY = 10
+_latency_sample_i: int = 0
+
+
 def _record_latency(
     conn: sqlite3.Connection,
     total_ms: float,
@@ -878,8 +903,12 @@ def _record_latency(
     does not take the WAL writer slot. For :memory: (unit tests, R2 latency
     reds) write on the same connection so row counts remain observable.
 
+    N3: file-backed path samples 1-in-N (deterministic counter) so fleet
+    storms do not open+commit a writer per search. :memory: always writes.
+
     Best-effort: silently ignores errors (table may not exist / read-only).
     """
+    global _latency_sample_i
     recorded_at = int(time.time() * 1000)
     params = (total_ms, retrieval_ms, scoring_ms, output_ms, result_count, recorded_at)
     sql = (
@@ -906,6 +935,10 @@ def _record_latency(
             file_path = ""
 
         if file_path and file_path != ":memory:":
+            # 1-in-N sample — skip remaining fleet writes (zero side-channel work).
+            _latency_sample_i = (_latency_sample_i + 1) % _LATENCY_SAMPLE_EVERY
+            if _latency_sample_i != 0:
+                return
             # Side-channel writer — keeps search conn free of INSERT/commit.
             writer = sqlite3.connect(file_path)
             try:

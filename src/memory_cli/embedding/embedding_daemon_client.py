@@ -160,19 +160,26 @@ def _daemon_embed(
     connect_t = _connect_timeout(config)
     embed_t = _embed_timeout(config)
 
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.settimeout(connect_t)
+    # Hygiene: single ownership of sock with finally-close on ALL paths
+    # (incl. second-connect failure after autostart — was an fd leak).
+    sock: Optional[socket.socket] = None
     try:
-        sock.connect(str(sp))
-    except OSError:
-        sock.close()
-        # autostart-on-miss, retry once
-        _try_autostart(config)
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(connect_t)
-        sock.connect(str(sp))
+        try:
+            sock.connect(str(sp))
+        except OSError:
+            try:
+                sock.close()
+            except OSError:
+                pass
+            sock = None
+            # autostart-on-miss, retry once
+            _try_autostart(config)
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.settimeout(connect_t)
+            sock.connect(str(sp))
 
-    try:
         # Handshake
         hs = {
             "v": PROTOCOL_V,
@@ -220,10 +227,11 @@ def _daemon_embed(
             vectors.append(vec)
         return vectors
     finally:
-        try:
-            sock.close()
-        except OSError:
-            pass
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
 
 
 def embed(texts: List[str], op_type: str, config: Any) -> List[List[float]]:

@@ -392,11 +392,15 @@ def serve_forever(config: Any = None) -> None:
             float,
         )
     )
+    # TEST-ONLY idle floor (hygiene: was reachable on any /tmp HOME in prod).
     # Tier-B reds isolate the CLI env to {HOME,PATH} only, so MEMORY_EMBED_*
-    # never reaches the daemon process. When HOME is a short lab/tmp path
-    # (pytest basetemp), floor idle to 1s so AC6 can observe unlink. Real
-    # user homes (/Users, /home) keep the full config default (600s).
-    if os.environ.get("MEMORY_EMBED_IDLE_TIMEOUT_S") is None:
+    # never reaches the daemon process. Floor idle to 1s only when a test
+    # harness is active (pytest / explicit flag) AND HOME looks like a lab
+    # basetemp. Real user homes keep the full config default (600s).
+    if os.environ.get("MEMORY_EMBED_IDLE_TIMEOUT_S") is None and (
+        os.environ.get("PYTEST_CURRENT_TEST")
+        or os.environ.get("MEMORY_DAEMON_TEST_SHORT_IDLE")
+    ):
         home_s = str(Path.home())
         if (
             home_s.startswith("/tmp")

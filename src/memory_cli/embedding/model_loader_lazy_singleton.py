@@ -23,6 +23,7 @@
 
 from __future__ import annotations
 
+import atexit
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -34,6 +35,25 @@ if TYPE_CHECKING:
 # _model_loaded: bool = False  # distinguishes "not loaded" from "load returned None"
 _model_instance: Any = None
 _model_loaded: bool = False
+_atexit_registered: bool = False
+
+
+def _close_model_atexit() -> None:
+    """Drop the Llama singleton at process exit (silences __del__ TypeError noise)."""
+    global _model_instance, _model_loaded
+    inst = _model_instance
+    _model_instance = None
+    _model_loaded = False
+    if inst is None:
+        return
+    # Prefer explicit close over relying on Llama.__del__ (3rd-party shutdown
+    # can tear down ctypes before __del__ runs → TypeError: None not callable).
+    try:
+        close = getattr(inst, "close", None)
+        if callable(close):
+            close()
+    except Exception:
+        pass
 
 
 def get_model(config: Any):  # -> Llama
@@ -51,7 +71,7 @@ def get_model(config: Any):  # -> Llama
         FileNotFoundError: If the model file does not exist at model_path.
         RuntimeError: If llama-cpp-python fails to load the model.
     """
-    global _model_instance, _model_loaded
+    global _model_instance, _model_loaded, _atexit_registered
 
     # --- Step 1: Check if singleton already loaded ---
     # If _model_instance is not None (or _model_loaded is True), return it immediately
@@ -126,6 +146,11 @@ def get_model(config: Any):  # -> Llama
     # _model_loaded = True
     # return _model_instance
     _model_loaded = True
+    # Register once: close model before interpreter teardown (hygiene #4).
+    global _atexit_registered
+    if not _atexit_registered:
+        atexit.register(_close_model_atexit)
+        _atexit_registered = True
     return _model_instance
 
 
@@ -138,8 +163,14 @@ def reset_model() -> None:
     global _model_instance, _model_loaded
 
     # --- Reset singleton state ---
-    # global _model_instance, _model_loaded
-    # _model_instance = None
-    # _model_loaded = False
+    # Prefer close() so we don't leave a live Llama for atexit/__del__.
+    inst = _model_instance
     _model_instance = None
     _model_loaded = False
+    if inst is not None:
+        try:
+            close = getattr(inst, "close", None)
+            if callable(close):
+                close()
+        except Exception:
+            pass

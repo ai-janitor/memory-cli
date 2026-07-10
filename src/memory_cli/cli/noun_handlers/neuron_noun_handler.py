@@ -444,16 +444,17 @@ def handle_search(args: List[str], global_flags: Any) -> Any:
         # ------------------------------------------------------------------
         multi = len(connections) > 1
         # Cache: embed-config key → vector | None (failed). Keyed by
-        # (model_path, dims) so same-model stores share one embed call.
+        # (model_path, dimensions) so same-model stores share one embed call.
         embed_cache: Dict[tuple, Optional[List[float]]] = {}
 
         def _embed_identity(config: Any) -> tuple:
             emb = getattr(config, "embedding", None)
             if emb is None:
                 return ("__id__", id(config))
+            # Use EmbeddingConfig.dimensions (not the dead 'dims' attr name).
             return (
                 getattr(emb, "model_path", None),
-                getattr(emb, "dims", None),
+                getattr(emb, "dimensions", None),
             )
 
         def _resolve_query_embedding(config: Any) -> Optional[List[float]]:
@@ -558,10 +559,9 @@ def handle_search(args: List[str], global_flags: Any) -> Any:
             },
         )
     except Exception as e:
-        # R3: SearchTimeoutError carries stage name in str(e)
-        from memory_cli.search.light_search_pipeline_orchestrator import SearchTimeoutError
-        if isinstance(e, SearchTimeoutError):
-            return Result(status="error", error=str(e))
+        # R3: SearchTimeoutError (and any other pipeline error) → structured
+        # status=error. Stage name lives in str(e) for timeouts. (N1 hygiene:
+        # removed dead isinstance branch that was identical to the fallthrough.)
         return Result(status="error", error=str(e))
 
 
