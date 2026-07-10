@@ -25,6 +25,7 @@ the graph. Standard: `~/.droid/refs/open-knowledge-format.md`.
 | query-path cost map + ranked bottlenecks (LIGHT search) | [performance-analysis.md](performance-analysis.md) |
 | ordered fix plan over the perf bottlenecks (quick wins → architecture → scale) | [perf-fix-plan.md](perf-fix-plan.md) |
 | dead-code delete candidates + wire/defer decisions | [dead-code-and-unused.md](dead-code-and-unused.md) |
+| architecture decisions (ADRs) | [architecture/](architecture/README.md) |
 | second-look perf findings beyond the top-5 (multi-store 2× wall, corrected refs) | [perf-second-look-findings.md](perf-second-look-findings.md) |
 | ranked perf boost recommendations (what/why/how/acceptance/effort, merged + backlog) | [perf-boost-recommendations.md](perf-boost-recommendations.md) |
 | a known gap / deferred item / follow-up | [10-known-gaps.md](10-known-gaps.md) |
@@ -53,6 +54,14 @@ the graph. Standard: `~/.droid/refs/open-knowledge-format.md`.
 ## Diagnostics
 
 Investigations + methodology. Home: `docs/diagnostics/`.
+
+## Architecture
+
+ADR records (Context/Decision/Consequences, append-only). Home:
+`docs/architecture/`.
+
+- [architecture/README.md](architecture/README.md) — ADR index.
+- [architecture/0001-resident-embedding-daemon.md](architecture/0001-resident-embedding-daemon.md) — warm-GGUF embed daemon over unix socket; inproc fallback, never hang; embed-only. Supersedes diagnostics/0001 §3. `status: proposed`
 
 - [0001-neuron-search-architecture-review.md](diagnostics/0001-neuron-search-architecture-review.md) — architecture review after the 2026-07-09 fleet load storm (load 600+); verifies root causes, finds the fix-not-deployed gap. `type: report`
 - [0002-search-fix-methodology.md](diagnostics/0002-search-fix-methodology.md) — execution methodology for the ranked fixes: per-fix scope, acceptance criteria, deploy gate. `type: plan`
