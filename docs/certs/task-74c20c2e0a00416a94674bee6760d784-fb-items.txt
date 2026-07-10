@@ -1,1 +1,1 @@
-FB: fable R17 hygiene — globals verified, test-only idle, fd finally, atexit close, nest guard, sample latency, dimensions identity
+FB B1: stateless sample fixes one-shot zero-row regression

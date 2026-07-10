@@ -24,6 +24,7 @@
 
 from __future__ import annotations
 
+import random
 import signal
 import sqlite3
 import time
@@ -884,8 +885,11 @@ def _candidates_as_deferred_results(
 
 # N3 hygiene: sample latency side-channel writes on file-backed DBs (fleet storm
 # under #72). :memory: always records so R2 unit reds stay observable.
-_LATENCY_SAMPLE_EVERY = 10
-_latency_sample_i: int = 0
+# B1 revise: STATELESS Bernoulli sample — memory-cli is 1-search-per-process;
+# a module counter never reaches N across one-shot CLIs (0 rows forever).
+# random.random() < 1/N ⇒ each process contributes ~1/N of rows → fleet p50
+# stays observable while storm write load drops ~N×.
+_LATENCY_SAMPLE_RATE = 1.0 / 10.0
 
 
 def _record_latency(
@@ -903,12 +907,11 @@ def _record_latency(
     does not take the WAL writer slot. For :memory: (unit tests, R2 latency
     reds) write on the same connection so row counts remain observable.
 
-    N3: file-backed path samples 1-in-N (deterministic counter) so fleet
-    storms do not open+commit a writer per search. :memory: always writes.
+    N3/B1: file-backed path Bernoulli-samples at _LATENCY_SAMPLE_RATE (stateless
+    random — works for one-shot CLI processes). :memory: always writes.
 
     Best-effort: silently ignores errors (table may not exist / read-only).
     """
-    global _latency_sample_i
     recorded_at = int(time.time() * 1000)
     params = (total_ms, retrieval_ms, scoring_ms, output_ms, result_count, recorded_at)
     sql = (
@@ -935,9 +938,8 @@ def _record_latency(
             file_path = ""
 
         if file_path and file_path != ":memory:":
-            # 1-in-N sample — skip remaining fleet writes (zero side-channel work).
-            _latency_sample_i = (_latency_sample_i + 1) % _LATENCY_SAMPLE_EVERY
-            if _latency_sample_i != 0:
+            # Stateless 1-in-N: each one-shot process has p=1/N of writing.
+            if random.random() >= _LATENCY_SAMPLE_RATE:
                 return
             # Side-channel writer — keeps search conn free of INSERT/commit.
             writer = sqlite3.connect(file_path)

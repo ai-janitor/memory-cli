@@ -6,7 +6,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Fixed
-- **Hygiene batch (task-74c20c2e)** — daemon: test-only guard on tmp-HOME idle floor (`PYTEST_CURRENT_TEST` / `MEMORY_DAEMON_TEST_SHORT_IDLE`); client socket finally-close on all paths (fd leak on autostart retry); model loader `atexit` close silences Llama.__del__ TypeError. Search: remove dead SearchTimeoutError isinstance branch; refuse nested `_SearchDeadline` (shared SIGALRM); 1-in-10 sample latency side-channel on file-backed DBs (`:memory:` always records). R6: `_embed_identity` uses `dimensions` (not dead `dims`) + CHANGELOG wording.
+- **Hygiene batch (task-74c20c2e)** — daemon: test-only guard on tmp-HOME idle floor (`PYTEST_CURRENT_TEST` / `MEMORY_DAEMON_TEST_SHORT_IDLE`); client socket finally-close on all paths (fd leak on autostart retry); model loader `atexit` close silences Llama.__del__ TypeError. Search: remove dead SearchTimeoutError isinstance branch; refuse nested `_SearchDeadline` (shared SIGALRM); latency side-channel Bernoulli sample `random() < 1/10` on file-backed DBs (B1: counter sample killed one-shot CLI observability — was 0 rows/process). `:memory:` always records. R6: `_embed_identity` uses `dimensions` (not dead `dims`) + CHANGELOG wording.
 
 ### Added
 - **BFS level-batch + confidence-once (R7 / perf-fix-plan #2)** — `spread()` resolves edges.confidence once (meta.schema_version ≥5, no per-node `PRAGMA table_info`); BFS fetches neighbors with one `WHERE source_id IN (...) OR target_id IN (...)` per depth level (O(depth) edge queries, not O(frontier)). Max-activation-wins + hop_distance parity preserved. No id(conn) schema cache. Proven by `tests/search/test_r7_bfs_schema_cache_cte.py` (3/3).

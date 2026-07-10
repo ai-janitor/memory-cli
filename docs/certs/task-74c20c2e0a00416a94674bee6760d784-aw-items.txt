@@ -1,1 +1,1 @@
-AW hygiene batch; reds not required (small fixes); no self-close
+AW B1 Bernoulli latency; re-gate after REVISE; no self-close
