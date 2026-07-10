@@ -59,6 +59,19 @@ requires_model = pytest.mark.skipif(
     reason="real central embedding model (~/.memory/models/default.gguf) required",
 )
 
+# ON-DEMAND daemon lane (#75): tests that spawn a REAL detached daemon + load the
+# 139MB model flake the full suite via llama_cpp free_model native teardown
+# contention. Gate them behind MEMORY_DAEMON_TESTS so default `pytest tests/` is
+# deterministic. The DETERMINISTIC daemon tests here (fake-daemon protocol reds:
+# skew/timeout/kill-9/import-boundary/parity) are NOT gated — they never spawn a
+# real daemon. Run the live lane on demand:
+#   MEMORY_DAEMON_TESTS=1 uv run pytest tests/embedding/test_r1_daemon_acceptance.py
+# Coverage MOVED, not dropped — see docs/testing-daemon-lane.md.
+requires_daemon_lane = pytest.mark.skipif(
+    not os.environ.get("MEMORY_DAEMON_TESTS"),
+    reason="daemon on-demand lane (#75): set MEMORY_DAEMON_TESTS=1 to run real-daemon tests",
+)
+
 SOCK_REL = Path(".memory") / "run" / "embedd.sock"
 PID_REL = Path(".memory") / "run" / "embedd.pid"
 
@@ -343,6 +356,7 @@ def _daemon_up(home: Path) -> bool:
 
 
 @requires_model
+@requires_daemon_lane
 class TestTierBLiveDaemon:
     def _start(self, home):
         r = _cli(["embed", "daemon", "--bg"], home)

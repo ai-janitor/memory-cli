@@ -39,6 +39,18 @@ requires_model = pytest.mark.skipif(
     reason="real central embedding model required for a live daemon",
 )
 
+# ON-DEMAND daemon lane: every test here spawns a REAL detached daemon + loads
+# the 139MB model. Running many such tests in one pytest process triggers
+# llama_cpp free_model native teardown contention (backlog #75), flaking the
+# full suite. Gate the whole file behind MEMORY_DAEMON_TESTS so the DEFAULT
+# `pytest tests/` is deterministic; run this coverage on demand:
+#   MEMORY_DAEMON_TESTS=1 uv run pytest tests/embedding/test_r6_daemon_introspection.py
+# Coverage is MOVED (not dropped) — see docs/testing-daemon-lane.md. #75 = real fix.
+pytestmark = pytest.mark.skipif(
+    not os.environ.get("MEMORY_DAEMON_TESTS"),
+    reason="daemon on-demand lane (#75): set MEMORY_DAEMON_TESTS=1 to run real-daemon tests",
+)
+
 REPO = str(Path(__file__).resolve().parents[2])
 STATUS_FIELDS = {
     "state", "pid", "instance_count", "rss_kb", "uptime_s",
