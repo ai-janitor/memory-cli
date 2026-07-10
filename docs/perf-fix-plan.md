@@ -57,6 +57,12 @@ daemon's before/after is measured against a clean baseline.
 
 ### 2 — BFS schema probing + N+1 edge queries (QUICK WIN)
 
+- STATUS: **SHIPPED** (2026-07-10, commit `d97c035` = R7, gate=PASS; see `CHANGELOG.md`
+  Unreleased/Added "BFS level-batch + confidence-once (R7 / perf-fix-plan #2)").
+  `edges.confidence` resolved once per search (meta.schema_version, no per-node
+  `PRAGMA table_info`); frontier fetched with one `source_id/target_id IN (...)` per
+  BFS depth (O(depth), not O(frontier)); max-activation-wins + hop_distance parity kept;
+  no id(conn) cache. Reds: `tests/search/test_r7_bfs_schema_cache_cte.py` (3/3). Do not re-propose.
 - TIER: quick win
 - change:
   - `_has_confidence_column` runs `PRAGMA table_info(edges)` on EVERY `_get_neighbors` call — `spreading_activation_bfs_linear_decay.py:321` (PRAGMA), called from `:287` inside `_get_neighbors` `:265`. Comment `:313-319` deliberately un-caches it (id(conn) reuse hazard).
@@ -189,7 +195,7 @@ Folded from `perf-second-look-findings.md:43-49`. Notes/flags, not tasks.
 | Order | Item | path:line | Tier | Owner role | Status |
 |---|---|---|---|---|---|
 | 1 | Write-on-read: access_count UPDATE + latency INSERT/commit | orchestrator `:686`/`:692`; hydration `:120` | quick win | coder | ✅ SHIPPED `903c462` (R4) |
-| 2 | BFS PRAGMA-per-node + N+1 edge queries | bfs `:321`/`:287`/`:295`/`:302` | quick win | coder | ⬜ pending |
+| 2 | BFS PRAGMA-per-node + N+1 edge queries | bfs `:321`/`:287`/`:295`/`:302` | quick win | coder | ✅ SHIPPED `d97c035` (R7) |
 | 3 | Embedding model reloaded per process | model_loader `:35`/`:108` | architecture | architect | ✅ SHIPPED `8803a8c` (R1) |
 | 4 | Cold-load / contention tail (same root as #3) | model_loader `:108`; ext_loader `:80-83` (corrected) | architecture | architect (folds into #3) | ✅ SHIPPED `8803a8c` (R1) |
 | 5 | vec0 KNN linear scan, no ANN | vector_knn `:117`/`:88` | scale-later | architect (deferred) | ⬜ deferred (see 10-known-gaps D1) |
