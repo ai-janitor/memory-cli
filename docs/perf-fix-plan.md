@@ -68,6 +68,11 @@ daemon's before/after is measured against a clean baseline.
 
 ### 3 — Embedding model reloaded every CLI process (ARCHITECTURE)
 
+- STATUS: **SHIPPED** (2026-07-10, commit `8803a8c` = R1 daemon, ADR 0001; see
+  `CHANGELOG.md` Unreleased/Added "Resident embedding daemon (R1 / ADR 0001)").
+  Warm-GGUF daemon over unix socket warms the embed (~16ms) across CLI processes;
+  inproc fallback. NOTE: full-CLI wall stays host-bound (Python spawn ~90ms + search
+  ~230ms) — the daemon removes the model RELOAD, not process startup. Do not re-propose.
 - TIER: architecture
 - change:
   - "lazy singleton" is module-level (`model_loader_lazy_singleton.py:35-36`) → caches WITHIN one process only. Each `memory neuron search` is a fresh process → full 139 MB GGUF reload at `:108`. Retrieval = 98% of latency; p50 ~264 ms, cold p95 ~24.9 s. `(benchmarked)`
@@ -84,6 +89,9 @@ daemon's before/after is measured against a clean baseline.
 
 ### 4 — Cold-load / contention tail (ARCHITECTURE, same root as #3)
 
+- STATUS: **SHIPPED** (2026-07-10, commit `8803a8c` = R1 daemon, folds into #3).
+  One resident model copy = no per-process reload + no double-load under concurrency.
+  See `CHANGELOG.md` R1 entry. Do not re-propose.
 - TIER: architecture
 - change:
   - p95 24916 ms, one run 25885 ms retrieval. Same root as #3: model load competes for RAM/disk; a 2nd concurrent `memory` proc reloads 139 MB again. Refs: `model_loader_lazy_singleton.py:108` + `extension_loader_sqlite_vec.py:80-83` (vec0 `_vec_test` create/drop per open — CORRECTED from `:78 unverified`, per `perf-second-look-findings.md:22`).
@@ -170,13 +178,13 @@ Folded from `perf-second-look-findings.md:43-49`. Notes/flags, not tasks.
 
 ## Sequencing summary
 
-| Order | Item | path:line | Tier | Owner role |
-|---|---|---|---|---|
-| 1 | Write-on-read: access_count UPDATE + latency INSERT/commit | orchestrator `:686`/`:692`; hydration `:120` | quick win | coder |
-| 2 | BFS PRAGMA-per-node + N+1 edge queries | bfs `:321`/`:287`/`:295`/`:302` | quick win | coder |
-| 3 | Embedding model reloaded per process | model_loader `:35`/`:108` | architecture | architect |
-| 4 | Cold-load / contention tail (same root as #3) | model_loader `:108`; ext_loader `:80-83` (corrected) | architecture | architect (folds into #3) |
-| 5 | vec0 KNN linear scan, no ANN | vector_knn `:117`/`:88` | scale-later | architect (deferred) |
+| Order | Item | path:line | Tier | Owner role | Status |
+|---|---|---|---|---|---|
+| 1 | Write-on-read: access_count UPDATE + latency INSERT/commit | orchestrator `:686`/`:692`; hydration `:120` | quick win | coder | ⬜ pending (= R4) |
+| 2 | BFS PRAGMA-per-node + N+1 edge queries | bfs `:321`/`:287`/`:295`/`:302` | quick win | coder | ⬜ pending |
+| 3 | Embedding model reloaded per process | model_loader `:35`/`:108` | architecture | architect | ✅ SHIPPED `8803a8c` (R1) |
+| 4 | Cold-load / contention tail (same root as #3) | model_loader `:108`; ext_loader `:80-83` (corrected) | architecture | architect (folds into #3) | ✅ SHIPPED `8803a8c` (R1) |
+| 5 | vec0 KNN linear scan, no ANN | vector_knn `:117`/`:88` | scale-later | architect (deferred) | ⬜ deferred (see 10-known-gaps D1) |
 
 ## Notes
 

@@ -14,6 +14,13 @@ Inputs: `docs/perf-fix-plan.md`, `docs/performance-analysis.md`,
 
 ## R1 — Resident embedding daemon (THE win)
 
+- STATUS: **SHIPPED** (2026-07-10, commit `8803a8c`, ADR 0001; see `CHANGELOG.md`
+  → Unreleased/Added "Resident embedding daemon (R1 / ADR 0001)"). Warm GGUF over
+  unix socket + inproc fallback; `memory embed daemon --bg|--stop`; health probe.
+  Reds: `tests/embedding/test_r1_daemon_acceptance.py` +
+  `tests/search/test_r1_daemon_fallback_integration.py`. NOTE: full-CLI wall stays
+  host-bound (~90ms Python start + ~230ms) — daemon warms the EMBED (~16ms), not the
+  process spawn. Do not re-propose.
 - WHAT: one warm process holding the 139 MB GGUF; CLI sends query text over
   socket/IPC, gets 768-dim vector back. Fallback = in-process load (today's
   behavior), never hang.
@@ -151,7 +158,7 @@ Inputs: `docs/perf-fix-plan.md`, `docs/performance-analysis.md`,
 | 1 | R2 fleet→facet path + #72 status note | ops/docs | today | ✅ SHIPPED `00633bd` |
 | 2 | R3 timeout/self-reap | quick win | coder | ✅ SHIPPED `4069ed85` |
 | 3 | R4 read-only search (4 sub-fixes) | quick win | coder | ⬜ pending |
-| 4 | R1 embedding daemon | architecture | architect | ⬜ pending |
+| 4 | R1 embedding daemon | architecture | architect | ✅ SHIPPED `8803a8c` |
 | 5 | R6 multi-store single-embed | small | coder (with R1) | ⬜ pending |
 | 6 | R5 close #66/#67 | correctness | coder | ⬜ pending |
 
