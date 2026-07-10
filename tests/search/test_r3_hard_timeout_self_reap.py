@@ -269,3 +269,8 @@ class TestLivePathSelfReap:
             f"stdout={proc.stdout[:150]!r} stderr={proc.stderr[:150]!r}"
         )
         assert elapsed < 6.0, f"self-reap took {elapsed:.1f}s — not bounded by ceiling"
+        # Process-level structured reap message must name the timeout + the STAGE
+        # reached (bm25 here) — diagnosability at the CLI boundary, not just in-proc.
+        blob = (proc.stdout + proc.stderr).lower()
+        assert "timeout" in blob, f"process reap message not a timeout: {blob[:200]!r}"
+        assert "bm25" in blob, f"process reap message omits the stage reached: {blob[:200]!r}"
