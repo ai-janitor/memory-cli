@@ -28,6 +28,25 @@ Graph-based memory CLI for AI agents. Python + llama-cpp-python + SQLite + sqlit
 - `/Users/hung/projects/qmd-reference/` — QMD by Tobi Lütke (hybrid search reference)
 - `/Users/hung/projects/llama-cpp-reference/` — llama.cpp (embedding engine reference)
 
+## DOC-SHIP RULE (no orphan docs)
+When you **author ANY durable doc** under `docs/` (reference / plan / how-to / report / ADR / new top-level `.md`):
+
+1. **OKF frontmatter** on the file itself — same commit:
+   ```yaml
+   ---
+   type: <reference|plan|how-to|report|index|…>
+   title: <short title>
+   description: <one-line purpose>
+   tags: […, okf]
+   timestamp: YYYY-MM-DD
+   ---
+   ```
+2. **`docs/README.md` catalog link** — same commit (Fast-path table and/or section list). ≤3 hops from the catalog.
+
+**doc-authored ⇒ frontmatter + catalog, same commit.** Do not leave cataloging for the recorder. Orphans got swept twice this wave — that is the failure mode this rule kills. Standard: `~/.droid/refs/open-knowledge-format.md`. See also no-orphan rule in `docs/knowledge-architecture.md`.
+
+Exceptions (no full catalog row required): pure gate cert stubs under `docs/certs/` that only exist as checklist evidence lines; still prefer OKF if the cert is a real narrative transcript.
+
 ## Development Constraints
 - **Never use Haiku for coding.** All implementation, scaffolding, and code generation must use Sonnet or Opus. Haiku is only for runtime product features (conversation ingestion extraction, search re-ranking/query expansion) — never for writing code.
 

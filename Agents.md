@@ -83,3 +83,4 @@ Do not treat retired `codebase-memory-mcp-*` droids as this repo’s crew.
 - Opaque storage — agents must not browse the DB
 - Maintenance: **maintain-operate-orchestration**; acceptance-test-first; pytest multi-run baseline
 - Never Haiku for coding (runtime product features only)
+- **DOC-SHIP:** any new durable `docs/` file = OKF frontmatter + `docs/README.md` catalog link **same commit** (no orphan for recorder to sweep)
