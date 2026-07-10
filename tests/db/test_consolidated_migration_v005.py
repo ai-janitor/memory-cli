@@ -332,11 +332,14 @@ class TestConsolidateLogic:
         # Unconsolidated active
         nid_new = _insert_neuron(v5_conn, content="new neuron")
 
-        # Already consolidated (fresh)
+        # Already consolidated (fresh): consolidated STRICTLY AFTER updated_at.
+        # Set updated_at explicitly — do NOT rely on _insert_neuron's own
+        # time.time() landing <= now_ms (a sub-ms race that intermittently made
+        # this row read as stale → flaky consolidated_count/stale_count).
         nid_fresh = _insert_neuron(v5_conn, content="fresh consolidated")
         v5_conn.execute(
-            "UPDATE neurons SET consolidated = ? WHERE id = ?",
-            (now_ms, nid_fresh),
+            "UPDATE neurons SET consolidated = ?, updated_at = ? WHERE id = ?",
+            (now_ms, now_ms - 1000, nid_fresh),
         )
 
         # Stale (consolidated but updated after)
