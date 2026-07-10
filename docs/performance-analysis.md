@@ -3,7 +3,7 @@ type: reference
 title: Query-path performance analysis (LIGHT search)
 description: Stage-by-stage cost map + ranked bottlenecks for `memory neuron search`, with benchmarked latency from the live store.
 tags: [performance, search, latency, embedding, sqlite-vec, bottlenecks]
-timestamp: 2026-07-09
+timestamp: 2026-07-10
 ---
 
 # Query-path performance analysis — LIGHT search
@@ -13,6 +13,13 @@ HEAVY (Haiku) tier noted where relevant. Store: `~/.memory/memory.db`, 769
 neurons / 939 edges, 139 MB GGUF model.
 
 Every latency claim tagged `(benchmarked)` or `(static analysis)`.
+
+> **SINGLE-STORE benchmarks.** All numbers below measure ONE store. Live usage is
+> LOCAL+GLOBAL layered (session-start ritual) — `neuron search` runs the full pipeline
+> PER store (embed inference, latency INSERT+commit, hydration, access bumps, FTS trigger
+> rewrites each), so real wall ≈ **2× the single-store table**. See NEW-3 in
+> [perf-second-look-findings.md](perf-second-look-findings.md) (second-look review: new
+> findings + corrected line refs, source for the amendments in this doc).
 
 ## Benchmark snapshot (benchmarked)
 
@@ -40,7 +47,7 @@ Entry: `neuron_noun_handler` → `light_search()`
 Per-invocation fixed cost (before pipeline):
 - Python interp + import (incl. `llama_cpp`, `sqlite_vec`): ~80 ms `(benchmarked, --help)`
 - `open_connection` — 4 PRAGMAs (`connection_setup_wal_fk_busy.py:52`) `(static: trivial)`
-- `load_sqlite_vec` — `enable_load_extension` + `sqlite_vec.load` + **CREATE/DROP `_vec_test` vec0 DDL every open** (`extension_loader_sqlite_vec.py:78`) `(static: small, but a vec0 DDL per process)`
+- `load_sqlite_vec` — `enable_load_extension` + `sqlite_vec.load` + **CREATE/DROP `_vec_test` vec0 DDL every open** (`extension_loader_sqlite_vec.py:80-83`) `(static: small, but a vec0 DDL per process)`
 
 Facet fast-path — `--type`/`--tag` without `--semantic`
 (`light_search_pipeline_orchestrator.py:238`, `_facet_fast_search:305`):
@@ -53,7 +60,7 @@ Full pipeline (no facet):
 |---|---|---|
 | 1 Embed query | `_run_retrieval_stage:557` → `get_model` / `embed_single` | **model load (139 MB GGUF) + inference. Dominant.** `(benchmarked)` |
 | 2 BM25 | `bm25_retrieval_fts5_match.retrieve_bm25:60` | 1 FTS5 MATCH, cap 100. Cheap. `(static)` |
-| 3 Vector KNN | `vector_retrieval_two_step_knn:88` | `struct.pack` 768 floats + vec0 KNN (linear scan of all vectors) + existence IN-query. Cheap @769. `(static)` |
+| 3 Vector KNN | `vector_retrieval_two_step_knn.retrieve_vectors:44` | `struct.pack` 768 floats + vec0 KNN (linear scan of all vectors) + existence IN-query. Cheap @769. `(static)` (`:88` = dim guard, not path entry) |
 | 4 RRF | `rrf_fusion_rank_based_k60.fuse_rrf` | in-memory. Trivial. `(static)` |
 | 5 Activation BFS | `spreading_activation_bfs_linear_decay.spread:98` | **2 edge queries + 1 `PRAGMA table_info` per visited node.** `(static)` |
 | 5b Tag affinity | `tag_affinity_scoring_shared_tags.apply_tag_affinity:46` | multi-scan of `neuron_tags`, depth-2 pass. `(static)` |
@@ -73,9 +80,9 @@ Stages 4-11 total ~33 ms scoring + 3 ms output `(benchmarked)`. All the money is
 | # | Bottleneck | path:line | Why slow | Est. impact | Fix |
 |---|---|---|---|---|---|
 | 1 | **Embedding model reloaded every CLI process** | `model_loader_lazy_singleton.py:52` (singleton is module-level → dies with process) | 139 MB GGUF loaded fresh on every `memory neuron search`. "Lazy singleton" caches within one process only; each CLI call is a new process → full reload. Retrieval = 98% of latency, p50 264 ms, cold tail to 25 s. `(benchmarked)` | **Massive.** Removes ~200 ms-25 s from every semantic search | Persistent embedding daemon / socket server holding the model warm; CLI sends query text, gets vector back. Or `mmap`+`mlock` the GGUF and rely on OS page cache (warm runs already show ~12-25 ms — prove it, then pin it). Fallback: skip embedding for short keyword queries (BM25 is enough), route them to a no-embed path like facet does. |
-| 2 | **Cold-load / contention tail** | same as #1 + `extension_loader_sqlite_vec.py:78` | p95 24916 ms, one run 25885 ms retrieval. Model load competes for RAM/disk; second concurrent `memory` process reloads 139 MB again. `(benchmarked)` | **Massive tail.** p95 50× over 500 ms threshold | Same daemon as #1 (one resident copy, no per-process reload, no double-load under concurrency). Until then, `memory meta health` already flags it — surface the warning to users. |
+| 2 | **Cold-load / contention tail** | same as #1 + `extension_loader_sqlite_vec.py:80-83` | p95 24916 ms, one run 25885 ms retrieval. Model load competes for RAM/disk; second concurrent `memory` process reloads 139 MB again. `(benchmarked)` | **Massive tail.** p95 50× over 500 ms threshold | Same daemon as #1 (one resident copy, no per-process reload, no double-load under concurrency). Until then, `memory meta health` already flags it — surface the warning to users. |
 | 3 | **Write-on-read: access-count UPDATE + latency INSERT, each committed** | `hydrate_results` UPDATE `search_result_hydration_and_envelope.py` (access_count bump); `_record_latency:686` INSERT + `conn.commit()` | Every read does 2 writes + a WAL commit. Blocks the single-writer slot, defeats read-only concurrency, grows WAL, adds fsync. `(static analysis)` | Small per-call (~ms) but scales badly under concurrent search + poisons reader parallelism | Make search read-only by default: gate access-tracking behind a flag or batch it (accumulate, flush on exit / every N). Sample latency recording (1-in-N) or write to a separate connection. One commit max, not per-query fsync. |
-| 4 | **BFS emits `PRAGMA table_info(edges)` + 2 edge queries per visited node** | `spreading_activation_bfs_linear_decay.py:_get_neighbors` + `_has_confidence_column` | `_has_confidence_column` runs a PRAGMA on **every** `_get_neighbors` call (deliberately un-cached per comment), and neighbors are fetched one node at a time (2 SELECTs each). Fan-out over ≤100 seeds → hundreds of PRAGMA + query round-trips. Explains flat ~30 ms scoring at only 769 neurons. `(static analysis)` | Medium; grows with fan-out-depth and corpus | Resolve the confidence-column flag **once per pipeline** (pass it in, or cache per-connection with a schema-version key — not per `id(conn)`). Batch neighbor discovery: one recursive CTE or a single `source_id IN (...) OR target_id IN (...)` per BFS frontier instead of per node. |
+| 4 | **BFS emits `PRAGMA table_info(edges)` + 2 edge queries per visited node** | `spreading_activation_bfs_linear_decay.py:_get_neighbors` + `_has_confidence_column` | `_has_confidence_column` runs a PRAGMA on **every** `_get_neighbors` call (deliberately un-cached per comment), and neighbors are fetched one node at a time (2 SELECTs each). Fan-out over ≤200 seeds (RRF union: BM25 cap 100 + vector cap 100) → hundreds of PRAGMA + query round-trips. Explains flat ~30 ms scoring at only 769 neurons. `(static analysis)` | Medium; grows with fan-out-depth and corpus | Resolve the confidence-column flag **once per pipeline** (pass it in, or cache per-connection with a schema-version key — not per `id(conn)`). Batch neighbor discovery: one recursive CTE or a single `source_id IN (...) OR target_id IN (...)` per BFS frontier instead of per node. |
 | 5 | **vec0 KNN is a linear scan; query embedding re-`struct.pack`ed each call** | `vector_retrieval_two_step_knn.py:_query_vec0_standalone` | sqlite-vec `vec0` has no ANN index — KNN scans all N vectors × 768 dims per query. Fine @769 (~ms), but O(N) — at 100k neurons this becomes the new stage-1. Plus a 768-float `struct.pack` in Python per query. `(static analysis)` | Low now, structural at scale | Track corpus growth. When N large: metadata pre-filter (project/type) before KNN, or partitioned vec0 tables, or an ANN-capable vector store. Cache the packed query blob (already have it from embed). Low priority until N ≫ 1k. |
 
 ## Top 5 summary
