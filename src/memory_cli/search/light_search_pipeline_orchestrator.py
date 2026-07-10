@@ -432,7 +432,10 @@ def _facet_fast_search(
     ranked = _rank_facet_candidates(conn, candidate_ids, options.query)
     total = len(ranked)
     paginated = ranked[options.offset:options.offset + options.limit]
-    results = hydrate_results(conn, paginated, explain=options.explain)
+    # R4: never bump access on the search connection (read-only path).
+    results = hydrate_results(
+        conn, paginated, explain=options.explain, track_access=False,
+    )
 
     return SearchResultEnvelope(
         results=results,
@@ -762,7 +765,10 @@ def _run_output_stage(
             state.paginated, vector_unavailable=state.vector_unavailable
         )
 
-    state.results = hydrate_results(conn, state.paginated, explain=options.explain)
+    # R4: search is read-only — access tracking stays off the search conn.
+    state.results = hydrate_results(
+        conn, state.paginated, explain=options.explain, track_access=False,
+    )
 
     # --- Stage 11: Fuzzy fallback — only if primary search returned nothing ---
     # This is a last-resort safety net. If BM25 + vector + RRF all returned
@@ -772,7 +778,9 @@ def _run_output_stage(
         from memory_cli.search.fuzzy_fallback_levenshtein import fuzzy_search
         fuzzy_candidates = fuzzy_search(conn, options.query, limit=options.limit)
         if fuzzy_candidates:
-            state.results = hydrate_results(conn, fuzzy_candidates, explain=False)
+            state.results = hydrate_results(
+                conn, fuzzy_candidates, explain=False, track_access=False,
+            )
             # Preserve fuzzy metadata through hydration
             for result, candidate in zip(state.results, fuzzy_candidates):
                 result["match_type"] = "fuzzy"

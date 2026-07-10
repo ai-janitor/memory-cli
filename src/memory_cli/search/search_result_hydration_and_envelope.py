@@ -34,15 +34,14 @@ def hydrate_results(
     conn: sqlite3.Connection,
     paginated_candidates: List[Dict[str, Any]],
     explain: bool = False,
-    track_access: bool = False,
+    track_access: bool = True,
 ) -> List[Dict[str, Any]]:
     """Hydrate paginated candidates into full result records.
 
     Args:
-        track_access: When True, bump access_count / last_accessed_at for
-            hydrated neurons. Default False (R4: search is read-only; access
-            tracking must not write on the search connection). Callers that
-            want salience updates must opt in explicitly (separate writer).
+        track_access: When True (default for direct callers / unit tests), bump
+            access_count / last_accessed_at. The search pipeline MUST pass
+            False (R4: search connection is read-only — no write-on-read).
 
     Logic flow:
     1. Extract neuron_ids from paginated_candidates.
