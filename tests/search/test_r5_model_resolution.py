@@ -83,26 +83,22 @@ class TestCentralResolutionGuard:
 
 class TestConfigRequiredNoSilentLoad:
     def test_none_config_raises_explicit_not_silent_load(self):
+        from unittest.mock import patch
+        from memory_cli.config import load_config as _real_load
+
         conn = _seeded()
-        # Sentinel: if the retrieval stage still bare-loads config, we detect the
-        # call; after R5 it must NOT be reached — config is required + explicit.
-        import memory_cli.config as cfgmod
-        called = {"n": 0}
-        real_load = cfgmod.load_config
-
-        def spy():
-            called["n"] += 1
-            return real_load()
-
-        with pytest.raises((ValueError, TypeError, RuntimeError)):
-            import memory_cli.config as _c
-            _c.load_config = spy
-            try:
+        # Sentinel via a CONTEXT-MANAGED patch (no module-global leak → order-safe):
+        # if the retrieval stage still bare-loads config we'd see the call; after
+        # R5 config=None must raise EXPLICITLY before any load_config().
+        spy = patch("memory_cli.config.load_config", side_effect=_real_load)
+        try:
+            mock = spy.start()
+            with pytest.raises((ValueError, TypeError, RuntimeError)):
                 light_search(conn, SearchOptions(query="python", fan_out_depth=0), config=None)
-            finally:
-                _c.load_config = real_load
-        assert called["n"] == 0, (
-            "retrieval stage silently called load_config() for a config=None "
-            "search — R5 kills this bare fallback (config must be threaded/required)"
-        )
-        conn.close()
+            assert mock.call_count == 0, (
+                "retrieval stage silently called load_config() for a config=None "
+                "search — R5 kills this bare fallback (config must be threaded/required)"
+            )
+        finally:
+            spy.stop()
+            conn.close()

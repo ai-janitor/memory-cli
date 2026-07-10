@@ -425,31 +425,11 @@ class TestTierBLiveDaemon:
         finally:
             self._stop(temp_home)
 
-    def test_ac2_two_clients_one_resident_model_copy(self, temp_home):
-        # UNQUARANTINED (#73 resolved by ADR R6 daemon introspection + flock).
-        # Deterministic single-resident-copy via the LOCK-derived introspection
-        # surface — no pgrep race. Start daemon → instance_count==1, rss≈140k;
-        # a 2nd --bg returns already_up (lock held, no 2nd 139MB load); re-query
-        # → instance_count still 1, rss unchanged. (Full form: test_r6_daemon_
-        # introspection.py::TestDeterministicSingleInstance.)
-        self._start(temp_home)
-        try:
-            st1 = _json(_cli(["embed", "daemon"], temp_home))
-            assert st1.get("instance_count") == 1, f"AC2: instance_count != 1: {st1}"
-            assert st1.get("rss_kb", 0) > 100_000, f"AC2: model not resident: {st1}"
-            rss_before, pid_before = st1["rss_kb"], st1["pid"]
-
-            r2 = _cli(["embed", "daemon", "--bg"], temp_home)
-            assert _json(r2).get("state") == "already_up", (
-                f"AC2: 2nd --bg not already_up (flock): {_json(r2)!r}"
-            )
-
-            st3 = _json(_cli(["embed", "daemon"], temp_home))
-            assert st3.get("instance_count") == 1, f"AC2: instance_count changed: {st3}"
-            assert st3.get("pid") == pid_before, "AC2: daemon respawned"
-            assert st3.get("rss_kb") == rss_before, "AC2: rss changed = 2nd model copy"
-        finally:
-            self._stop(temp_home)
+    # AC2 (2 concurrent clients → ONE resident model copy) is now covered
+    # DETERMINISTICALLY by the lock-derived introspection surface in
+    # test_r6_daemon_introspection.py::TestDeterministicSingleInstance
+    # (instance_count==1 + rss unchanged + 2nd --bg=already_up). The old flaky
+    # pgrep-based AC2 (#73) is removed — superseded, coverage preserved there.
 
     def test_ac7_daemon_opens_zero_db_handles(self, temp_home):
         self._start(temp_home)
