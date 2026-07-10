@@ -281,6 +281,61 @@ tolerates both but coder implements batch. NO test change.
   Module = `embedding_daemon_server`; client = `embedding_daemon_client`;
   both return `list[list[float]]`.
 
+### Seam ruling R6 — daemon introspection + single-instance lock (2026-07-10, backlog #73)
+
+AC2 ("2 concurrent clients → ONE resident model copy") was quarantined
+(`pytest.mark.skip` + #73) because the instance-count assert was a flaky
+`pgrep -f` race and `meta health` returns search-latency, not daemon state.
+Root cause in the build (8803a8c): single-instance = pidfile-EXISTS check only
+(no lock) → second daemon could double-load the model in a race; `embed daemon`
+no-flag `_status()` returns `{state,pid,socket}` (thin, no rss/instance_count);
+`meta health` doesn't surface daemon state. This ruling makes AC2 deterministic.
+
+**Single-instance = flock, not pidfile-existence.** Daemon acquires
+`fcntl.flock(pidfile, LOCK_EX | LOCK_NB)` at start, BEFORE model load (so a
+losing daemon exits in ms, never loads 139 MB). Writes `os.getpid()` to the
+pidfile AFTER acquiring the lock. `--bg` parent waits for pidfile+socket
+(unchanged). Standard unix-daemon single-instance pattern (flock on pidfile —
+cf. Stevens APUE / daemon(3)); CITE, not invented.
+
+**Pidfile semantics (pinned, removes the "unclear" concern):**
+- pidfile is written by the SERVING daemon child (its own `os.getpid()`), AFTER
+  flock acquired — never by the `--bg` parent.
+- Losing daemon (lock contention) → exit 0, no model load, no pidfile write.
+- pidfile is STALE iff pid is not alive (`os.kill(pid,0)` raises) OR the lock is
+  not held. `status`/`--stop` treat stale as down + clean.
+
+**Introspection surface = thicken the EXISTING `memory embed daemon` no-flag
+path** (`embed_noun_handler._status`). Envelope:
+
+| field | source | notes |
+|---|---|---|
+| `state` | "up" \| "down" \| "down_stale" | pid alive + lock held + handshake ok → up |
+| `pid` | pidfile (`os.getpid()`) | null if down |
+| `instance_count` | lock-derived | 1 if (pid live + flock held + socket handshake returns same pid), else 0. NOT a pgrep count. |
+| `rss_kb` | `ps -o rss= -p <pid>` | the single-copy proof (≈140 k for 139 MB model) |
+| `uptime_s` | `time.time() - pidfile mtime` (or daemon start ts in pidfile line 2) | |
+| `model_path` / `dims` | handshake reply | skew-guard reuse (R/seam ruling R3) |
+| `socket` | `~/.memory/run/embedd.sock` | |
+| `embed_count` | daemon-side counter (handshakes served) | ops signal |
+| `lock_held` | probe flock on pidfile | belt-and-suspenders |
+
+`meta health` gains a CONDENSED daemon block `{daemon: {state, pid,
+instance_count, rss_kb}}` (ADR §lifecycle already promised daemon status in
+meta health — this delivers it). The DETERMINISTIC AC2 surface = `memory embed
+daemon` (no flag); `meta health` is the one-stop human view.
+
+**AC2 deterministic assert (tester unquarantines):** start daemon →
+`embed daemon` reports `{state:up, instance_count:1, rss_kb:≈140k}`; fire a
+2nd client (or 2nd `--bg`) → `--bg` returns `{state:already_up}` (lock held,
+no 2nd model load); re-query → `instance_count` still 1, `rss_kb` unchanged.
+No pgrep, no race.
+
+**Scope:** R1-completion (delivers the ADR's promised meta-health daemon
+status + makes AC2 deterministic). Small coder change: flock in
+`serve_forever` before model load + thicken `_status()` + meta-health block.
+Non-blocking for R1 close (AC2 stays quarantined #73 until this lands).
+
 ## Pipeline / next actions (architect seals, then hands off)
 
 1. THIS ADR = sealed contract (protocol + lifecycle + fallback + ACs + seam rulings).
