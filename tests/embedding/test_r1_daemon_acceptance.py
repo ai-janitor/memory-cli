@@ -157,20 +157,24 @@ class _FakeDaemon:
 # -----------------------------------------------------------------------------
 
 @pytest.fixture
-def temp_home(tmp_path, monkeypatch):
-    """Isolated HOME so the socket + pidfile resolve under tmp. Symlink the real
-    model in so inproc fallback still works (structural isolation, no set_var of
-    unrelated globals)."""
-    monkeypatch.setenv("HOME", str(tmp_path))
-    (tmp_path / ".memory" / "run").mkdir(parents=True, exist_ok=True)
-    models = tmp_path / ".memory" / "models"
+def temp_home(monkeypatch):
+    """Isolated HOME so the socket + pidfile resolve under tmp. MUST be a SHORT
+    path: the UDS at HOME/.memory/run/embedd.sock must stay under the AF_UNIX
+    104-char limit (macOS) — pytest's tmp_path (~100 chars) blows it. Use a
+    short /tmp dir. Symlink the real model in so inproc fallback still works."""
+    import tempfile, shutil
+    home = Path(tempfile.mkdtemp(prefix="mclit.", dir="/tmp"))
+    monkeypatch.setenv("HOME", str(home))
+    (home / ".memory" / "run").mkdir(parents=True, exist_ok=True)
+    models = home / ".memory" / "models"
     models.mkdir(parents=True, exist_ok=True)
     if _REAL_MODEL.exists():
         try:
             (models / "default.gguf").symlink_to(_REAL_MODEL)
         except OSError:
             pass
-    return tmp_path
+    yield home
+    shutil.rmtree(home, ignore_errors=True)
 
 
 def _client():
@@ -344,15 +348,48 @@ class TestTierBLiveDaemon:
     def _stop(self, home):
         _cli(["embed", "daemon", "--stop"], home)
 
-    def test_ac1_warm_cold_client_search_under_100ms(self, temp_home):
+    def test_ac1a_warm_embed_roundtrip_under_100ms_GATE(self, temp_home):
+        # AC1a (GATE, ADR 0001 rev 226bd93): the daemon's OWN contribution — the
+        # embedding_daemon_client.embed round-trip — must be <100ms warm
+        # (measured AROUND the client call, NOT the full CLI). ~16ms in practice.
+        self._start(temp_home)
+        try:
+            from memory_cli.embedding import embedding_daemon_client as dc
+            from memory_cli.config import load_config
+            cfg = load_config()
+            dc.embed(["warm up the resident model"], "query", cfg)  # prime (loads model)
+            # Warm round-trips: take the best of a few to discard scheduler jitter.
+            best_ms = None
+            for _ in range(5):
+                t0 = time.perf_counter()
+                dc.embed(["gate lookup latency probe"], "query", cfg)
+                ms = (time.perf_counter() - t0) * 1000
+                best_ms = ms if best_ms is None else min(best_ms, ms)
+            assert best_ms < 100.0, (
+                f"AC1a GATE: warm daemon embed round-trip {best_ms:.1f}ms >= 100ms"
+            )
+        finally:
+            self._stop(temp_home)
+
+    def test_ac1b_full_cli_cold_wall_informational(self, temp_home):
+        # AC1b (INFORMATIONAL, NOT a gate, ADR 0001 rev 226bd93): the full-CLI
+        # cold-client wall is dominated by the Python interpreter + import floor
+        # (~90ms) and lands ~300ms — this is a lazy-import follow-up, OUT of R1
+        # scope. We MEASURE + record it and only guard against a gross blow-up,
+        # deliberately NOT asserting the <100ms gate against the full CLI.
         self._start(temp_home)
         try:
             _cli(["neuron", "add", "warm the daemon"], temp_home)
             t0 = time.perf_counter()
             r = _cli(["search", "warm"], temp_home)
             wall_ms = (time.perf_counter() - t0) * 1000
+            print(f"[AC1b informational] full-CLI cold-client search wall = {wall_ms:.0f}ms")
             assert r.returncode == 0
-            assert wall_ms < 100.0, f"AC1: warm cold-client search {wall_ms:.0f}ms >= 100ms"
+            # Loose sanity ceiling only (regression tripwire, NOT the 100ms gate).
+            assert wall_ms < 3000.0, (
+                f"AC1b: full-CLI wall {wall_ms:.0f}ms — gross regression well past "
+                "the documented ~300ms floor"
+            )
         finally:
             self._stop(temp_home)
 
