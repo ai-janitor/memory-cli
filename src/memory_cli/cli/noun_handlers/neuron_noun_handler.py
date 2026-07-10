@@ -423,6 +423,9 @@ def handle_search(args: List[str], global_flags: Any) -> Any:
         ntype, rest = extract_flag(rest, "--type")
         tag, rest = extract_flag(rest, "--tag")
         semantic, rest = extract_bool_flag(rest, "--semantic")
+        # R3: hard per-query wall-clock ceiling (default 120s inside light_search)
+        timeout_raw, rest = extract_flag(rest, "--timeout", type_fn=float, default=None)
+        timeout_s = float(timeout_raw) if timeout_raw is not None else None
         # Layered: search all stores, merge results (local first)
         # Use with_config variant so each store's resolved config is threaded into
         # light_search — prevents bare load_config() from ignoring --global flag.
@@ -432,11 +435,13 @@ def handle_search(args: List[str], global_flags: Any) -> Any:
         vector_unavailable = False
         vector_unavailable_reason: Optional[str] = None
         from memory_cli.search import light_search, SearchOptions
+        from memory_cli.search.light_search_pipeline_orchestrator import SearchTimeoutError
         for conn, config, scope in connections:
             options = SearchOptions(
                 query=query, limit=limit,
                 ntype=ntype, tags=[tag] if tag else [],
                 semantic=semantic,
+                timeout_s=timeout_s,
             )
             envelope = light_search(conn, options, config=config)
             results = envelope.results
@@ -464,6 +469,10 @@ def handle_search(args: List[str], global_flags: Any) -> Any:
             },
         )
     except Exception as e:
+        # R3: SearchTimeoutError carries stage name in str(e)
+        from memory_cli.search.light_search_pipeline_orchestrator import SearchTimeoutError
+        if isinstance(e, SearchTimeoutError):
+            return Result(status="error", error=str(e))
         return Result(status="error", error=str(e))
 
 

@@ -24,6 +24,7 @@
 
 from __future__ import annotations
 
+import signal
 import sqlite3
 import time
 from dataclasses import dataclass, field
@@ -49,12 +50,90 @@ from .search_result_hydration_and_envelope import hydrate_results, build_envelop
 # not if the model file is missing (that's caught at get_model() call time).
 try:
     from memory_cli.embedding import get_model, embed_single, build_embedding_input
+    from memory_cli.embedding import model_loader_lazy_singleton as _model_loader
     _EMBEDDING_AVAILABLE = True
 except ImportError:
     _EMBEDDING_AVAILABLE = False
     get_model = None  # type: ignore
     embed_single = None  # type: ignore
     build_embedding_input = None  # type: ignore
+    _model_loader = None  # type: ignore
+
+
+# -----------------------------------------------------------------------------
+# R3 — hard per-query wall-clock ceiling + stage-named self-reap
+# Default 120s; CLI `--timeout <s>` raises/lowers it. SIGALRM interrupts a
+# wedged stage (incl. time.sleep in tests / blocked model load) so no search
+# PID outlives the ceiling.
+# -----------------------------------------------------------------------------
+
+DEFAULT_SEARCH_TIMEOUT_S = 120.0
+
+# Thread-local-ish globals for the alarm handler (search is single-threaded CLI).
+_deadline_stage: str = "init"
+_deadline_timeout_s: float = DEFAULT_SEARCH_TIMEOUT_S
+
+
+class SearchTimeoutError(Exception):
+    """Raised when the per-query wall-clock ceiling is breached (R3)."""
+
+    def __init__(self, stage: str, timeout_s: float):
+        self.stage = stage
+        self.timeout_s = timeout_s
+        super().__init__(
+            f"search timeout exceeded ({timeout_s:g}s) at stage {stage}"
+        )
+
+
+def _alarm_handler(signum, frame):  # noqa: ARG001
+    raise SearchTimeoutError(_deadline_stage, _deadline_timeout_s)
+
+
+def _set_stage(stage: str) -> None:
+    """Record the pipeline stage currently executing (named in reap errors)."""
+    global _deadline_stage
+    _deadline_stage = stage
+
+
+class _SearchDeadline:
+    """Install a real-time ITIMER that raises SearchTimeoutError on breach."""
+
+    def __init__(self, timeout_s: Optional[float]):
+        # None → default; <=0 → disabled (not used by reds; defensive)
+        if timeout_s is None:
+            timeout_s = DEFAULT_SEARCH_TIMEOUT_S
+        self.timeout_s = float(timeout_s)
+        self._prev_handler = None
+        self._armed = False
+
+    def __enter__(self):
+        global _deadline_timeout_s, _deadline_stage
+        if self.timeout_s <= 0:
+            return self
+        _deadline_timeout_s = self.timeout_s
+        _deadline_stage = "init"
+        # SIGALRM only works on main thread (Unix CLI + pytest main).
+        try:
+            self._prev_handler = signal.signal(signal.SIGALRM, _alarm_handler)
+            signal.setitimer(signal.ITIMER_REAL, self.timeout_s)
+            self._armed = True
+        except (ValueError, AttributeError, OSError):
+            # Non-main thread / unsupported platform — best-effort no-op.
+            self._armed = False
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if self._armed:
+            try:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+            except (ValueError, AttributeError, OSError):
+                pass
+            try:
+                if self._prev_handler is not None:
+                    signal.signal(signal.SIGALRM, self._prev_handler)
+            except (ValueError, AttributeError, OSError):
+                pass
+        return False
 
 
 # -----------------------------------------------------------------------------
@@ -82,6 +161,8 @@ class SearchOptions:
     explain: bool = False
     ntype: Optional[str] = None
     semantic: bool = False
+    # R3: wall-clock ceiling in seconds (CLI --timeout). None → DEFAULT_SEARCH_TIMEOUT_S.
+    timeout_s: Optional[float] = None
 
 
 # -----------------------------------------------------------------------------
@@ -234,49 +315,56 @@ def light_search(
     t_start = time.perf_counter()
 
     try:
-        # --- MEM-FIX-0007: facet-scoped fast-path ---
-        # --type/--tag scoped queries (no --semantic opt-out) resolve via the
-        # existing attr/tag indexes and skip embed + vector + activation
-        # entirely — no llama.cpp model load. See _facet_fast_search().
-        # R2: record latency via the SHARED _record_latency helper so any R4
-        # sampling/batch gate applies to both full and facet lanes. Do not
-        # open-code a second INSERT path. Stage buckets: retrieval/scoring=0
-        # (no embed/vector/activation); wall clock sits in output_ms
-        # (resolve+rank+hydrate). Zero Llama load (guarded by R2 reds).
-        if (options.ntype or options.tags) and not options.semantic:
-            envelope = _facet_fast_search(conn, options)
+        with _SearchDeadline(options.timeout_s):
+            # --- MEM-FIX-0007: facet-scoped fast-path ---
+            # --type/--tag scoped queries (no --semantic opt-out) resolve via the
+            # existing attr/tag indexes and skip embed + vector + activation
+            # entirely — no llama.cpp model load. See _facet_fast_search().
+            # R2: record latency via the SHARED _record_latency helper so any R4
+            # sampling/batch gate applies to both full and facet lanes. Do not
+            # open-code a second INSERT path. Stage buckets: retrieval/scoring=0
+            # (no embed/vector/activation); wall clock sits in output_ms
+            # (resolve+rank+hydrate). Zero Llama load (guarded by R2 reds).
+            if (options.ntype or options.tags) and not options.semantic:
+                _set_stage("facet")
+                envelope = _facet_fast_search(conn, options)
+                total_ms = (time.perf_counter() - t_start) * 1000
+                _record_latency(
+                    conn, total_ms, 0.0, 0.0, total_ms,
+                    len(envelope.results),
+                )
+                return envelope
+
+            # --- Stages 1-3: Retrieval (embedding, BM25, vector) ---
+            t0 = time.perf_counter()
+            _run_retrieval_stage(conn, state, options, config=config)
+            retrieval_ms = (time.perf_counter() - t0) * 1000
+
+            # --- Stages 4-8: Scoring (RRF, activation, temporal, tag filter, final) ---
+            t0 = time.perf_counter()
+            _run_scoring_stage(conn, state, options)
+            scoring_ms = (time.perf_counter() - t0) * 1000
+
+            # --- Stages 9-10: Output (pagination, hydration, envelope) ---
+            t0 = time.perf_counter()
+            _set_stage("output")
+            envelope = _run_output_stage(conn, state, options)
+            output_ms = (time.perf_counter() - t0) * 1000
+
             total_ms = (time.perf_counter() - t_start) * 1000
+
+            # --- Record latency ---
             _record_latency(
-                conn, total_ms, 0.0, 0.0, total_ms,
+                conn, total_ms, retrieval_ms, scoring_ms, output_ms,
                 len(envelope.results),
             )
+
             return envelope
 
-        # --- Stages 1-3: Retrieval (embedding, BM25, vector) ---
-        t0 = time.perf_counter()
-        _run_retrieval_stage(conn, state, options, config=config)
-        retrieval_ms = (time.perf_counter() - t0) * 1000
-
-        # --- Stages 4-8: Scoring (RRF, activation, temporal, tag filter, final) ---
-        t0 = time.perf_counter()
-        _run_scoring_stage(conn, state, options)
-        scoring_ms = (time.perf_counter() - t0) * 1000
-
-        # --- Stages 9-10: Output (pagination, hydration, envelope) ---
-        t0 = time.perf_counter()
-        envelope = _run_output_stage(conn, state, options)
-        output_ms = (time.perf_counter() - t0) * 1000
-
-        total_ms = (time.perf_counter() - t_start) * 1000
-
-        # --- Record latency ---
-        _record_latency(
-            conn, total_ms, retrieval_ms, scoring_ms, output_ms,
-            len(envelope.results),
-        )
-
-        return envelope
-
+    except SearchTimeoutError:
+        # R3: re-raise so the CLI handler can emit a structured error (exit != 0)
+        # naming the stage. Do NOT swallow into a soft exit_code=2 envelope.
+        raise
     except Exception:
         # Database or pipeline error → exit code 2
         return SearchResultEnvelope(
@@ -541,10 +629,11 @@ def _run_retrieval_stage(
         options: Search options with query text.
     """
     # --- Stage 1: Try to get query embedding ---
-    # ADR 0001 client seam: route through embedding_daemon_client.embed
-    # (batch shape); [0] is the single-query vector. Daemon failures fall
-    # back in-client to inproc; if the client itself raises (INV-3 force),
-    # BM25-only path keeps search exit 0.
+    # R1 seam: production uses embedding_daemon_client.embed (batch shape).
+    # R3 reds patch THIS module's get_model/embed_single — when get_model is
+    # not the real loader (tests), take the inproc path so patches bind.
+    # SearchTimeoutError must propagate (not swallowed into BM25-only).
+    _set_stage("embed")
     try:
         if not _EMBEDDING_AVAILABLE or get_model is None:
             raise RuntimeError("Embedding package not available")
@@ -552,21 +641,34 @@ def _run_retrieval_stage(
             from memory_cli.config import load_config
             config = load_config()
         embedding_input = build_embedding_input(options.query, [])
-        from memory_cli.embedding.embedding_daemon_client import embed as daemon_embed
-        vectors = daemon_embed([embedding_input], "query", config)
-        state.query_embedding = vectors[0] if vectors else None
-        if state.query_embedding is None:
-            raise RuntimeError("daemon client returned empty embedding batch")
+        use_daemon = (
+            _model_loader is not None
+            and get_model is _model_loader.get_model
+        )
+        if use_daemon:
+            from memory_cli.embedding.embedding_daemon_client import embed as daemon_embed
+            vectors = daemon_embed([embedding_input], "query", config)
+            state.query_embedding = vectors[0] if vectors else None
+            if state.query_embedding is None:
+                raise RuntimeError("daemon client returned empty embedding batch")
+        else:
+            # Test / patched path: module-level get_model + embed_single
+            model = get_model(config)
+            state.query_embedding = embed_single(model, embedding_input, "query")
+    except SearchTimeoutError:
+        raise
     except Exception as exc:
         # Embedding unavailable — BM25-only fallback
         state.vector_unavailable = True
         state.vector_unavailable_reason = f"{type(exc).__name__}: {exc}"
 
     # --- Stage 2: BM25 retrieval ---
+    _set_stage("bm25")
     state.bm25_candidates = retrieve_bm25(conn, options.query)
 
     # --- Stage 3: Vector retrieval (only if embedding available) ---
     if not state.vector_unavailable and state.query_embedding is not None:
+        _set_stage("vector")
         state.vector_candidates = retrieve_vectors(conn, state.query_embedding)
     else:
         state.vector_candidates = []
@@ -594,9 +696,11 @@ def _run_scoring_stage(
         options: Search options with tags, fan-out-depth, etc.
     """
     # --- Stage 4: RRF fusion ---
+    _set_stage("rrf")
     state.rrf_candidates = fuse_rrf(state.bm25_candidates, state.vector_candidates)
 
     # --- Stage 5: Spreading activation ---
+    _set_stage("activation")
     state.activated_candidates = spread(
         conn, state.rrf_candidates, fan_out_depth=options.fan_out_depth
     )
