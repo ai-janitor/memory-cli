@@ -34,8 +34,12 @@ def test_all_sockets_closed_on_daemon_connect_failure():
     # Fell back inproc (daemon unreachable) …
     assert result == [[0.0] * 768]
     assert inproc.called, "did not fall back to inproc on daemon connect failure"
+    # … the RETRY path ran (initial connect fails → autostart → second socket) …
+    assert len(created) >= 2, (
+        f"expected the autostart RETRY path (>=2 sockets), got {len(created)} — "
+        "the fd-leak fix targets the SECOND-connect failure after autostart"
+    )
     # … and EVERY socket opened along the way was closed (no fd leak).
-    assert created, "expected at least one socket connect attempt"
     for s in created:
         assert s.close.called, (
             "a client socket was not closed on the daemon connect-failure path "
