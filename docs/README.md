@@ -29,6 +29,7 @@ the graph. Standard: `~/.droid/refs/open-knowledge-format.md`.
 | second-look perf findings beyond the top-5 (multi-store 2× wall, corrected refs) | [perf-second-look-findings.md](perf-second-look-findings.md) |
 | ranked perf boost recommendations (what/why/how/acceptance/effort, merged + backlog) | [perf-boost-recommendations.md](perf-boost-recommendations.md) |
 | a known gap / deferred item / follow-up | [10-known-gaps.md](10-known-gaps.md) |
+| how to run the gated daemon/embedding test lane | [testing-daemon-lane.md](testing-daemon-lane.md) |
 | a diagnosis / architecture review / fix methodology | [diagnostics/](#diagnostics) |
 | a per-change spec / gate / result (MEM-FIX / MEM-FEAT) | [delegations/](#delegations) |
 | a checklist certification transcript | [certs/](#certs) |
@@ -50,6 +51,10 @@ the graph. Standard: `~/.droid/refs/open-knowledge-format.md`.
 ## Known gaps + deferred
 
 - [10-known-gaps.md](10-known-gaps.md) — tracked gaps + deferred items, each with source ref + revive-trigger. Currently: 4 deferred perf items (ANN index, tag-affinity caps, fuzzy scan, latency pruning). `type: reference`
+
+## Testing
+
+- [testing-daemon-lane.md](testing-daemon-lane.md) — the on-demand daemon/embedding test lane: why live-daemon tests are gated behind `MEMORY_DAEMON_TESTS` (native teardown crash + model-load contention, backlog #75), what coverage moved vs stayed default, how to run it before a daemon/embedding release. `type: how-to`
 
 ## Diagnostics
 

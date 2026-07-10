@@ -1,3 +1,11 @@
+---
+type: how-to
+title: Daemon test lane (on-demand)
+description: Why live-daemon tests are gated behind MEMORY_DAEMON_TESTS, what moved vs stayed in the default suite, and how to run the on-demand lane before a daemon/embedding release.
+tags: [testing, daemon, embedding, test-lane, flakiness]
+timestamp: 2026-07-10
+---
+
 # Daemon test lane (on-demand)
 
 ## Why a separate lane
