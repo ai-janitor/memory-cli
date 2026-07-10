@@ -34,8 +34,15 @@ def hydrate_results(
     conn: sqlite3.Connection,
     paginated_candidates: List[Dict[str, Any]],
     explain: bool = False,
+    track_access: bool = False,
 ) -> List[Dict[str, Any]]:
     """Hydrate paginated candidates into full result records.
+
+    Args:
+        track_access: When True, bump access_count / last_accessed_at for
+            hydrated neurons. Default False (R4: search is read-only; access
+            tracking must not write on the search connection). Callers that
+            want salience updates must opt in explicitly (separate writer).
 
     Logic flow:
     1. Extract neuron_ids from paginated_candidates.
@@ -111,16 +118,17 @@ def hydrate_results(
 
     edge_summaries = edge_type_summary(conn, neuron_ids)
 
-    # --- Bump access tracking for all hydrated neurons ---
-    now_ms = int(time.time() * 1000)
-    hit_ids = [nid for nid in neuron_ids if nid in neuron_map]
-    if hit_ids:
-        hit_placeholders = ",".join("?" * len(hit_ids))
-        conn.execute(
-            f"UPDATE neurons SET access_count = access_count + 1, "
-            f"last_accessed_at = ? WHERE id IN ({hit_placeholders})",
-            [now_ms] + hit_ids,
-        )
+    # --- Access tracking (opt-in only; R4 search is read-only by default) ---
+    if track_access:
+        now_ms = int(time.time() * 1000)
+        hit_ids = [nid for nid in neuron_ids if nid in neuron_map]
+        if hit_ids:
+            hit_placeholders = ",".join("?" * len(hit_ids))
+            conn.execute(
+                f"UPDATE neurons SET access_count = access_count + 1, "
+                f"last_accessed_at = ? WHERE id IN ({hit_placeholders})",
+                [now_ms] + hit_ids,
+            )
 
     # --- Build results in ranking order ---
     results = []

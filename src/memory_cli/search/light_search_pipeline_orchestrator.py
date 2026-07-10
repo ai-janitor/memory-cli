@@ -801,17 +801,50 @@ def _record_latency(
 ) -> None:
     """Persist a search latency record to the search_latency table.
 
-    Best-effort: silently ignores errors (table may not exist on older schemas).
+    R4: never write on the *search* connection when the DB is file-backed —
+    open a short-lived side connection so the read path stays read-only and
+    does not take the WAL writer slot. For :memory: (unit tests, R2 latency
+    reds) write on the same connection so row counts remain observable.
+
+    Best-effort: silently ignores errors (table may not exist / read-only).
     """
+    recorded_at = int(time.time() * 1000)
+    params = (total_ms, retrieval_ms, scoring_ms, output_ms, result_count, recorded_at)
+    sql = (
+        "INSERT INTO search_latency "
+        "(total_ms, retrieval_ms, scoring_ms, output_ms, result_count, recorded_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)"
+    )
+
+    def _write(target: sqlite3.Connection) -> None:
+        target.execute(sql, params)
+        target.commit()
+
     try:
-        recorded_at = int(time.time() * 1000)
-        conn.execute(
-            "INSERT INTO search_latency "
-            "(total_ms, retrieval_ms, scoring_ms, output_ms, result_count, recorded_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (total_ms, retrieval_ms, scoring_ms, output_ms, result_count, recorded_at),
-        )
-        conn.commit()
+        # Resolve main DB file path (empty / :memory: → same-conn path).
+        file_path = ""
+        try:
+            rows = conn.execute("PRAGMA database_list").fetchall()
+            for r in rows:
+                # (seq, name, file)
+                if r[1] == "main":
+                    file_path = r[2] or ""
+                    break
+        except Exception:
+            file_path = ""
+
+        if file_path and file_path != ":memory:":
+            # Side-channel writer — keeps search conn free of INSERT/commit.
+            writer = sqlite3.connect(file_path)
+            try:
+                _write(writer)
+            finally:
+                writer.close()
+            return
+
+        # :memory: / unresolvable path — same connection (test observability).
+        _write(conn)
     except Exception:
-        # Table may not exist on older schema versions — don't break search
+        # Table missing, read-only conn, or side-channel failure — never break search
         pass
+

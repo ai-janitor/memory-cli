@@ -38,6 +38,7 @@ from .v006_add_consolidated_column import apply as apply_v006
 from .v007_add_edge_types_and_canonical_reason import apply as apply_v007
 from .v008_add_search_latency_table import apply as apply_v008
 from .v009_add_embedding_input_hash import apply as apply_v009
+from .v010_scope_fts_trigger_to_content import apply as apply_v010
 
 MIGRATION_REGISTRY: dict[int, MigrationFn] = {
     1: apply_v001,
@@ -49,4 +50,5 @@ MIGRATION_REGISTRY: dict[int, MigrationFn] = {
     7: apply_v007,
     8: apply_v008,
     9: apply_v009,
+    10: apply_v010,
 }

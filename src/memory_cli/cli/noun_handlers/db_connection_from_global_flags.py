@@ -24,7 +24,7 @@ from memory_cli.config import load_config, MemoryConfig, ConfigLoadError
 from memory_cli.db import open_connection, run_pending_migrations, read_schema_version
 
 # Target schema version — must match MIGRATION_REGISTRY in db/migrations/__init__.py
-_TARGET_VERSION = 9
+_TARGET_VERSION = 10  # R4 v010: FTS trigger AFTER UPDATE OF content
 
 
 def get_connection_and_config(global_flags: Any) -> Tuple[sqlite3.Connection, MemoryConfig]:

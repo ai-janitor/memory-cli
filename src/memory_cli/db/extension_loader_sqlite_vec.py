@@ -71,16 +71,23 @@ def load_sqlite_vec(conn: sqlite3.Connection) -> None:
     # Extensions are loaded once at startup; no reason to leave this open
     conn.enable_load_extension(False)
 
-    # --- Step 4: Verify vec0 is usable ---
-    # Execute a trivial operation to confirm vec0 works:
-    #   CREATE VIRTUAL TABLE IF NOT EXISTS _vec_test USING vec0(test_col float[2])
-    #   DROP TABLE _vec_test
-    # If this fails, the extension did not load correctly
+    # --- Step 4: Verify vec0 is usable (R4: READ-ONLY probe, no CREATE/DROP) ---
+    # Prefer SELECT vec_version() when available; fall back to checking the
+    # module list. Never CREATE/DROP _vec_test — that was a write-on-open that
+    # made true read-only search / concurrent RO opens impossible.
     try:
-        conn.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS _vec_test USING vec0(test_col float[2])"
-        )
-        conn.execute("DROP TABLE _vec_test")
+        try:
+            conn.execute("SELECT vec_version()").fetchone()
+        except sqlite3.OperationalError:
+            # Older sqlite-vec builds may lack vec_version(); confirm module
+            # presence without mutating schema.
+            rows = conn.execute("SELECT name FROM pragma_module_list").fetchall()
+            names = {r[0].lower() for r in rows if r and r[0]}
+            if "vec0" not in names and not any("vec" in n for n in names):
+                raise RuntimeError(
+                    "sqlite-vec extension loaded but vec0 is not listed in "
+                    "pragma_module_list and vec_version() is unavailable"
+                )
     except sqlite3.OperationalError as exc:
         raise RuntimeError(
             f"sqlite-vec extension loaded but vec0 virtual tables are not functional: {exc}"
@@ -93,32 +100,41 @@ def verify_fts5(conn: sqlite3.Connection) -> None:
     FTS5 is compiled into Python's bundled SQLite by default, but some
     custom builds may omit it. We check early to provide a clear error.
 
+    R4: use pragma_module_list (read-only) instead of CREATE/DROP _fts5_test.
+
     Args:
         conn: An open sqlite3.Connection.
 
     Raises:
         RuntimeError: If FTS5 is not available.
     """
-    # --- Step 1: Attempt to create a trivial FTS5 table ---
-    # try:
-    #   CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_test USING fts5(test_col)
-    #   DROP TABLE _fts5_test
-    # except sqlite3.OperationalError:
-    #   raise RuntimeError with message about FTS5 not being available
-
     # --- Note: FTS5 is NOT an extension — it's a compile-time option ---
-    # No extension loading needed for FTS5
     try:
-        conn.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_test USING fts5(test_col)"
-        )
-        conn.execute("DROP TABLE _fts5_test")
+        rows = conn.execute("SELECT name FROM pragma_module_list").fetchall()
+        names = {r[0].lower() for r in rows if r and r[0]}
+        if "fts5" not in names:
+            raise RuntimeError(
+                "FTS5 is not available in this SQLite build. "
+                "memory-cli requires FTS5 for full-text search on neuron content. "
+                f"pragma_module_list has no fts5 entry (found {sorted(names)[:20]})"
+            )
     except sqlite3.OperationalError as exc:
-        raise RuntimeError(
-            "FTS5 is not available in this SQLite build. "
-            "memory-cli requires FTS5 for full-text search on neuron content. "
-            f"Original error: {exc}"
-        ) from exc
+        # pragma_module_list missing on very old SQLite — last-resort TEMP
+        # probe (TEMP is excluded from R4 persistent-write checks, but we
+        # prefer not to hit this path on modern Python sqlite3).
+        try:
+            conn.execute(
+                "CREATE TEMPORARY VIRTUAL TABLE IF NOT EXISTS _fts5_probe "
+                "USING fts5(test_col)"
+            )
+            conn.execute("DROP TABLE IF EXISTS _fts5_probe")
+        except sqlite3.OperationalError as exc2:
+            raise RuntimeError(
+                "FTS5 is not available in this SQLite build. "
+                "memory-cli requires FTS5 for full-text search on neuron content. "
+                f"Original error: {exc2}"
+            ) from exc2
+
 
 
 def load_and_verify_extensions(conn: sqlite3.Connection) -> None:
