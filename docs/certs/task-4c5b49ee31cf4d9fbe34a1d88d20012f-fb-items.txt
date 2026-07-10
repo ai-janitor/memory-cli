@@ -1,0 +1,1 @@
+FB R17 level-batch + confidence once; no id(conn) cache; R4 read-only preserved

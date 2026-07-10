@@ -29,7 +29,6 @@
 from __future__ import annotations
 
 import sqlite3
-from collections import deque
 from typing import Any, Dict, List
 
 
@@ -127,7 +126,11 @@ def spread(
     if fan_out_depth == 0:
         return list(seeds.values())
 
-    fan_out = _bfs_activate(conn, seeds, fan_out_depth, decay_rate)
+    # R7: resolve confidence column ONCE per search (not per node / not id(conn)).
+    has_confidence = _has_confidence_column(conn)
+    fan_out = _bfs_activate(
+        conn, seeds, fan_out_depth, decay_rate, has_confidence=has_confidence,
+    )
 
     # --- Merge seeds + fan-out ---
     # For fan-out neurons that are also seeds, seed activation wins.
@@ -150,114 +153,63 @@ def _bfs_activate(
     seeds: Dict[int, Dict[str, Any]],
     max_depth: int,
     decay_rate: float,
+    has_confidence: bool = False,
 ) -> Dict[int, Dict[str, Any]]:
-    """Core BFS loop with linear decay and visited tracking.
+    """Core BFS with linear decay, max-activation-wins, level-batched edges (R7).
 
-    Logic flow:
-    1. Initialize BFS queue with all seed neuron IDs at depth=0.
-    2. Initialize visited set: {neuron_id: max_activation_seen}.
-       - Seeds start in visited with activation=1.0.
-    3. BFS loop (while queue not empty):
-       a. Dequeue (neuron_id, current_depth, current_activation).
-       b. If current_depth >= max_depth → skip (don't explore further).
-       c. Get neighbors via _get_neighbors(conn, neuron_id).
-       d. For each neighbor (neighbor_id, edge_weight, edge_reason):
-          i.   Compute new_activation = _compute_activation(
-                   current_activation, current_depth, decay_rate, edge_weight)
-          ii.  If new_activation <= 0 → skip (decayed to nothing).
-          iii. If neighbor_id in visited AND visited[neighbor_id] >= new_activation
-               → skip (already reached with equal or higher activation).
-          iv.  Update visited[neighbor_id] = new_activation.
-          v.   Enqueue (neighbor_id, current_depth + 1, new_activation).
-          vi.  Record neighbor with activation metadata.
-    4. Return all discovered non-seed neurons with their max activation.
-
-    Args:
-        conn: SQLite connection.
-        seeds: Seed neurons dict keyed by neuron_id.
-        max_depth: Maximum BFS depth.
-        decay_rate: Linear decay rate per hop.
-
-    Returns:
-        Dict of discovered fan-out neurons keyed by neuron_id.
+    R7: one edge query per BFS depth (O(depth)), not 2 SELECTs per node.
+    Visited logic unchanged: re-open a node only when new_activation is strictly
+    greater (:245 max-activation-wins). Confidence flag is threaded from
+    spread() — never re-PRAGMA here.
     """
-    # --- Initialize BFS ---
-    # queue = deque()
-    # visited: Dict[int, float] = {}
-    # discovered: Dict[int, Dict[str, Any]] = {}
-
-    # for nid in seeds:
-    #     queue.append((nid, 0, 1.0))
-    #     visited[nid] = 1.0
-    queue = deque()
-    visited: Dict[int, float] = {}
+    # frontier: neuron_id -> activation at this depth (level-synchronous)
+    frontier: Dict[int, float] = {nid: 1.0 for nid in seeds}
+    visited: Dict[int, float] = {nid: 1.0 for nid in seeds}
     discovered: Dict[int, Dict[str, Any]] = {}
 
-    for nid in seeds:
-        queue.append((nid, 0, 1.0))
-        visited[nid] = 1.0
+    for depth in range(max_depth):
+        if not frontier:
+            break
+        # One batched bidirectional edge query for the whole frontier level.
+        by_node = _get_neighbors_batch(
+            conn, list(frontier.keys()), has_confidence=has_confidence,
+        )
+        next_frontier: Dict[int, float] = {}
 
-    # --- BFS loop ---
-    # while queue:
-    #     current_id, depth, activation = queue.popleft()
-    #
-    #     if depth >= max_depth:
-    #         continue
-    #
-    #     neighbors = _get_neighbors(conn, current_id)
-    #     for neighbor_id, edge_weight, edge_reason, edge_confidence in neighbors:
-    #         new_activation = _compute_activation(
-    #             activation, depth, decay_rate, edge_weight, edge_confidence
-    #         )
-    #         if new_activation <= 0:
-    #             continue
-    #         if neighbor_id in visited and visited[neighbor_id] >= new_activation:
-    #             continue
-    #
-    #         visited[neighbor_id] = new_activation
-    #         queue.append((neighbor_id, depth + 1, new_activation))
-    #
-    #         # Only record non-seed discoveries
-    #         if neighbor_id not in seeds:
-    #             discovered[neighbor_id] = {
-    #                 "neuron_id": neighbor_id,
-    #                 "activation_score": new_activation,
-    #                 "match_type": "fan_out",
-    #                 "hop_distance": depth + 1,
-    #                 "edge_reason": edge_reason,
-    #                 "rrf_score": 0.0,  # fan-out neurons have no direct RRF score
-    #             }
+        for current_id, activation in frontier.items():
+            for neighbor_id, edge_weight, edge_reason, edge_confidence in by_node.get(
+                current_id, ()
+            ):
+                new_activation = _compute_activation(
+                    activation, depth, decay_rate, edge_weight, edge_confidence
+                )
+                if new_activation <= 0:
+                    continue
+                if neighbor_id in visited and visited[neighbor_id] >= new_activation:
+                    continue
 
-    # return discovered
-    while queue:
-        current_id, depth, activation = queue.popleft()
+                visited[neighbor_id] = new_activation
+                # Keep best activation for this neighbor at the next depth.
+                prev = next_frontier.get(neighbor_id)
+                if prev is None or new_activation > prev:
+                    next_frontier[neighbor_id] = new_activation
 
-        if depth >= max_depth:
-            continue
+                if neighbor_id not in seeds:
+                    existing = discovered.get(neighbor_id)
+                    if (
+                        existing is None
+                        or new_activation > existing["activation_score"]
+                    ):
+                        discovered[neighbor_id] = {
+                            "neuron_id": neighbor_id,
+                            "activation_score": new_activation,
+                            "match_type": "fan_out",
+                            "hop_distance": depth + 1,
+                            "edge_reason": edge_reason,
+                            "rrf_score": 0.0,
+                        }
 
-        neighbors = _get_neighbors(conn, current_id)
-        for neighbor_id, edge_weight, edge_reason, edge_confidence in neighbors:
-            new_activation = _compute_activation(
-                activation, depth, decay_rate, edge_weight, edge_confidence
-            )
-            if new_activation <= 0:
-                continue
-            if neighbor_id in visited and visited[neighbor_id] >= new_activation:
-                continue
-
-            visited[neighbor_id] = new_activation
-            queue.append((neighbor_id, depth + 1, new_activation))
-
-            # Only record non-seed discoveries
-            if neighbor_id not in seeds:
-                discovered[neighbor_id] = {
-                    "neuron_id": neighbor_id,
-                    "activation_score": new_activation,
-                    "match_type": "fan_out",
-                    "hop_distance": depth + 1,
-                    "edge_reason": edge_reason,
-                    "rrf_score": 0.0,  # fan-out neurons have no direct RRF score
-                }
+        frontier = next_frontier
 
     return discovered
 
@@ -265,59 +217,74 @@ def _bfs_activate(
 def _get_neighbors(
     conn: sqlite3.Connection,
     neuron_id: int,
+    has_confidence: bool | None = None,
 ) -> List[tuple]:
-    """Query edges for bidirectional neighbors of a neuron.
+    """Query edges for bidirectional neighbors of a single neuron.
 
-    Bidirectional means we traverse edges regardless of direction:
-    - Edges WHERE source_id = neuron_id → target_id is a neighbor.
-    - Edges WHERE target_id = neuron_id → source_id is a neighbor.
+    Thin wrapper over `_get_neighbors_batch` for unit tests / single-node use.
+    Prefer batch path inside BFS (R7).
 
-    Returns (neighbor_id, weight, reason, confidence) tuples. The confidence
-    field enables provenance-weighted spreading activation — extracted edges
-    (confidence < 1.0) decay activation faster than authored edges (1.0).
-
-    Args:
-        conn: SQLite connection.
-        neuron_id: The neuron to find neighbors for.
-
-    Returns:
-        List of (neighbor_id, weight, reason, confidence) tuples.
+    Returns (neighbor_id, weight, reason, confidence) tuples.
     """
-    # --- Detect if confidence column exists (provenance v004 migration) ---
-    has_confidence = _has_confidence_column(conn)
+    if has_confidence is None:
+        # Unit-test / direct callers: one PRAGMA is fine; BFS never hits this.
+        has_confidence = _has_confidence_column(conn)
+    by_node = _get_neighbors_batch(conn, [neuron_id], has_confidence=has_confidence)
+    return list(by_node.get(neuron_id, ()))
 
-    if has_confidence:
-        conf_expr = "confidence"
-    else:
-        conf_expr = "1.0"
 
-    # --- Outgoing edges ---
-    outgoing = conn.execute(
-        f"SELECT target_id, weight, reason, {conf_expr} FROM {EDGES_TABLE} "
-        f"WHERE source_id = ?",
-        (neuron_id,),
-    ).fetchall()
+def _get_neighbors_batch(
+    conn: sqlite3.Connection,
+    neuron_ids: List[int],
+    has_confidence: bool,
+) -> Dict[int, List[tuple]]:
+    """Bidirectional neighbors for many nodes in ONE edge query (R7).
 
-    # --- Incoming edges ---
-    incoming = conn.execute(
-        f"SELECT source_id, weight, reason, {conf_expr} FROM {EDGES_TABLE} "
-        f"WHERE target_id = ?",
-        (neuron_id,),
-    ).fetchall()
+    SELECT ... FROM edges WHERE source_id IN (...) OR target_id IN (...).
+    Returns map: node_id -> [(neighbor_id, weight, reason, confidence), ...].
+    """
+    if not neuron_ids:
+        return {}
 
-    # --- Combine ---
-    # Returns (neighbor_id, weight, reason, confidence) tuples.
-    return [(row[0], row[1], row[2], row[3]) for row in outgoing + incoming]
+    conf_expr = "confidence" if has_confidence else "1.0"
+    placeholders = ",".join("?" * len(neuron_ids))
+    # Two role columns so we can attribute each row to its frontier endpoint(s).
+    sql = (
+        f"SELECT source_id, target_id, weight, reason, {conf_expr} "
+        f"FROM {EDGES_TABLE} "
+        f"WHERE source_id IN ({placeholders}) OR target_id IN ({placeholders})"
+    )
+    params = list(neuron_ids) + list(neuron_ids)
+    rows = conn.execute(sql, params).fetchall()
+
+    frontier_set = set(neuron_ids)
+    out: Dict[int, List[tuple]] = {nid: [] for nid in neuron_ids}
+    for source_id, target_id, weight, reason, conf in rows:
+        if source_id in frontier_set:
+            out[source_id].append((target_id, weight, reason, conf))
+        if target_id in frontier_set:
+            # Bidirectional: when endpoint is target, neighbor is source.
+            # Self-loop would double-add; rare and harmless for activation max.
+            out[target_id].append((source_id, weight, reason, conf))
+    return out
 
 
 def _has_confidence_column(conn: sqlite3.Connection) -> bool:
     """Check if the edges table has a confidence column (v005 migration).
 
-    PRAGMA each call — deliberately NOT cached by id(conn): CPython reuses object
-    ids after a connection is GC'd, so an id-keyed module cache leaks a stale
-    schema flag onto a later same-id connection with a different schema (a
-    non-deterministic cross-test failure). Correctness > one PRAGMA.
+    R7: call ONCE per search from spread() and thread the bool into BFS —
+    never from the per-level edge batch. Prefer meta.schema_version (≥5) so
+    modern DBs need no PRAGMA table_info(edges); table_info only for pre-v5
+    / partial schemas. No id(conn) module cache (GC id-reuse flake).
     """
+    try:
+        row = conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()
+        if row is not None and row[0] is not None and int(row[0]) >= 5:
+            return True
+    except (TypeError, ValueError, sqlite3.Error):
+        pass
     cols = {row[1] for row in conn.execute("PRAGMA table_info(edges)").fetchall()}
     return "confidence" in cols
 

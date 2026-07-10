@@ -43,24 +43,42 @@ DEFAULT_OFFSET = 0
 SNIPPET_MAX_LENGTH = 100
 VALID_DIRECTIONS = {"outgoing", "incoming", "both"}
 
+def _schema_version_from_meta(conn: sqlite3.Connection) -> int:
+    """Read schema_version from meta (read-only SELECT; no table_info).
+
+    memory-cli stores version in meta, not PRAGMA user_version.
+    """
+    try:
+        row = conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()
+        if row is not None and row[0] is not None:
+            return int(row[0])
+    except (TypeError, ValueError, sqlite3.Error):
+        pass
+    return 0
+
+
 def _has_provenance_columns(conn: sqlite3.Connection) -> bool:
     """Check if the edges table has provenance/confidence columns (v005 migration).
 
-    Queries PRAGMA each call (a fast local op). Deliberately NOT cached by
-    id(conn): CPython reuses object ids after a connection is GC'd, so an
-    id-keyed module-level cache leaks a stale schema flag onto a later, same-id
-    connection with a different schema — a non-deterministic cross-test failure
-    (a v001-only test conn poisoning test_edge_provenance). Correctness > 1 PRAGMA.
+    Prefer meta.schema_version (≥5) over PRAGMA table_info — R7 wants ≤1
+    table_info(edges) per search; R4 forbids search-path writes. Fall back to
+    table_info only for pre-v5 / partial schemas.
     """
+    if _schema_version_from_meta(conn) >= 5:
+        return True
     cols = {row[1] for row in conn.execute("PRAGMA table_info(edges)").fetchall()}
     return "provenance" in cols
 
 
 def _has_canonical_reason_column(conn: sqlite3.Connection) -> bool:
-    """Check if the edges table has canonical_reason column (v006/v007 migration).
+    """Check if the edges table has canonical_reason column (v007 migration).
 
-    PRAGMA each call — NOT id(conn)-cached (see _has_provenance_columns rationale).
+    Prefer meta.schema_version (≥7); table_info only for partial schemas.
     """
+    if _schema_version_from_meta(conn) >= 7:
+        return True
     cols = {row[1] for row in conn.execute("PRAGMA table_info(edges)").fetchall()}
     return "canonical_reason" in cols
 
