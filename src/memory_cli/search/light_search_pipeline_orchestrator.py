@@ -238,8 +238,19 @@ def light_search(
         # --type/--tag scoped queries (no --semantic opt-out) resolve via the
         # existing attr/tag indexes and skip embed + vector + activation
         # entirely — no llama.cpp model load. See _facet_fast_search().
+        # R2: record latency via the SHARED _record_latency helper so any R4
+        # sampling/batch gate applies to both full and facet lanes. Do not
+        # open-code a second INSERT path. Stage buckets: retrieval/scoring=0
+        # (no embed/vector/activation); wall clock sits in output_ms
+        # (resolve+rank+hydrate). Zero Llama load (guarded by R2 reds).
         if (options.ntype or options.tags) and not options.semantic:
-            return _facet_fast_search(conn, options)
+            envelope = _facet_fast_search(conn, options)
+            total_ms = (time.perf_counter() - t_start) * 1000
+            _record_latency(
+                conn, total_ms, 0.0, 0.0, total_ms,
+                len(envelope.results),
+            )
+            return envelope
 
         # --- Stages 1-3: Retrieval (embedding, BM25, vector) ---
         t0 = time.perf_counter()

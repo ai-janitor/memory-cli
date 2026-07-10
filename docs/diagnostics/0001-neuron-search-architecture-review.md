@@ -19,15 +19,21 @@ related: [../delegations/MEM-FIX-0007.spec.md, ../delegations/MEM-FIX-0007.resul
 
 | # | action | cost | effect | status |
 |---|--------|------|--------|--------|
-| 1 | DEPLOY MEM-FIX-0007 (`uv tool install --reinstall .`) | zero code | kills the storm class of query | **NET-NEW — fix landed in repo, live binary STALE** |
+| 1 | DEPLOY MEM-FIX-0007 (`uv tool install --reinstall .`) | zero code | kills the storm class of query | **SHIPPED** (MEM-FIX-0007/0008 + R2 latency record). Deploy binary if host still stale. |
 | 2 | cap embed threads (`n_threads`/`n_threads_batch` in config → 2-4) | ~5 lines | one embed can no longer grab all 16 cores | net-new |
-| 3 | hard per-query timeout + self-reap | small | no more 22-31 h wedged procs | #72 item 4, not started |
-| 4 | embed query ONCE across layered stores | small | halves semantic-search embed cost | net-new |
+| 3 | hard per-query timeout + self-reap | small | no more 22-31 h wedged procs | #72 item 4 / R3 — not started |
+| 4 | embed query ONCE across layered stores | small | halves semantic-search embed cost | R6 — queued |
 | 5 | query/embedding cache | medium | bounds repeat identical queries (7 observed) | #72 item 4 |
 | 6 | batch BFS neighbor query + hoist PRAGMA out of loop | small | removes N+1 in spreading activation | net-new |
-| 7 | drop stopwatch write from read path (or fire-and-forget) | small | removes writer contention on concurrent search | net-new |
-| 8 | embedding daemon | large | shared model across procs | #72 item 2 — DEFER, trigger below |
+| 7 | drop stopwatch write from read path (or fire-and-forget) | small | removes writer contention on concurrent search | R4 — queued |
+| 8 | embedding daemon | large | shared model across procs | #72 item 2 / R1 — DEFER, trigger below |
 | 9 | ANN vector index | large | sub-linear KNN | #72 item 3 — DEFER, trigger below; strategy in §6 |
+
+## #72 status note (R2, 2026-07-10)
+
+- **fix-1 SHIPPED:** facet fast-path (MEM-FIX-0007/0008) + R2 `search_latency` recording on facet lane (shared `_record_latency`; R4 will sample/batch that gate).
+- Acceptance reds green: `tests/search/test_r2_facet_fastpath_perf_acceptance.py` (zero Llama · latency row · <300ms in-proc).
+- **Remaining #72 scope:** daemon (R1) + hard timeout/self-reap (R3). Not "re-implement facet path."
 
 ## 1. Verified facts (live path, measured 2026-07-09)
 
@@ -72,6 +78,7 @@ Verdict: **two contracts, one verb — formalize the tiering MEM-FIX-0007 starte
 - Gate "review lessons" lookups are BOUNDED TYPED FETCHES, not recall. Contract for fleet callers, in priority order:
   1. `memory neuron list --type lesson` (`neuron_list_filtered_paginated.py`) — pure indexed list, no ranking, no model. Right verb when no query text matters.
   2. `memory neuron search "<phrase>" --type lesson` — T0 fast-path once deployed. Right verb when ranking within the facet matters.
+- **LINT (fleet gate protocol):** gate lookups MUST use `--type lesson` (or `--tag …`) and MUST NOT pass `--semantic`. `--semantic` opts out of the facet fast-path and reloads llama.cpp — the #72 storm class. Review any protocol/script that adds `--semantic` on a typed gate lookup.
   3. `--semantic` — explicit opt-in only.
 - Caller-side: cache one lesson set per role per session, not per-gate re-query. Droid-side item (incident 0048 rec #1) — tracked there, out of this repo's scope, but the CLI contract above is what makes it cheap.
 - Document this in the CLI manpage/help for `search` ("typed lookup? use list or --type; bare search = semantic = expensive"). Agents follow the help text.
