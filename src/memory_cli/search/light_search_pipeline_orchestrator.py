@@ -163,6 +163,14 @@ class SearchOptions:
     semantic: bool = False
     # R3: wall-clock ceiling in seconds (CLI --timeout). None → DEFAULT_SEARCH_TIMEOUT_S.
     timeout_s: Optional[float] = None
+    # R6 multistore: caller-supplied query vector (handle_search embed-once).
+    # When embedding_provided is True, retrieval uses query_embedding as-is
+    # (None ⇒ vector_unavailable / BM25-only) and never calls the embed seam.
+    query_embedding: Optional[List[float]] = None
+    embedding_provided: bool = False
+    # R6 multistore: skip hydrate_results; return ranked candidates so the
+    # layered handler can merge across stores then hydrate only the final page.
+    defer_hydration: bool = False
 
 
 # -----------------------------------------------------------------------------
@@ -432,10 +440,14 @@ def _facet_fast_search(
     ranked = _rank_facet_candidates(conn, candidate_ids, options.query)
     total = len(ranked)
     paginated = ranked[options.offset:options.offset + options.limit]
-    # R4: never bump access on the search connection (read-only path).
-    results = hydrate_results(
-        conn, paginated, explain=options.explain, track_access=False,
-    )
+    # R6: multistore may defer hydration until after cross-store merge.
+    if options.defer_hydration:
+        results = _candidates_as_deferred_results(paginated)
+    else:
+        # R4: never bump access on the search connection (read-only path).
+        results = hydrate_results(
+            conn, paginated, explain=options.explain, track_access=False,
+        )
 
     return SearchResultEnvelope(
         results=results,
@@ -635,35 +647,43 @@ def _run_retrieval_stage(
     # R1 seam: production uses embedding_daemon_client.embed (batch shape).
     # R3 reds patch THIS module's get_model/embed_single — when get_model is
     # not the real loader (tests), take the inproc path so patches bind.
+    # R6: when embedding_provided, reuse caller vector (embed-once across stores).
     # SearchTimeoutError must propagate (not swallowed into BM25-only).
     _set_stage("embed")
-    try:
-        if not _EMBEDDING_AVAILABLE or get_model is None:
-            raise RuntimeError("Embedding package not available")
-        if config is None:
-            from memory_cli.config import load_config
-            config = load_config()
-        embedding_input = build_embedding_input(options.query, [])
-        use_daemon = (
-            _model_loader is not None
-            and get_model is _model_loader.get_model
-        )
-        if use_daemon:
-            from memory_cli.embedding.embedding_daemon_client import embed as daemon_embed
-            vectors = daemon_embed([embedding_input], "query", config)
-            state.query_embedding = vectors[0] if vectors else None
-            if state.query_embedding is None:
-                raise RuntimeError("daemon client returned empty embedding batch")
+    if options.embedding_provided:
+        if options.query_embedding is not None:
+            state.query_embedding = options.query_embedding
         else:
-            # Test / patched path: module-level get_model + embed_single
-            model = get_model(config)
-            state.query_embedding = embed_single(model, embedding_input, "query")
-    except SearchTimeoutError:
-        raise
-    except Exception as exc:
-        # Embedding unavailable — BM25-only fallback
-        state.vector_unavailable = True
-        state.vector_unavailable_reason = f"{type(exc).__name__}: {exc}"
+            state.vector_unavailable = True
+            state.vector_unavailable_reason = "precomputed embedding unavailable"
+    else:
+        try:
+            if not _EMBEDDING_AVAILABLE or get_model is None:
+                raise RuntimeError("Embedding package not available")
+            if config is None:
+                from memory_cli.config import load_config
+                config = load_config()
+            embedding_input = build_embedding_input(options.query, [])
+            use_daemon = (
+                _model_loader is not None
+                and get_model is _model_loader.get_model
+            )
+            if use_daemon:
+                from memory_cli.embedding.embedding_daemon_client import embed as daemon_embed
+                vectors = daemon_embed([embedding_input], "query", config)
+                state.query_embedding = vectors[0] if vectors else None
+                if state.query_embedding is None:
+                    raise RuntimeError("daemon client returned empty embedding batch")
+            else:
+                # Test / patched path: module-level get_model + embed_single
+                model = get_model(config)
+                state.query_embedding = embed_single(model, embedding_input, "query")
+        except SearchTimeoutError:
+            raise
+        except Exception as exc:
+            # Embedding unavailable — BM25-only fallback
+            state.vector_unavailable = True
+            state.vector_unavailable_reason = f"{type(exc).__name__}: {exc}"
 
     # --- Stage 2: BM25 retrieval ---
     _set_stage("bm25")
@@ -765,10 +785,14 @@ def _run_output_stage(
             state.paginated, vector_unavailable=state.vector_unavailable
         )
 
-    # R4: search is read-only — access tracking stays off the search conn.
-    state.results = hydrate_results(
-        conn, state.paginated, explain=options.explain, track_access=False,
-    )
+    # R6: multistore defers hydration until after cross-store merge/truncate.
+    if options.defer_hydration:
+        state.results = _candidates_as_deferred_results(state.paginated)
+    else:
+        # R4: search is read-only — access tracking stays off the search conn.
+        state.results = hydrate_results(
+            conn, state.paginated, explain=options.explain, track_access=False,
+        )
 
     # --- Stage 11: Fuzzy fallback — only if primary search returned nothing ---
     # This is a last-resort safety net. If BM25 + vector + RRF all returned
@@ -778,14 +802,21 @@ def _run_output_stage(
         from memory_cli.search.fuzzy_fallback_levenshtein import fuzzy_search
         fuzzy_candidates = fuzzy_search(conn, options.query, limit=options.limit)
         if fuzzy_candidates:
-            state.results = hydrate_results(
-                conn, fuzzy_candidates, explain=False, track_access=False,
-            )
-            # Preserve fuzzy metadata through hydration
-            for result, candidate in zip(state.results, fuzzy_candidates):
-                result["match_type"] = "fuzzy"
-                result["fuzzy_score"] = candidate["fuzzy_score"]
-                result["fuzzy_matched_field"] = candidate["fuzzy_matched_field"]
+            if options.defer_hydration:
+                state.results = _candidates_as_deferred_results(fuzzy_candidates)
+                for result, candidate in zip(state.results, fuzzy_candidates):
+                    result["match_type"] = "fuzzy"
+                    result["fuzzy_score"] = candidate["fuzzy_score"]
+                    result["fuzzy_matched_field"] = candidate["fuzzy_matched_field"]
+            else:
+                state.results = hydrate_results(
+                    conn, fuzzy_candidates, explain=False, track_access=False,
+                )
+                # Preserve fuzzy metadata through hydration
+                for result, candidate in zip(state.results, fuzzy_candidates):
+                    result["match_type"] = "fuzzy"
+                    result["fuzzy_score"] = candidate["fuzzy_score"]
+                    result["fuzzy_matched_field"] = candidate["fuzzy_matched_field"]
             total = len(fuzzy_candidates)
 
     return SearchResultEnvelope(
@@ -797,6 +828,23 @@ def _run_output_stage(
         vector_unavailable_reason=state.vector_unavailable_reason,
         exit_code=0 if state.results else 1,
     )
+
+
+def _candidates_as_deferred_results(
+    candidates: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Return scored candidates without hydration (R6 multistore).
+
+    Copies each candidate and aliases final_score → score so the layered
+    handler can threshold/sort before hydrating the final page.
+    """
+    results: List[Dict[str, Any]] = []
+    for c in candidates:
+        row = dict(c)
+        if "score" not in row:
+            row["score"] = row.get("final_score", 0.0)
+        results.append(row)
+    return results
 
 
 def _record_latency(

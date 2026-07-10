@@ -1,0 +1,1 @@
+FB: fable R17 self-check — embed-once by config identity; hydrate final page only; single-store unchanged; no silent cross-model reuse

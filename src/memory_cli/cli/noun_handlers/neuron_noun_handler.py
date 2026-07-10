@@ -19,7 +19,7 @@
 from __future__ import annotations
 
 import logging
-from typing import List, Any, Optional
+from typing import Any, Dict, List, Optional
 
 from memory_cli.cli.entrypoint_and_argv_dispatch import register_noun
 
@@ -430,37 +430,126 @@ def handle_search(args: List[str], global_flags: Any) -> Any:
         # Use with_config variant so each store's resolved config is threaded into
         # light_search — prevents bare load_config() from ignoring --global flag.
         connections = get_layered_connections_with_config(global_flags)
-        all_results = []
+        from memory_cli.search import light_search, SearchOptions
+        from memory_cli.search import light_search_pipeline_orchestrator as _orch
+        from memory_cli.search.light_search_pipeline_orchestrator import SearchTimeoutError
+
+        # ------------------------------------------------------------------
+        # R6 multistore efficiency (NEW-3):
+        # 1) embed query ONCE per embed-config identity, reuse across stores
+        # 2) defer hydration → merge/sort/truncate → hydrate only final page
+        # Differing embed configs fall back to per-store embed (never reuse
+        # a vector across mismatched models).
+        # Single-store keeps the prior full light_search path (no behavior change).
+        # ------------------------------------------------------------------
+        multi = len(connections) > 1
+        # Cache: embed-config key → vector | None (failed). Keyed by
+        # (model_path, dims) so same-model stores share one embed call.
+        embed_cache: Dict[tuple, Optional[List[float]]] = {}
+
+        def _embed_identity(config: Any) -> tuple:
+            emb = getattr(config, "embedding", None)
+            if emb is None:
+                return ("__id__", id(config))
+            return (
+                getattr(emb, "model_path", None),
+                getattr(emb, "dims", None),
+            )
+
+        def _resolve_query_embedding(config: Any) -> Optional[List[float]]:
+            """Embed once per config identity via the daemon-client seam."""
+            key = _embed_identity(config)
+            if key in embed_cache:
+                return embed_cache[key]
+            try:
+                from memory_cli.embedding.embedding_daemon_client import (
+                    embed as daemon_embed,
+                )
+                from memory_cli.embedding import build_embedding_input
+                inp = build_embedding_input(query, [])
+                vectors = daemon_embed([inp], "query", config)
+                vec = vectors[0] if vectors else None
+            except Exception:
+                vec = None
+            embed_cache[key] = vec
+            return vec
+
+        pending: List[Dict[str, Any]] = []  # unhydrated candidates + store refs
         total = 0
         vector_unavailable = False
         vector_unavailable_reason: Optional[str] = None
-        from memory_cli.search import light_search, SearchOptions
-        from memory_cli.search.light_search_pipeline_orchestrator import SearchTimeoutError
+
         for conn, config, scope in connections:
             options = SearchOptions(
                 query=query, limit=limit,
                 ntype=ntype, tags=[tag] if tag else [],
                 semantic=semantic,
                 timeout_s=timeout_s,
+                defer_hydration=multi,
             )
+            # Facet fast-path needs no embed; full path gets precomputed vector
+            # when multi-store so the daemon embed seam fires once per identity.
+            use_facet = bool((ntype or tag) and not semantic)
+            if multi and not use_facet:
+                options.embedding_provided = True
+                options.query_embedding = _resolve_query_embedding(config)
+
             envelope = light_search(conn, options, config=config)
             results = envelope.results
             if threshold > 0.0:
                 results = [r for r in results if r.get("score", 0) >= threshold]
-            all_results.extend(scope_list(results, scope, "neuron"))
+
+            if multi:
+                for r in results:
+                    row = dict(r)
+                    row["_scope"] = scope
+                    row["_conn"] = conn
+                    pending.append(row)
+            else:
+                pending.extend(scope_list(results, scope, "neuron"))
+
             total += envelope.total_before_pagination
             if envelope.vector_unavailable:
                 vector_unavailable = True
                 if envelope.vector_unavailable_reason and vector_unavailable_reason is None:
                     vector_unavailable_reason = envelope.vector_unavailable_reason
+
         # Re-sort merged results by score descending so global high-relevance
         # results rank above local low-relevance ones.
-        all_results.sort(key=lambda r: r.get("score", 0), reverse=True)
+        pending.sort(key=lambda r: r.get("score", 0), reverse=True)
+        top = pending[:limit]
+
+        if multi:
+            # Hydrate only the final page, grouped by source store conn.
+            # Import hydrate_results via the orchestrator module so R6 reds that
+            # patch light_search_pipeline_orchestrator.hydrate_results bind here.
+            by_conn: Dict[int, List[tuple]] = {}
+            for idx, cand in enumerate(top):
+                cid = id(cand["_conn"])
+                by_conn.setdefault(cid, []).append((idx, cand))
+
+            hydrated_slots: List[Optional[Dict[str, Any]]] = [None] * len(top)
+            for group in by_conn.values():
+                conn = group[0][1]["_conn"]
+                clean = [
+                    {k: v for k, v in c.items() if not k.startswith("_")}
+                    for _, c in group
+                ]
+                hydrated = _orch.hydrate_results(
+                    conn, clean, explain=False, track_access=False,
+                )
+                for (idx, cand), h in zip(group, hydrated):
+                    scoped = scope_list([h], cand["_scope"], "neuron")[0]
+                    hydrated_slots[idx] = scoped
+            all_results = [r for r in hydrated_slots if r is not None]
+        else:
+            all_results = top
+
         if not verbose:
             all_results = [lean_search_result(r) for r in all_results]
         return Result(
             status="ok",
-            data=all_results[:limit],
+            data=all_results,
             meta={
                 "query": query,
                 "total": total,
