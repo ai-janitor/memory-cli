@@ -207,11 +207,71 @@ since the daemon is now the single embed path.)
   embed-inference vs bm25 vs vector (currently lumped) so the daemon win is
   provable, not inferred from p95 alone.
 
+## Seam rulings (post tester-reds, 2026-07-10 — names the ADR-left-unnamed)
+
+Tester reds landed (commit 5f74202, 13 RED). 4 seam gaps ruled; tester
+assumptions ADOPTED AS-IS (zero test edits). This section seals the names.
+
+### R1 — config schema gains 4 daemon fields (coder adds)
+
+`EmbeddingConfig` + `CONFIG_DEFAULTS["embedding"]` + `VALIDATION_RULES` +
+`dict_to_config_schema` gain (ADR left these "configurable" but unnamed):
+
+| dotted path | type | default | constraint | consumer |
+|---|---|---|---|---|
+| `embedding.daemon_embed_timeout_s` | float | 30.0 | min_exclusive 0 | CLIENT embed timeout (AC8) |
+| `embedding.daemon_connect_timeout_s` | float | 2.0 | min_exclusive 0 | CLIENT connect timeout |
+| `embedding.daemon_idle_timeout_s` | float | 600.0 | min_exclusive 0 | DAEMON idle shutdown (AC6) |
+| `embedding.daemon_n_threads` | int | 4 | min 1 | DAEMON thread cap (n_threads + n_threads_batch, NOT cpu_count) |
+
+Env-override channel (daemon process; single helper `_env_or_config(env, cfg_val)`,
+order env > config > default): `MEMORY_EMBED_TIMEOUT_S`,
+`MEMORY_EMBED_IDLE_TIMEOUT_S`, `MEMORY_EMBED_N_THREADS`. Config is canonical;
+env is ops/test override. (Codebase has no prior env-override pattern; this
+introduces it minimally for the 3 daemon tunables only.)
+
+### R2 — AC8 embed-timeout key name
+
+RULE: `config.embedding.daemon_embed_timeout_s` (tester's assumed name).
+Match landed red's `hasattr(cfg.embedding, "daemon_embed_timeout_s")` guard
++ monkeypatch. Adopted. NO test change.
+
+### R3 — AC6 idle-timeout override channel
+
+RULE: env `MEMORY_EMBED_IDLE_TIMEOUT_S` overrides `embedding.daemon_idle_timeout_s`.
+Matches landed red's `monkeypatch.setenv("MEMORY_EMBED_IDLE_TIMEOUT_S", "1")`.
+Adopted. NO test change.
+
+### R4 — daemon server module + embed API
+
+RULE: `memory_cli.embedding.embedding_daemon_server` (FLAT module, parallel to
+`embedding_daemon_client` — supersedes the ADR's earlier "daemon/ package"
+wording; single module is enough now, package only if it grows).
+Embed API: `embed_texts(texts: list[str], op_type: str) -> list[list[float]]`
+(reuses `embed_batch` verbatim → AC9 parity holds by construction, INV-2).
+Matches landed red's `srv.embed_texts([text], "query")[0]`. Adopted. NO test change.
+
+### R5 — client return shape
+
+RULE: `embedding_daemon_client.embed(texts, op_type, config) -> list[list[float]]`
+ALWAYS batch shape (one vec per input text; `texts` always `list[str]`).
+Single-query path: `client.embed([q], "query", cfg)[0]`.
+Batch/reembed path: `client.embed(texts, "index", cfg)`.
+Canonical = batch (consistent with `embed_batch`, unambiguous, matches the
+integration test's `[[0.0]*768]` mock). The acceptance `_first_vec` helper
+tolerates both but coder implements batch. NO test change.
+
+### Net effect on tasks
+
+- Tester (task-e806361d): assumptions correct, reds STAND AS-IS. No alignment.
+- Coder (task-3b814039): ADD the 4 config fields (R1) + build to R2-R5 names.
+  Module = `embedding_daemon_server`; client = `embedding_daemon_client`;
+  both return `list[list[float]]`.
+
 ## Pipeline / next actions (architect seals, then hands off)
 
-1. THIS ADR = sealed contract (protocol + lifecycle + fallback + ACs).
-2. Tester writes reds from AC1-AC9 (tester-first; coder may not edit tests).
-3. Coder builds daemon + client against the capability map, in assigned files.
+1. THIS ADR = sealed contract (protocol + lifecycle + fallback + ACs + seam rulings).
+2. Tester reds LANDED (5f74202, 13 RED) — stand as-is.
+3. Coder builds daemon + client against the capability map + seam rulings, in assigned files.
 4. Reviewer gate: R17 + this ADR's AC matrix live-path proof.
-5. Interim (parallel, 1-day): coder mmap-measure sub-task (informs mlock
-   default).
+5. Interim (parallel, 1-day): coder mmap-measure sub-task (informs mlock default).
