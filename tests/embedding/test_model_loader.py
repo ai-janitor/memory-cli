@@ -156,6 +156,7 @@ class TestConfigParams:
             n_ctx=2048,
             n_batch=512,
             verbose=False,
+            use_mmap=True,  # R1 (ADR 0001, 8803a8c): warm-model mmap default
         )
 
     # --- Test: custom config values are passed through ---
@@ -177,6 +178,7 @@ class TestConfigParams:
             n_ctx=4096,
             n_batch=1024,
             verbose=False,
+            use_mmap=True,  # R1 (ADR 0001, 8803a8c): warm-model mmap default
         )
 
     # --- Test: model_path from config is passed as string ---
