@@ -27,6 +27,7 @@ from unittest.mock import patch
 
 import pytest
 
+from memory_cli.config import load_config
 from memory_cli.search.light_search_pipeline_orchestrator import (
     light_search,
     SearchOptions,
@@ -83,7 +84,7 @@ class TestAC1TypeFilterCorrectness:
         memory_match = _add(conn, "random build note about verify verbs", ntype="memory")
 
         options = SearchOptions(query="verify", ntype="lesson")
-        envelope = light_search(conn, options)
+        envelope = light_search(conn, options, config=load_config())
 
         ids = {r["id"] for r in envelope.results}
         assert ids == {lesson_match}
@@ -104,7 +105,7 @@ class TestAC2NoModelLoad:
             "memory_cli.search.light_search_pipeline_orchestrator.get_model"
         ) as mock_get_model:
             options = SearchOptions(query="verify", ntype="lesson")
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
 
         mock_get_model.assert_not_called()
         assert envelope.facet_fast is True
@@ -122,7 +123,7 @@ class TestAC3TagFacet:
         review_only = _add(conn, "n3 has review only", tags=["review"])
 
         options = SearchOptions(query="", tags=["urgent", "review"], tag_mode="AND")
-        envelope = light_search(conn, options)
+        envelope = light_search(conn, options, config=load_config())
 
         ids = {r["id"] for r in envelope.results}
         assert ids == {both}
@@ -136,7 +137,7 @@ class TestAC3TagFacet:
         neither = _add(conn, "n4 has neither tag", tags=["other"])
 
         options = SearchOptions(query="", tags=["urgent", "review"], tag_mode="OR")
-        envelope = light_search(conn, options)
+        envelope = light_search(conn, options, config=load_config())
 
         ids = {r["id"] for r in envelope.results}
         assert ids == {both, urgent_only, review_only}
@@ -154,7 +155,7 @@ class TestAC4TypeAndTagIntersection:
         memory_urgent = _add(conn, "memory urgent one", ntype="memory", tags=["urgent"])
 
         options = SearchOptions(query="", ntype="lesson", tags=["urgent"])
-        envelope = light_search(conn, options)
+        envelope = light_search(conn, options, config=load_config())
 
         ids = {r["id"] for r in envelope.results}
         assert ids == {lesson_urgent}
@@ -172,7 +173,7 @@ class TestAC5NonFacetStillEmbeds:
 
         with _get_model_patch() as mock_get_model:
             options = SearchOptions(query="python", fan_out_depth=0)
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
 
         mock_get_model.assert_called()
         assert envelope.facet_fast is False
@@ -198,7 +199,7 @@ class TestAC6EmptyQueryRecency:
             "memory_cli.search.light_search_pipeline_orchestrator.get_model"
         ) as mock_get_model:
             options = SearchOptions(query="", ntype="lesson")
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
 
         mock_get_model.assert_not_called()
         assert envelope.exit_code == 0
@@ -215,7 +216,7 @@ class TestAC7SemanticOptOut:
 
         with _get_model_patch() as mock_get_model:
             options = SearchOptions(query="verify", ntype="lesson", semantic=True, fan_out_depth=0)
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
 
         mock_get_model.assert_called()
         assert envelope.facet_fast is False

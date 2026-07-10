@@ -28,6 +28,7 @@ from unittest.mock import patch
 import pytest
 
 from memory_cli.search.fuzzy_fallback_levenshtein import fuzzy_search, _fuzzy_ratio
+from memory_cli.config import load_config
 from memory_cli.search.light_search_pipeline_orchestrator import (
     light_search,
     SearchOptions,
@@ -274,7 +275,7 @@ class TestFuzzyFallbackInPipeline:
             "memory_cli.search.light_search_pipeline_orchestrator.get_model",
             side_effect=FileNotFoundError,
         ):
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
         # Should find results via fuzzy fallback
         assert len(envelope.results) > 0
         assert envelope.exit_code == 0
@@ -293,7 +294,7 @@ class TestFuzzyFallbackInPipeline:
             "memory_cli.search.light_search_pipeline_orchestrator.get_model",
             side_effect=FileNotFoundError,
         ):
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
         # Results should be direct_match, not fuzzy
         assert len(envelope.results) > 0
         for r in envelope.results:
@@ -308,7 +309,7 @@ class TestFuzzyFallbackInPipeline:
             "memory_cli.search.light_search_pipeline_orchestrator.get_model",
             side_effect=FileNotFoundError,
         ):
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
         assert len(envelope.results) > 0
         for r in envelope.results:
             assert "id" in r

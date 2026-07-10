@@ -122,6 +122,8 @@ Inputs: `docs/perf-fix-plan.md`, `docs/performance-analysis.md`,
 
 ## R5 — Model resolution correctness (#66 + #67)
 
+- STATUS: **SHIPPED** (2026-07-10; `tests/search/test_r5_model_resolution.py` 3/3). Bare load_config fallback killed; config required on embed path. Central resolution guards retained.
+
 - WHAT: central `~/.memory/models/default.gguf` resolution (shipped in
   loader, `model_loader_lazy_singleton.py:74-94`) + kill remaining bare
   `load_config()` fallback in `_run_retrieval_stage`
@@ -171,7 +173,7 @@ Inputs: `docs/perf-fix-plan.md`, `docs/performance-analysis.md`,
 | 3 | R4 read-only search (4 sub-fixes) | quick win | coder | ✅ SHIPPED `903c462` |
 | 4 | R1 embedding daemon | architecture | architect | ✅ SHIPPED `8803a8c` |
 | 5 | R6 multi-store single-embed | small | coder (with R1) | ✅ SHIPPED |
-| 6 | R5 close #66/#67 | correctness | coder | ⬜ pending |
+| 6 | R5 close #66/#67 | correctness | coder | ✅ SHIPPED |
 
 One-liner: R1 + R2 kill both the 25 s tail and the concurrency DoS;
 R3/R4 make the fleet safe while R1 is built; the rest is hygiene or later.

@@ -37,6 +37,7 @@ from memory_cli.db.connection_setup_wal_fk_busy import open_connection
 from memory_cli.db.extension_loader_sqlite_vec import load_and_verify_extensions
 from memory_cli.db.migration_runner_single_transaction import run_pending_migrations
 from memory_cli.neuron import neuron_add
+from memory_cli.config import load_config
 from memory_cli.search.light_search_pipeline_orchestrator import light_search, SearchOptions
 
 # Persistent-write statements (temp objects explicitly excluded — a read path
@@ -87,7 +88,7 @@ class TestFullSearchIsReadOnly:
         c = open_connection(store_path)
         c.set_trace_callback(stmts.append)
         load_and_verify_extensions(c)          # (4) probe DDL must be gone
-        light_search(c, SearchOptions(query="python", fan_out_depth=0))
+        light_search(c, SearchOptions(query="python", fan_out_depth=0), config=load_config())
         c.close()
 
         writes = _persistent_writes(stmts)
@@ -140,7 +141,7 @@ class TestLatencyOffSearchConnection:
         c = open_connection(store_path)
         c.set_trace_callback(stmts.append)
         load_and_verify_extensions(c)
-        light_search(c, SearchOptions(query="python", fan_out_depth=0))
+        light_search(c, SearchOptions(query="python", fan_out_depth=0), config=load_config())
         c.close()
         latency_writes = [s for s in stmts if "search_latency" in s.lower()
                           and _WRITE_RE.match(s)]
@@ -160,7 +161,7 @@ class TestFacetLaneReadOnly:
         c = open_connection(store_path)
         c.set_trace_callback(stmts.append)
         load_and_verify_extensions(c)
-        env = light_search(c, SearchOptions(query="python", ntype="note"))
+        env = light_search(c, SearchOptions(query="python", ntype="note"), config=load_config())
         in_txn = c.in_transaction
         c.close()
         writes = _persistent_writes(stmts)
@@ -183,7 +184,7 @@ class TestReadOnlyConnectionSearch:
             # UPDATE → "attempt to write a readonly database"; load_and_verify
             # re-wraps that as RuntimeError. A true read-only search must succeed.
             load_and_verify_extensions(ro)
-            env = light_search(ro, SearchOptions(query="python", ntype="note"))
+            env = light_search(ro, SearchOptions(query="python", ntype="note"), config=load_config())
             assert env.exit_code == 0
         except (sqlite3.OperationalError, RuntimeError) as e:
             pytest.fail(f"search wrote to a read-only connection (R4 not read-only): {e}")
@@ -213,7 +214,7 @@ class TestConcurrentReadOnlySearches:
                 load_and_verify_extensions(ro)
                 barrier.wait(timeout=10)
                 for _ in range(5):
-                    light_search(ro, SearchOptions(query="python", ntype="note"))
+                    light_search(ro, SearchOptions(query="python", ntype="note"), config=load_config())
                 ro.close()
             except (sqlite3.OperationalError, RuntimeError) as e:
                 # RuntimeError = load_and_verify re-wrap of the readonly-write error.

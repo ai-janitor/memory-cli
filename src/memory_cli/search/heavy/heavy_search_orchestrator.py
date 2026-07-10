@@ -226,7 +226,8 @@ def _run_light_search_phase(
         tags=tag_filter or [],
         semantic=True,  # heavy = full semantic pipeline; keep tag-scoped subqueries off the facet fast-path (INV-B, MEM-FIX-0007)
     )
-    return light_search(conn, options)
+    # R5: config required — no bare load_config() in retrieval stage.
+    return light_search(conn, options, config=config)
 
 
 def _run_haiku_rerank_phase(
@@ -334,7 +335,8 @@ def _run_haiku_expansion_phase(
             tags=tag_filter or [],
             semantic=True,  # heavy = full semantic pipeline; keep tag-scoped subqueries off the facet fast-path (INV-B, MEM-FIX-0007)
         )
-        term_results = light_search(conn, options)
+        # R5: config required — no bare load_config() in retrieval stage.
+        term_results = light_search(conn, options, config=config)
         all_expansion_results.extend(term_results.results)
 
     return all_expansion_results

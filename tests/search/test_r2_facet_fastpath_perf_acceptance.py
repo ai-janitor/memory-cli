@@ -39,6 +39,7 @@ pytest.importorskip(
 from memory_cli.db.connection_setup_wal_fk_busy import open_connection
 from memory_cli.db.extension_loader_sqlite_vec import load_and_verify_extensions
 from memory_cli.db.migration_runner_single_transaction import run_pending_migrations
+from memory_cli.config import load_config
 from memory_cli.search.light_search_pipeline_orchestrator import (
     light_search,
     SearchOptions,
@@ -96,7 +97,7 @@ class TestZeroLlamaConstruction:
 
         with patch("llama_cpp.Llama") as mock_llama:
             options = SearchOptions(query="verify", ntype="lesson", limit=8)
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
 
         assert mock_llama.call_count == 0, (
             f"facet gate-lookup constructed {mock_llama.call_count} Llama model(s); "
@@ -149,7 +150,7 @@ class TestFacetFastPathRecordsLatency:
 
         with patch("llama_cpp.Llama") as mock_llama:
             options = SearchOptions(query="verify", ntype="lesson", limit=8)
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
 
         assert envelope.facet_fast is True  # confirm the fast-path served it
         assert mock_llama.call_count == 0    # ...and did so with zero model load
@@ -182,7 +183,7 @@ class TestGateLookupPerfSmoke:
             for _ in range(5):
                 t0 = time.perf_counter()
                 options = SearchOptions(query="verify", ntype="lesson", limit=8)
-                envelope = light_search(conn, options)
+                envelope = light_search(conn, options, config=load_config())
                 elapsed_ms = (time.perf_counter() - t0) * 1000
                 best_ms = elapsed_ms if best_ms is None else min(best_ms, elapsed_ms)
 

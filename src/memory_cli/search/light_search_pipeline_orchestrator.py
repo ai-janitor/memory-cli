@@ -251,6 +251,12 @@ def light_search(
 
     This is the main entry point for `memory neuron search <query>`.
 
+    R5: ``config`` is required on the embedding path (non-facet, no
+    precomputed ``options.query_embedding``). Passing ``config=None`` raises
+    ``ValueError`` — the bare ``load_config()`` fallback is gone (it silently
+    resolved the wrong store's model). Facet fast-path and
+    ``embedding_provided`` paths do not need config.
+
     Logic flow:
     1. QUERY EMBEDDING — embed query with "search_query:" prefix.
        - Call embedding module with search prefix.
@@ -372,6 +378,10 @@ def light_search(
     except SearchTimeoutError:
         # R3: re-raise so the CLI handler can emit a structured error (exit != 0)
         # naming the stage. Do NOT swallow into a soft exit_code=2 envelope.
+        raise
+    except ValueError:
+        # R5: config-required (and other ValueErrors) must surface — never soft
+        # exit_code=2 (that was the silent-wrong-store failure mode).
         raise
     except Exception:
         # Database or pipeline error → exit code 2
@@ -648,6 +658,9 @@ def _run_retrieval_stage(
     # R3 reds patch THIS module's get_model/embed_single — when get_model is
     # not the real loader (tests), take the inproc path so patches bind.
     # R6: when embedding_provided, reuse caller vector (embed-once across stores).
+    # R5: config is REQUIRED on the embed path — bare load_config() fallback
+    # removed (silent wrong-store model → dead vector). Raise explicit error
+    # OUTSIDE the BM25-only swallow so callers cannot miss it.
     # SearchTimeoutError must propagate (not swallowed into BM25-only).
     _set_stage("embed")
     if options.embedding_provided:
@@ -657,12 +670,15 @@ def _run_retrieval_stage(
             state.vector_unavailable = True
             state.vector_unavailable_reason = "precomputed embedding unavailable"
     else:
+        if config is None:
+            raise ValueError(
+                "light_search requires config for embedding; "
+                "thread the store-resolved config "
+                "(R5: bare load_config() fallback removed)"
+            )
         try:
             if not _EMBEDDING_AVAILABLE or get_model is None:
                 raise RuntimeError("Embedding package not available")
-            if config is None:
-                from memory_cli.config import load_config
-                config = load_config()
             embedding_input = build_embedding_input(options.query, [])
             use_daemon = (
                 _model_loader is not None

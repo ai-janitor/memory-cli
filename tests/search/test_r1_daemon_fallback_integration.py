@@ -24,6 +24,7 @@ pytest.importorskip("sqlite_vec", reason="sqlite_vec required for search path")
 from memory_cli.db.connection_setup_wal_fk_busy import open_connection
 from memory_cli.db.extension_loader_sqlite_vec import load_and_verify_extensions
 from memory_cli.db.migration_runner_single_transaction import run_pending_migrations
+from memory_cli.config import load_config
 from memory_cli.search.light_search_pipeline_orchestrator import (
     light_search,
     SearchOptions,
@@ -62,7 +63,7 @@ class TestSearchSeamRoutesThroughDaemonClient:
             return_value=[[0.0] * 768],
         ) as mock_embed:
             options = SearchOptions(query="python", fan_out_depth=0)
-            light_search(conn, options)
+            light_search(conn, options, config=load_config())
         assert mock_embed.called, (
             "orchestrator did not route the query embed through "
             "embedding_daemon_client.embed (seam not wired)"
@@ -87,7 +88,7 @@ class TestFallbackTotalityINV3:
             side_effect=RuntimeError("daemon exploded"),
         ):
             options = SearchOptions(query="verbs", fan_out_depth=0)
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
         assert envelope.exit_code == 0, (
             "daemon failure broke search — INV-3 fallback is not total"
         )

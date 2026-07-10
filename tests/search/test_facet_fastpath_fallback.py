@@ -27,6 +27,7 @@ from unittest.mock import patch
 
 import pytest
 
+from memory_cli.config import load_config
 from memory_cli.search.light_search_pipeline_orchestrator import (
     light_search,
     SearchOptions,
@@ -90,7 +91,7 @@ class TestAC1TierTwoOrJoin:
         unrelated = _add(conn, "lesson: totally different content here", ntype="lesson")
 
         options = SearchOptions(query="verify on live path", ntype="lesson")
-        envelope = light_search(conn, options)
+        envelope = light_search(conn, options, config=load_config())
 
         ids = {r["id"] for r in envelope.results}
         assert ids, "facet has 3 rows but AND-only match would return 0 (the bug)"
@@ -114,7 +115,7 @@ class TestAC2TierThreeRecencyFallback:
         conn.commit()
 
         options = SearchOptions(query="zzzznomatch qqqqnotfound", ntype="lesson")
-        envelope = light_search(conn, options)
+        envelope = light_search(conn, options, config=load_config())
 
         assert envelope.exit_code == 0
         ids = [r["id"] for r in envelope.results]
@@ -132,7 +133,7 @@ class TestAC3TierOneRegressionGuard:
         lesson_no_match = _add(conn, "lesson: dump facts in briefs", ntype="lesson")
 
         options = SearchOptions(query="verify on live path", ntype="lesson")
-        envelope = light_search(conn, options)
+        envelope = light_search(conn, options, config=load_config())
 
         ids = [r["id"] for r in envelope.results]
         assert ids == [lesson_match]
@@ -153,7 +154,7 @@ class TestAC4NoModelLoadOnAnyTier:
             "memory_cli.search.light_search_pipeline_orchestrator.get_model"
         ) as mock_get_model:
             options = SearchOptions(query="verify on live path", ntype="lesson")
-            light_search(conn, options)
+            light_search(conn, options, config=load_config())
 
         mock_get_model.assert_not_called()
 
@@ -164,7 +165,7 @@ class TestAC4NoModelLoadOnAnyTier:
             "memory_cli.search.light_search_pipeline_orchestrator.get_model"
         ) as mock_get_model:
             options = SearchOptions(query="zzzznomatch qqqqnotfound", ntype="lesson")
-            light_search(conn, options)
+            light_search(conn, options, config=load_config())
 
         mock_get_model.assert_not_called()
 
@@ -175,7 +176,7 @@ class TestAC4NoModelLoadOnAnyTier:
             "memory_cli.search.light_search_pipeline_orchestrator.get_model"
         ) as mock_get_model:
             options = SearchOptions(query="verify on live path", ntype="lesson")
-            light_search(conn, options)
+            light_search(conn, options, config=load_config())
 
         mock_get_model.assert_not_called()
 
@@ -191,7 +192,7 @@ class TestAC5EmptyFacetUnchanged:
         _add(conn, "memory: something unrelated", ntype="memory")
 
         options = SearchOptions(query="verify on live path", ntype="lesson")
-        envelope = light_search(conn, options)
+        envelope = light_search(conn, options, config=load_config())
 
         assert envelope.results == []
         assert envelope.exit_code == 1
@@ -217,7 +218,7 @@ class TestAC6EmptyQueryRecencyUnchanged:
             "memory_cli.search.light_search_pipeline_orchestrator.get_model"
         ) as mock_get_model:
             options = SearchOptions(query="", ntype="lesson")
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
 
         mock_get_model.assert_not_called()
         assert envelope.exit_code == 0

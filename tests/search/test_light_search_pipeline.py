@@ -30,6 +30,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
+from memory_cli.config import load_config
 from memory_cli.search.light_search_pipeline_orchestrator import (
     light_search,
     SearchOptions,
@@ -142,7 +143,7 @@ class TestLightSearchFullPipeline:
         # Mock embedding to fail (BM25-only mode for reliable testing)
         with patch("memory_cli.search.light_search_pipeline_orchestrator.get_model",
                    side_effect=FileNotFoundError):
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
         assert len(envelope.results) > 0
         assert envelope.exit_code == 0
 
@@ -156,7 +157,7 @@ class TestLightSearchFullPipeline:
         options = SearchOptions(query="python", fan_out_depth=0)
         with patch("memory_cli.search.light_search_pipeline_orchestrator.get_model",
                    side_effect=FileNotFoundError):
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
         required_fields = {
             "id", "content", "created_at", "updated_at", "project", "source",
             "status", "tags", "match_type", "hop_distance", "edge_reason", "score"
@@ -171,7 +172,7 @@ class TestLightSearchFullPipeline:
         options = SearchOptions(query="python", fan_out_depth=0)
         with patch("memory_cli.search.light_search_pipeline_orchestrator.get_model",
                    side_effect=FileNotFoundError):
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
         scores = [r["score"] for r in envelope.results]
         assert scores == sorted(scores, reverse=True)
 
@@ -185,7 +186,7 @@ class TestLightSearchFullPipeline:
         options = SearchOptions(query="python", fan_out_depth=0)
         with patch("memory_cli.search.light_search_pipeline_orchestrator.get_model",
                    side_effect=FileNotFoundError):
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
         # With fan_out_depth=0, no edge-based fan_out; direct_match and tag_affinity are valid
         for r in envelope.results:
             assert r["match_type"] in ("direct_match", "tag_affinity")
@@ -196,7 +197,7 @@ class TestLightSearchFullPipeline:
         options = SearchOptions(query="python", fan_out_depth=1)
         with patch("memory_cli.search.light_search_pipeline_orchestrator.get_model",
                    side_effect=FileNotFoundError):
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
         fan_out_results = [r for r in envelope.results if r["match_type"] == "fan_out"]
         for r in fan_out_results:
             assert r["hop_distance"] > 0
@@ -209,7 +210,7 @@ class TestLightSearchFullPipeline:
         options = SearchOptions(query="python", limit=2, offset=0, fan_out_depth=0)
         with patch("memory_cli.search.light_search_pipeline_orchestrator.get_model",
                    side_effect=FileNotFoundError):
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
         assert envelope.limit == 2
         assert envelope.offset == 0
         assert isinstance(envelope.total_before_pagination, int)
@@ -232,7 +233,7 @@ class TestLightSearchBM25OnlyFallback:
         options = SearchOptions(query="python", fan_out_depth=0)
         with patch("memory_cli.search.light_search_pipeline_orchestrator.get_model",
                    side_effect=FileNotFoundError):
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
         assert len(envelope.results) > 0
         assert envelope.vector_unavailable is True
 
@@ -242,7 +243,7 @@ class TestLightSearchBM25OnlyFallback:
         options = SearchOptions(query="python", fan_out_depth=0)
         with patch("memory_cli.search.light_search_pipeline_orchestrator.get_model",
                    side_effect=FileNotFoundError):
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
         assert envelope.vector_unavailable is True
 
     def test_bm25_only_results_have_no_vector_scores(self, search_db):
@@ -252,7 +253,7 @@ class TestLightSearchBM25OnlyFallback:
         options = SearchOptions(query="python", fan_out_depth=0, explain=True)
         with patch("memory_cli.search.light_search_pipeline_orchestrator.get_model",
                    side_effect=FileNotFoundError):
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
         for r in envelope.results:
             if "score_breakdown" in r:
                 assert r["score_breakdown"]["vector_distance"] is None
@@ -299,7 +300,7 @@ class TestLightSearchBM25OnlyFallback:
             "memory_cli.search.light_search_pipeline_orchestrator.get_model",
             side_effect=FileNotFoundError("Model not available"),
         ):
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
         assert envelope.vector_unavailable is True
         assert envelope.vector_unavailable_reason == "FileNotFoundError: Model not available"
 
@@ -309,7 +310,7 @@ class TestLightSearchBM25OnlyFallback:
         options = SearchOptions(query="python", fan_out_depth=0)
         # No patch — let embedding fail naturally (model likely absent in CI);
         # but if vector_unavailable is False the reason must be None.
-        envelope = light_search(conn, options)
+        envelope = light_search(conn, options, config=load_config())
         if not envelope.vector_unavailable:
             assert envelope.vector_unavailable_reason is None
 
@@ -331,7 +332,7 @@ class TestLightSearchEmptyResults:
                                 fan_out_depth=0)
         with patch("memory_cli.search.light_search_pipeline_orchestrator.get_model",
                    side_effect=FileNotFoundError):
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
         assert envelope.exit_code == 1
 
     def test_no_match_returns_empty_results_list(self, search_db):
@@ -341,7 +342,7 @@ class TestLightSearchEmptyResults:
                                 fan_out_depth=0)
         with patch("memory_cli.search.light_search_pipeline_orchestrator.get_model",
                    side_effect=FileNotFoundError):
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
         assert envelope.results == []
 
     def test_empty_query_returns_exit_code_1(self, search_db):
@@ -350,7 +351,7 @@ class TestLightSearchEmptyResults:
         options = SearchOptions(query="", fan_out_depth=0)
         with patch("memory_cli.search.light_search_pipeline_orchestrator.get_model",
                    side_effect=FileNotFoundError):
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
         assert envelope.exit_code == 1
 
 
@@ -370,7 +371,7 @@ class TestLightSearchErrorHandling:
         conn = sqlite3.connect(":memory:")
         conn.close()  # Close the connection to force error
         options = SearchOptions(query="python", fan_out_depth=0)
-        envelope = light_search(conn, options)
+        envelope = light_search(conn, options, config=load_config())
         assert envelope.exit_code == 2
 
 
@@ -405,7 +406,7 @@ class TestSearchOptionsAndEnvelope:
         options_all = SearchOptions(query="python", limit=100, offset=0, fan_out_depth=0)
         with patch("memory_cli.search.light_search_pipeline_orchestrator.get_model",
                    side_effect=FileNotFoundError):
-            envelope_all = light_search(conn, options_all)
+            envelope_all = light_search(conn, options_all, config=load_config())
 
         if len(envelope_all.results) < 2:
             pytest.skip("Not enough results to test pagination")
@@ -414,14 +415,14 @@ class TestSearchOptionsAndEnvelope:
         options_p1 = SearchOptions(query="python", limit=1, offset=0, fan_out_depth=0)
         with patch("memory_cli.search.light_search_pipeline_orchestrator.get_model",
                    side_effect=FileNotFoundError):
-            envelope_p1 = light_search(conn, options_p1)
+            envelope_p1 = light_search(conn, options_p1, config=load_config())
         assert len(envelope_p1.results) <= 1
 
         # Get second page
         options_p2 = SearchOptions(query="python", limit=1, offset=1, fan_out_depth=0)
         with patch("memory_cli.search.light_search_pipeline_orchestrator.get_model",
                    side_effect=FileNotFoundError):
-            envelope_p2 = light_search(conn, options_p2)
+            envelope_p2 = light_search(conn, options_p2, config=load_config())
         # Pages should have different results
         if len(envelope_p1.results) == 1 and len(envelope_p2.results) == 1:
             assert envelope_p1.results[0]["id"] != envelope_p2.results[0]["id"]
@@ -437,7 +438,7 @@ class TestSearchOptionsAndEnvelope:
         options = SearchOptions(query="python", fan_out_depth=0, explain=True)
         with patch("memory_cli.search.light_search_pipeline_orchestrator.get_model",
                    side_effect=FileNotFoundError):
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
         expected_breakdown_fields = {
             "bm25_raw", "bm25_normalized", "bm25_rank",
             "vector_distance", "vector_rank",
@@ -466,7 +467,7 @@ class TestSearchOptionsAndEnvelope:
         )
         with patch("memory_cli.search.light_search_pipeline_orchestrator.get_model",
                    side_effect=FileNotFoundError):
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
         # All results should have the python tag
         for r in envelope.results:
             assert "python" in r["tags"]
@@ -481,6 +482,6 @@ class TestSearchOptionsAndEnvelope:
         options = SearchOptions(query="python", fan_out_depth=0)
         with patch("memory_cli.search.light_search_pipeline_orchestrator.get_model",
                    side_effect=FileNotFoundError):
-            envelope = light_search(conn, options)
+            envelope = light_search(conn, options, config=load_config())
         for r in envelope.results:
             assert r["match_type"] in ("direct_match", "tag_affinity")
