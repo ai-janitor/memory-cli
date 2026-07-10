@@ -3,7 +3,7 @@ type: reference
 title: Query/search perf — detailed boost recommendations (ranked)
 description: Where the big wins are, merged from perf-fix-plan.md, perf-second-look-findings.md, and backlog (#72 #66 #67 #35). Each item = what/why/how/acceptance/effort. Author = yoda (recon), for grok-commander.
 tags: [performance, search, latency, recommendations, backlog]
-timestamp: 2026-07-09
+timestamp: 2026-07-10
 ---
 
 # Perf boost recommendations — ranked by payoff
@@ -37,10 +37,11 @@ Inputs: `docs/perf-fix-plan.md`, `docs/performance-analysis.md`,
 
 ## R2 — Route fleet callers onto the shipped facet fast path (free, today)
 
-- STATUS (2026-07-10): **DONE** — facet path records via shared `_record_latency`
-  (R4 sampling rides same gate); #72 status note + fleet lint in
-  `docs/diagnostics/0001-neuron-search-architecture-review.md`. Reds:
-  `tests/search/test_r2_facet_fastpath_perf_acceptance.py`.
+- STATUS: **SHIPPED** (2026-07-10, commit `00633bd`; see `CHANGELOG.md` →
+  Unreleased/Added "Facet fast-path records `search_latency` (R2)"). Facet path
+  records via shared `_record_latency` (R4 sampling rides same gate); #72 status
+  note + fleet lint in `docs/diagnostics/0001-neuron-search-architecture-review.md`.
+  Reds: `tests/search/test_r2_facet_fastpath_perf_acceptance.py`. Do not re-propose.
 - WHAT: no CLI code change — `_facet_fast_search` (MEM-FIX-0007/0008) already
   skips embed + vector + activation for `--type`/`--tag` queries without
   `--semantic`. 0.19 s wall, zero llama.cpp.
@@ -63,6 +64,11 @@ Inputs: `docs/perf-fix-plan.md`, `docs/performance-analysis.md`,
 
 ## R3 — Hard per-query timeout + self-reap
 
+- STATUS: **SHIPPED** (2026-07-10, commit `4069ed85`; see `CHANGELOG.md` →
+  Unreleased/Added "Hard per-query search timeout + self-reap (R3)"). SIGALRM
+  ceiling (default 120 s, CLI `--timeout <s>`) around `light_search`; breach
+  raises `SearchTimeoutError` naming the stage; CLI exits ≠ 0. Reds:
+  `tests/search/test_r3_hard_timeout_self_reap.py` (7/7). Do not re-propose.
 - WHAT: wall-clock ceiling on the whole search (default e.g. 120 s, flag to
   raise); on breach: kill llama.cpp work, emit structured error, exit ≠ 0.
 - WHY: observed wedged searches 22 h-31 h (#72, PIDs 20441/18334/11578).
@@ -140,14 +146,14 @@ Inputs: `docs/perf-fix-plan.md`, `docs/performance-analysis.md`,
 
 ## Sequencing
 
-| Order | Item | Type | Owner |
-|---|---|---|---|
-| 1 | R2 fleet→facet path + #72 status note | ops/docs | today |
-| 2 | R3 timeout/self-reap | quick win | coder |
-| 3 | R4 read-only search (4 sub-fixes) | quick win | coder |
-| 4 | R1 embedding daemon | architecture | architect |
-| 5 | R6 multi-store single-embed | small | coder (with R1) |
-| 6 | R5 close #66/#67 | correctness | coder |
+| Order | Item | Type | Owner | Status |
+|---|---|---|---|---|
+| 1 | R2 fleet→facet path + #72 status note | ops/docs | today | ✅ SHIPPED `00633bd` |
+| 2 | R3 timeout/self-reap | quick win | coder | ✅ SHIPPED `4069ed85` |
+| 3 | R4 read-only search (4 sub-fixes) | quick win | coder | ⬜ pending |
+| 4 | R1 embedding daemon | architecture | architect | ⬜ pending |
+| 5 | R6 multi-store single-embed | small | coder (with R1) | ⬜ pending |
+| 6 | R5 close #66/#67 | correctness | coder | ⬜ pending |
 
 One-liner: R1 + R2 kill both the 25 s tail and the concurrency DoS;
 R3/R4 make the fleet safe while R1 is built; the rest is hygiene or later.

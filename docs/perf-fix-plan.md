@@ -3,7 +3,7 @@ type: reference
 title: Query-path performance fix plan (ordered)
 description: Ordered implementation plan for the top-5 LIGHT-search bottlenecks from performance-analysis.md — quick wins, then architecture, then scale-later. Each item = change · acceptance test · risk · owner role.
 tags: [performance, search, latency, plan, embedding, sqlite-vec, bottlenecks]
-timestamp: 2026-07-09
+timestamp: 2026-07-10
 ---
 
 # Query-path performance fix plan — ordered
@@ -129,6 +129,12 @@ daemon's before/after is measured against a clean baseline.
 
 ### NEW-4 — facet fast-lane: access bump never committed → silently rolled back
 
+- STATUS: **PARTIAL** — the measurement half shipped via R2 (commit `00633bd`;
+  `CHANGELOG.md` Unreleased/Added "Facet fast-path records `search_latency` (R2)"):
+  facet lane now calls shared `_record_latency`, so `search_latency` no longer
+  excludes the fast lane. REMAINING: the read-only refactor (item #1) so the facet
+  lane does ZERO writes and the uncommitted-txn rollback is gone. Do not re-propose
+  the latency-recording part.
 - source: `perf-second-look-findings.md:32-36`
 - change:
   - `_facet_fast_search` returns at `light_search_pipeline_orchestrator.py:242→338-347` BEFORE reaching `_record_latency` → hydration's UPDATE (`:119`) sits in an open implicit txn; search verb never commits; `close()` ROLLS BACK.
